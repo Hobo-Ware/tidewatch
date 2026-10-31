@@ -2,7 +2,9 @@
 
 use tidewatch_core::kind::Kind;
 use tidewatch_core::panel_rules::{Waiting, fresh, waiting_of};
-use tidewatch_core::progress::{Choice, Entry, Ledger, Mark, Phase, PhaseState, State, real};
+use tidewatch_core::progress::{
+    Choice, Entry, Ledger, Mark, Phase, PhaseState, Scheduled, State, When, real,
+};
 use tidewatch_core::progress_report::{StageKind, WaitingOn};
 use tidewatch_core::stages::{self, Group, Stage};
 
@@ -238,15 +240,23 @@ pub(crate) fn stages_shown<'a, 'b>(
     stages.iter().filter(|stage| everything || !stage.over).collect()
 }
 
-/// The Now line of the panel: what is happening, and the job or the wait it is tied to.
+/// The lead job of the Now block: its bar and the percent and time left at the right.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct JobNow {
+    pub(crate) id: u64,
+    pub(crate) name: String,
+    pub(crate) right: Option<String>,
+    pub(crate) fraction: f32,
+}
+
+/// The Now block of the panel: the state word, what the agent is doing, how many steps are done
+/// and the lead job. It is always there.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Now {
-    pub(crate) label: &'static str,
+    pub(crate) tone: Tone,
     pub(crate) text: String,
-    pub(crate) right: Option<String>,
-    pub(crate) fraction: Option<f32>,
-    /// The job this line took over, so the job list does not draw it twice.
-    pub(crate) job: Option<u64>,
+    pub(crate) steps: Option<(usize, usize)>,
+    pub(crate) job: Option<JobNow>,
 }
 
 fn lead_bar<'a>(ledger: &Ledger, jobs: &'a [Card]) -> Option<&'a BarCard> {
@@ -266,6 +276,7 @@ fn eta_of(bar: &BarCard) -> Option<&str> {
     bar.detail.split(" \u{b7} ").find(|part| part.starts_with("about "))
 }
 
+/// What the agent waits on, for the line under the Now block.
 fn wait_text(waiting: &WaitingOn) -> String {
     match waiting {
         WaitingOn::Date(date) => format!("until {date}"),
@@ -273,8 +284,10 @@ fn wait_text(waiting: &WaitingOn) -> String {
     }
 }
 
-/// The Now line: the agent's note, with the running job's percent and time left, or what it waits on.
-pub(crate) fn now_line(ledger: &Ledger, tone: Tone, jobs: &[Card]) -> Option<Now> {
+/// The Now block: the agent's note (else the step in progress), the steps done, and the running
+/// job with its percent and time left. A report from the last turn has no note here, since the
+/// note belongs to that turn.
+pub(crate) fn now_line(ledger: &Ledger, tone: Tone, jobs: &[Card], last_turn: bool) -> Now {
     let note = ledger.status.note.trim();
     let step = || {
         ledger
@@ -282,27 +295,89 @@ pub(crate) fn now_line(ledger: &Ledger, tone: Tone, jobs: &[Card]) -> Option<Now
             .and_then(|phase| phase.items.iter().find(|item| item.mark == Mark::Doing))
             .map(|item| item.text.trim())
     };
-    let text = if note.is_empty() { step().unwrap_or_default() } else { note };
-    let label = if tone == Tone::Done { "Summary" } else { "Now" };
-    let bar = lead_bar(ledger, jobs).filter(|_| tone != Tone::Done);
-    let right = match bar {
-        Some(bar) => {
-            let parts: Vec<&str> =
-                [bar.right.as_deref(), eta_of(bar)].into_iter().flatten().collect();
-            (!parts.is_empty()).then(|| parts.join(" \u{b7} "))
-        }
-        None => ledger.waiting_on.as_ref().filter(|_| tone != Tone::Done).map(wait_text),
+    let text = match (last_turn, note.is_empty()) {
+        (true, _) => "",
+        (false, true) => step().unwrap_or_default(),
+        (false, false) => note,
     };
-    if text.is_empty() && right.is_none() {
-        return None;
-    }
-    Some(Now {
-        label,
+    let bar = lead_bar(ledger, jobs).filter(|_| tone != Tone::Done);
+    let job = bar.map(|bar| {
+        let parts: Vec<&str> = [bar.right.as_deref(), eta_of(bar)].into_iter().flatten().collect();
+        JobNow {
+            id: bar.id,
+            name: bar.name.clone(),
+            right: (!parts.is_empty()).then(|| parts.join(" \u{b7} ")),
+            fraction: bar.fraction.clamp(0.0, 1.0),
+        }
+    });
+    let counts = ledger.counts();
+    Now {
+        tone,
         text: text.to_owned(),
-        right,
-        fraction: bar.map(|bar| bar.fraction.clamp(0.0, 1.0)),
-        job: bar.map(|bar| bar.id),
-    })
+        steps: (counts.total > 0).then_some((counts.done, counts.total)),
+        job,
+    }
+}
+
+/// What the agent waits for, on its own line: the job, pull request, date or event the report names.
+/// Nothing once the work is done.
+pub(crate) fn waiting_for(ledger: &Ledger, tone: Tone) -> Option<String> {
+    ledger.waiting_on.as_ref().filter(|_| tone != Tone::Done).map(wait_text)
+}
+
+/// The question the owner is asked: its text and how many more wait behind it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Asked {
+    pub(crate) text: String,
+    pub(crate) more: usize,
+}
+
+/// The Waiting on you line: the first question of the report (the question tool's own are laid
+/// over it), else the first of `fallback`, the Needs you items of the last message.
+pub(crate) fn asked(ledger: &Ledger, fallback: &[String]) -> Option<Asked> {
+    let reported = questions(ledger);
+    match reported.split_first() {
+        Some((first, rest)) => Some(Asked { text: first.text.trim().to_owned(), more: rest.len() }),
+        None => fallback
+            .split_first()
+            .map(|(first, rest)| Asked { text: first.trim().to_owned(), more: rest.len() }),
+    }
+}
+
+/// One item of the report's Coming up list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Coming<'a> {
+    pub(crate) when: String,
+    pub(crate) text: &'a str,
+    pub(crate) why: Option<&'a str>,
+}
+
+fn when_text(when: &When) -> String {
+    match when {
+        When::Date(date) => date.to_string(),
+        When::About(date) => format!("about {date}"),
+        When::On(event) => format!("when {event}"),
+        When::Parked(until) => format!("parked until {until}"),
+        When::You => "you decide".to_owned(),
+        When::Unknown(text) => text.clone(),
+    }
+}
+
+/// The scheduled items still open, the dated ones first and by date, then the rest as written.
+pub(crate) fn coming_up(ledger: &Ledger) -> Vec<Coming<'_>> {
+    let mut open: Vec<&Scheduled> = ledger
+        .scheduled
+        .iter()
+        .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
+        .collect();
+    open.sort_by_key(|item| item.when.date().map_or((1, None), |date| (0, Some(date))));
+    open.into_iter()
+        .map(|item| Coming {
+            when: when_text(&item.when),
+            text: item.what.trim(),
+            why: item.why.as_deref().map(str::trim).filter(|why| !why.is_empty()),
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -320,16 +395,6 @@ impl Tag {
             Self::Verified => 0,
             Self::NotVerified => 1,
             Self::Decisions => 2,
-        }
-    }
-
-    pub(crate) fn label(self, count: usize) -> String {
-        match self {
-            Self::Verified => format!("{count} verified"),
-            Self::NotVerified => format!("{count} not verified"),
-            Self::Decisions => {
-                format!("{count} {}", if count == 1 { "decision" } else { "decisions" })
-            }
         }
     }
 
@@ -820,25 +885,30 @@ mod tests {
         ledger
     }
 
+    fn job_of(now: &Now) -> Option<(u64, Option<&str>, f32)> {
+        now.job.as_ref().map(|job| (job.id, job.right.as_deref(), job.fraction))
+    }
+
     #[test]
     fn the_now_line_takes_the_job_the_report_waits_on_with_its_percent_and_time_left() {
         let jobs = [
             bar(1, "checks", "50%", 0.5, "3 of 5"),
             bar(2, "Recap-Backfill", "4%", 0.04, "12 of 300 rows \u{b7} about 9h 46m left"),
         ];
-        let now = now_line(&waiting_on("recap-backfill"), Tone::Waiting, &jobs).unwrap();
-        assert_eq!(now.label, "Now");
-        assert_eq!(now.text, "Backfill step 2 is running");
-        assert_eq!(now.right.as_deref(), Some("4% \u{b7} about 9h 46m left"));
-        assert_eq!((now.fraction, now.job), (Some(0.04), Some(2)));
+        let now = now_line(&waiting_on("recap-backfill"), Tone::Waiting, &jobs, false);
+        assert_eq!((now.tone, now.text.as_str()), (Tone::Waiting, "Backfill step 2 is running"));
+        assert_eq!(job_of(&now), Some((2, Some("4% \u{b7} about 9h 46m left"), 0.04)));
+        assert_eq!(now.job.map(|job| job.name), Some("Recap-Backfill".to_owned()));
     }
 
     #[test]
-    fn with_no_named_job_the_first_running_job_leads_and_with_no_job_the_wait_is_the_right_text() {
+    fn with_no_named_job_the_first_running_job_leads_and_the_wait_is_never_inside_the_now_block() {
         let jobs = [bar(7, "import", "20%", 0.2, "")];
         let working = ledger("# Goal\nx\n\n## Status\nstate: working\nnote: Importing\n");
-        let now = now_line(&working, Tone::Working, &jobs).unwrap();
-        assert_eq!((now.right.as_deref(), now.job), (Some("20%"), Some(7)));
+        assert_eq!(
+            job_of(&now_line(&working, Tone::Working, &jobs, false)),
+            Some((7, Some("20%"), 0.2))
+        );
         let cases = [
             (WaitingOn::Pr(2340), "PR #2340"),
             (WaitingOn::Date(Date::parse("2026-11-01").unwrap()), "until 2026-11-01"),
@@ -848,25 +918,79 @@ mod tests {
         for (waiting, want) in cases {
             let mut ledger = ledger("# Goal\nx\n\n## Status\nstate: waiting\nnote: Waiting\n");
             ledger.waiting_on = Some(waiting);
-            let now = now_line(&ledger, Tone::Waiting, &[]).unwrap();
-            assert_eq!((now.right.as_deref(), now.fraction, now.job), (Some(want), None, None));
+            assert_eq!(now_line(&ledger, Tone::Waiting, &[], false).job, None);
+            assert_eq!(waiting_for(&ledger, Tone::Waiting).as_deref(), Some(want));
         }
     }
 
     #[test]
-    fn a_done_report_reads_as_a_summary_with_no_job_and_a_quiet_one_has_no_line() {
+    fn a_running_job_does_not_hide_what_the_report_waits_for() {
+        let mut ledger = waiting_on("recap-backfill");
+        ledger.waiting_on = Some(WaitingOn::Date(Date::parse("2026-11-02").unwrap()));
+        let jobs = [bar(1, "import", "20%", 0.2, "")];
+        assert_eq!(
+            job_of(&now_line(&ledger, Tone::Working, &jobs, false)),
+            Some((1, Some("20%"), 0.2))
+        );
+        assert_eq!(waiting_for(&ledger, Tone::Working).as_deref(), Some("until 2026-11-02"));
+        assert_eq!(waiting_for(&ledger, Tone::Done), None, "a finished task waits for nothing");
+    }
+
+    #[test]
+    fn a_done_report_reads_as_a_summary_with_no_job_and_the_now_block_is_never_hidden() {
         let jobs = [bar(1, "x", "9%", 0.09, "")];
         let done = ledger("# Goal\nx\n\n## Status\nstate: done\nnote: Shipped it\n");
-        let now = now_line(&done, Tone::Done, &jobs).unwrap();
-        assert_eq!((now.label, now.right, now.job), ("Summary", None, None));
-        assert_eq!(now_line(&ledger("# Goal\nx\n"), Tone::Working, &[]), None);
+        let now = now_line(&done, Tone::Done, &jobs, false);
+        assert_eq!((now.tone, now.text.as_str(), now.job), (Tone::Done, "Shipped it", None));
+        let bare = now_line(&ledger("# Goal\nx\n"), Tone::Working, &[], false);
+        assert_eq!(bare, Now { tone: Tone::Working, text: String::new(), steps: None, job: None });
     }
 
     #[test]
     fn with_no_note_the_step_in_progress_is_the_now_text() {
         let ledger =
             ledger("# Goal\nx\n\n## Checklist\n### 1. Build\n- [x] a\n- [~] Write the test\n");
-        assert_eq!(now_line(&ledger, Tone::Working, &[]).unwrap().text, "Write the test");
+        assert_eq!(now_line(&ledger, Tone::Working, &[], false).text, "Write the test");
+    }
+
+    #[test]
+    fn the_now_block_counts_the_steps_done_and_leaves_the_last_turns_note_out() {
+        let ledger = ledger(MIDDLE);
+        let now = now_line(&ledger, Tone::Working, &[], false);
+        assert_eq!((now.steps, now.text.as_str()), (Some((3, 6)), "writing the validator"));
+        let old = now_line(&ledger, Tone::Working, &[], true);
+        assert_eq!((old.steps, old.text.as_str()), (Some((3, 6)), ""));
+    }
+
+    #[test]
+    fn the_question_is_the_reports_first_one_with_the_rest_counted_else_the_last_messages() {
+        let two = ledger("# Goal\nx\n\n## Needs you\n- Pick a base -- why\n- Pick a name\n");
+        assert_eq!(
+            asked(&two, &["from chat".into()]),
+            Some(Asked { text: "Pick a base".into(), more: 1 })
+        );
+        let none = ledger("# Goal\nx\n\n## Needs you\n- Nothing\n");
+        let chat = ["Which base?".to_owned(), "And the name?".to_owned()];
+        assert_eq!(asked(&none, &chat), Some(Asked { text: "Which base?".into(), more: 1 }));
+        assert_eq!(asked(&none, &[]), None);
+    }
+
+    #[test]
+    fn coming_up_lists_the_open_scheduled_items_dated_first_by_date() {
+        let text = "# Goal\nx\n\n## Scheduled\n- [ ] on: the partner replies -- Reconcile -- needs their file\n- [ ] 2026-11-09 -- Retire the flag\n- [x] 2026-10-01 -- Done already\n- [ ] ~2026-11-02 -- Check the counts\n- [ ] you -- Decide the rollout\n";
+        let ledger = ledger(text);
+        let rows: Vec<(String, &str, Option<&str>)> =
+            coming_up(&ledger).into_iter().map(|row| (row.when, row.text, row.why)).collect();
+        assert_eq!(
+            rows,
+            [
+                ("about 2026-11-02".to_owned(), "Check the counts", None),
+                ("2026-11-09".to_owned(), "Retire the flag", None),
+                ("when the partner replies".to_owned(), "Reconcile", Some("needs their file")),
+                ("you decide".to_owned(), "Decide the rollout", None),
+            ]
+        );
+        assert_eq!(coming_up(&super::tests::ledger("# Goal\nx\n")), Vec::<Coming<'_>>::new());
     }
 
     #[test]
@@ -877,15 +1001,13 @@ mod tests {
     }
 
     #[test]
-    fn tags_count_real_entries_only_and_say_decision_once() {
+    fn tags_count_real_entries_only_and_have_one_caption_each() {
         let text = "# Goal\nx\n\n## Decisions\n- one\n\n## Verified\n- a -- how\n- b\n\n## Not verified\n- nothing\n";
         let ledger = ledger(text);
         let counts: Vec<_> = TAGS.iter().map(|tag| entries(&ledger, *tag).len()).collect();
         assert_eq!(counts, [2, 0, 1]);
-        assert_eq!(Tag::Verified.label(2), "2 verified");
-        assert_eq!(Tag::NotVerified.label(2), "2 not verified");
-        assert_eq!(Tag::Decisions.label(1), "1 decision");
-        assert_eq!(Tag::Decisions.label(4), "4 decisions");
+        let captions = TAGS.map(Tag::caption);
+        assert_eq!(captions, ["Verified", "Not verified", "Decisions"]);
         assert_eq!(TAGS.map(Tag::index), [0, 1, 2]);
     }
 

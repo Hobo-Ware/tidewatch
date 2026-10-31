@@ -18,6 +18,9 @@ use crate::selectable;
 const LINK_ICON: &str = "\u{E2E2}";
 const HEAD_H: f32 = 36.0;
 const ROW_H: f32 = 44.0;
+const ROW_H_STACKED: f32 = 68.0;
+const TAG_LINE_H: f32 = Size::Compact.height();
+const MIN_STACK_TEXT_W: f32 = 90.0;
 const FOLD_H: f32 = 36.0;
 const PAD_X: f32 = 12.0;
 const GAP: f32 = 10.0;
@@ -28,37 +31,55 @@ const MIN_TITLE_BESIDE_TAG: f32 = 80.0;
 pub(crate) const READ_FIRST_H: f32 = 22.0;
 pub(crate) const READ_FIRST_MAX: usize = 2;
 
+/// Whether the rows put the tag and copy button on a line above the title: in a narrow panel, or
+/// when the title would get under 90 px beside them.
+fn stacks(painter: &egui::Painter, width: f32, stack: bool) -> bool {
+    let beside =
+        width - 2.0 * PAD_X - tag_width(painter, "Artifact") - Size::Compact.height() - 2.0 * GAP;
+    stack || beside < MIN_STACK_TEXT_W
+}
+
 pub(crate) fn show(
     ui: &mut Ui,
     width: f32,
+    stack: bool,
     board: &LinkBoard,
     now_ms: i64,
     (all, archive): (&mut bool, &mut bool),
     age: Option<&str>,
 ) -> Option<String> {
     let (main, archived) = link_model::split(board);
+    if link_model::fold_label(main.len(), true).is_none() {
+        *all = false;
+    }
+    if archived.is_empty() {
+        *archive = false;
+    }
     let rows = listed(&main, *all);
+    let stacked = stacks(ui.painter(), width, stack);
+    let row_h = if stacked { ROW_H_STACKED } else { ROW_H };
+    let (head_h, age_below) = head_height(ui.painter(), width, main.len(), age);
     let fold = link_model::fold_label(main.len(), *all);
     let group = link_model::archive_label(archived.len());
     let archived_rows = if *archive { archived.as_slice() } else { &[] };
-    let height = HEAD_H
-        + ROW_H * (rows.len() + archived_rows.len()) as f32
+    let height = head_h
+        + row_h * (rows.len() + archived_rows.len()) as f32
         + FOLD_H * (usize::from(fold.is_some()) + usize::from(group.is_some())) as f32;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter().clone();
     paint_item(&painter, rect, false);
-    head(ui, rect, main.len(), age);
+    head(ui, rect, main.len(), age, age_below);
     let tag_col = tag_width(&painter, "Artifact");
     let mut copied = None;
-    let mut top = rect.top() + HEAD_H;
+    let mut top = rect.top() + head_h;
     let mut place = |ui: &mut Ui, links: &[&Link], first: usize, top: &mut f32| {
         for (at, link) in links.iter().enumerate() {
-            let row = Rect::from_min_size(pos2(rect.left(), *top), vec2(width, ROW_H));
+            let row = Rect::from_min_size(pos2(rect.left(), *top), vec2(width, row_h));
             painter.hline(row.x_range(), row.top(), Stroke::new(1.0, brand::ITEM_LINE));
-            if row_of(ui, row, link, (first + at, tag_col), now_ms) {
+            if row_of(ui, row, link, (first + at, tag_col), (now_ms, stacked)) {
                 copied = Some(link.url.clone());
             }
-            *top += ROW_H;
+            *top += row_h;
         }
     };
     place(ui, rows, 0, &mut top);
@@ -119,7 +140,23 @@ fn archive_header(ui: &Ui, area: Rect, label: &str, open: bool) -> bool {
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
 
-fn head(ui: &Ui, rect: Rect, count: usize, age: Option<&str>) {
+/// The header's height, and whether the age goes on a line of its own because the label, count
+/// and age do not fit side by side.
+fn head_height(
+    painter: &egui::Painter,
+    width: f32,
+    count: usize,
+    age: Option<&str>,
+) -> (f32, bool) {
+    let Some(age) = age else { return (HEAD_H, false) };
+    let label = painter.layout_no_wrap("LINKS".to_owned(), heading(TEXT_SECONDARY), brand::SOFT);
+    let used =
+        PAD_X + ICON_PX + 8.0 + label.size().x + 8.0 + tag_width(painter, &count.to_string());
+    let age_w = crate::panel_blocks::age_width(painter, age);
+    if used + 12.0 + age_w + PAD_X <= width { (HEAD_H, false) } else { (HEAD_H + 22.0, true) }
+}
+
+fn head(ui: &Ui, rect: Rect, count: usize, age: Option<&str>, age_below: bool) {
     let painter = ui.painter();
     let mid = rect.top() + HEAD_H / 2.0;
     painter.text(
@@ -140,7 +177,16 @@ fn head(ui: &Ui, rect: Rect, count: usize, age: Option<&str>) {
         TagFill::Tint(brand::ITEM_LINE),
     );
     if let Some(age) = age {
-        crate::panel_blocks::paint_age(painter, rect.right() - PAD_X, mid, age);
+        if age_below {
+            let galley = painter.layout_no_wrap(age.to_owned(), body(TEXT_TAG), brand::MUTED);
+            painter.galley(
+                pos2(rect.left() + PAD_X, mid + HEAD_H / 2.0 - 4.0),
+                galley,
+                brand::MUTED,
+            );
+        } else {
+            crate::panel_blocks::paint_age(painter, rect.right() - PAD_X, mid, age);
+        }
     }
 }
 
@@ -149,26 +195,49 @@ fn row_of(
     row: Rect,
     link: &Link,
     (index, tag_col): (usize, f32),
-    now_ms: i64,
+    (now_ms, stacked): (i64, bool),
 ) -> bool {
     let painter = ui.painter().clone();
-    let mid = row.center().y;
     let kind = link.kind();
+    let button = Size::Compact.height();
+    let button_left = row.right() - PAD_X - button;
+    let (mid, text_left, mut text_right, tag_mid) = if stacked {
+        let line = row.top() + 6.0 + TAG_LINE_H / 2.0;
+        (
+            row.top() + 6.0 + TAG_LINE_H + 4.0 + (row.height() - TAG_LINE_H - 14.0) / 2.0,
+            row.left() + PAD_X,
+            row.right() - PAD_X,
+            line,
+        )
+    } else {
+        let mid = row.center().y;
+        (mid, row.left() + PAD_X + tag_col + GAP, button_left - GAP, mid)
+    };
     paint_tag(
         &painter,
-        (row.left() + PAD_X, mid),
+        (row.left() + PAD_X, tag_mid),
         kind.word(),
         ink(kind),
         TagFill::Line(ink(kind)),
     );
-    let button = Size::Compact.height();
-    let text_left = row.left() + PAD_X + tag_col + GAP;
-    let button_left = row.right() - PAD_X - button;
-    let mut text_right = button_left - GAP;
     let mut meta = link_model::meta(link, now_ms);
     if let Some(word) = link_model::state_tag(link) {
         let left = text_right - tag_width(&painter, word);
-        if left - GAP - text_left >= MIN_TITLE_BESIDE_TAG {
+        if stacked {
+            let tag_end = row.left() + PAD_X + tag_width(&painter, kind.word()) + GAP;
+            let at = button_left - GAP - tag_width(&painter, word);
+            if at >= tag_end {
+                paint_tag(
+                    &painter,
+                    (at, tag_mid),
+                    word,
+                    brand::MUTED,
+                    TagFill::Line(brand::ITEM_LINE),
+                );
+            } else {
+                meta = format!("{word} \u{b7} {meta}");
+            }
+        } else if left - GAP - text_left >= MIN_TITLE_BESIDE_TAG {
             paint_tag(&painter, (left, mid), word, brand::MUTED, TagFill::Line(brand::ITEM_LINE));
             text_right = left - GAP;
         } else {
@@ -193,7 +262,9 @@ fn row_of(
         ui.ctx().open_url(OpenUrl::new_tab(&link.url));
     }
     selectable::galley(ui, pos2(text_left, top + hit.height() + 1.0), meta, brand::MUTED);
-    let at = Rect::from_min_size(pos2(button_left, mid - button / 2.0), vec2(button, button));
+    let button_mid = if stacked { tag_mid } else { mid };
+    let at =
+        Rect::from_min_size(pos2(button_left, button_mid - button / 2.0), vec2(button, button));
     let mut child = ui.new_child(UiBuilder::new().id_salt(("link-copy", index)).max_rect(at));
     icon_button(&mut child, icons::COPY, "Copy link", Size::Compact).clicked()
 }

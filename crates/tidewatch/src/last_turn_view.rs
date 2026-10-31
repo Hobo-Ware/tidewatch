@@ -1,7 +1,7 @@
-//! The "Last turn" section of the Progress panel: the Done list, the Needs you items with Answer,
-//! the Next list and the done check as small rows with a status dot, its two buttons and when it
-//! was made. What each
-//! part says is `LastTurn` and `done_check_view::card_of`; this file only draws it.
+//! The done check of the Progress panel (`show_check`), and the "Last turn" section of a poofed
+//! Meeseeks' summary (`show`): the Done, Needs you and Next lists and the done check as small rows
+//! with a status dot, its two buttons and when it was made. What each part says is `LastTurn` and
+//! `done_check_view::card_of`; this file only draws it.
 
 use egui::epaint::text::TextFormat;
 use egui::{Color32, FontId, Rect, RichText, Sense, Ui, pos2, vec2};
@@ -43,8 +43,27 @@ pub(crate) fn spans(text: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
+pub(crate) fn show_check(
+    ui: &mut Ui,
+    width: f32,
+    turn: &LastTurn,
+    age: Option<&str>,
+) -> Option<Action> {
+    let look = turn.check.as_ref()?;
+    let head = label(ui, "Done check", heading(13.0), brand::SOFT);
+    if let Some(age) = age {
+        panel_blocks::paint_age(ui.painter(), head.right(), head.center().y - 2.0, age);
+    }
+    ui.add_space(6.0);
+    check(ui, width, look, turn).map(Action::DoneCheck)
+}
+
 pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn, age: Option<&str>) -> Option<Action> {
     let mut action = None;
+    if turn.done.is_empty() && turn.needs.is_empty() && turn.next.is_empty() && turn.check.is_none()
+    {
+        return action;
+    }
     let head = label(ui, "Last turn", heading(13.0), brand::MUTED);
     if let Some(age) = age {
         panel_blocks::paint_age(ui.painter(), head.right(), head.center().y - 2.0, age);

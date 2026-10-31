@@ -7,7 +7,7 @@ use egui::{Painter, Rect, Ui};
 use jiff::tz::TimeZone;
 use tidewatch_core::panel_counter::{self, Counter};
 use tidewatch_core::panel_event::{Source, StepBy};
-use tidewatch_core::panel_state::MarkSeen;
+use tidewatch_core::panel_state::{CheckSeen, MarkSeen};
 use tidewatch_core::panel_view::{PanelView, Quiet, ReportMark, Why};
 use tidewatch_core::progress::Mark;
 
@@ -35,11 +35,15 @@ pub(crate) fn quiet_text(since_ms: i64, zone: &TimeZone) -> String {
         .map_or_else(|| QUIET_PREFIX.to_owned(), |time| format!("{QUIET_PREFIX} since {time}"))
 }
 
-pub(crate) fn since_text(count: u32) -> Option<String> {
-    match count {
-        0 => None,
-        1 => Some("1 thing happened since".to_owned()),
-        many => Some(format!("{many} things happened since")),
+/// What happened since the report was saved: the answers the owner gave when there are any (a
+/// question walk is answers), else the things the agent and Tidewatch did.
+pub(crate) fn since_text(answers: u32, count: u32) -> Option<String> {
+    match (answers, count) {
+        (0, 0) => None,
+        (0, 1) => Some("1 thing happened since".to_owned()),
+        (0, many) => Some(format!("{many} things happened since")),
+        (1, _) => Some("1 answer since".to_owned()),
+        (many, _) => Some(format!("{many} answers since")),
     }
 }
 
@@ -100,7 +104,7 @@ impl Blocks {
             turn: quiet(Block::Turn, age(ages.turn.as_ref().map(|age| age.at_ms))),
             jobs: quiet(Block::Jobs, age(ages.jobs.as_ref().map(|age| age.at_ms).or(kept.jobs_ms))),
             links: age(ages.links.as_ref().map(|age| age.at_ms).or(kept.links_ms)),
-            since: report_at.and_then(|_| since_text(view.since)),
+            since: report_at.and_then(|_| since_text(view.answers, view.since)),
         }
     }
 
@@ -117,16 +121,49 @@ pub(crate) fn contradicted(view: Option<&PanelView>) -> bool {
     view.is_some_and(|view| matches!(view.report, Some(ReportMark::OutOfDate(_))))
 }
 
-/// The mark a step is drawn with: a step the agent's report leaves open but Tidewatch ticked reads
-/// done, and the second value says the tick is Tidewatch's.
+/// The mark a step is drawn with: a step the agent's report leaves open (or blocked on the owner)
+/// but Tidewatch ticked reads done, and the second value says the tick is Tidewatch's.
 pub(crate) fn tick(mark: Mark, ticked: bool) -> (Mark, bool) {
     match (mark, ticked) {
-        (Mark::Todo | Mark::Doing, true) => (Mark::Done, true),
+        (Mark::Todo | Mark::Doing | Mark::Blocked, true) => (Mark::Done, true),
         (mark, _) => (mark, false),
     }
 }
 
-/// The note at the right of a step row, with `by Tidewatch` after it for a tick Tidewatch made.
+/// Who stands behind the evidence under a finished step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Proof {
+    /// Tidewatch ticked it or ran what the evidence names.
+    Checked,
+    /// The agent says so.
+    Claimed,
+}
+
+impl Proof {
+    pub(crate) const fn word(self) -> &'static str {
+        match self {
+            Self::Checked => "checked",
+            Self::Claimed => "claimed",
+        }
+    }
+}
+
+/// How a finished step is vouched for: checked when Tidewatch ticked it or the evidence names a
+/// check Tidewatch ran and saw pass, claimed when the agent gave evidence alone, none without any.
+pub(crate) fn proof(ticked: bool, evidence: Option<&str>, checks: &[CheckSeen]) -> Option<Proof> {
+    let named = |evidence: &str| {
+        let evidence = evidence.to_lowercase();
+        checks.iter().any(|check| check.passed && evidence.contains(&check.name.to_lowercase()))
+    };
+    match (ticked, evidence) {
+        (true, _) => Some(Proof::Checked),
+        (false, Some(evidence)) if named(evidence) => Some(Proof::Checked),
+        (false, Some(_)) => Some(Proof::Claimed),
+        (false, None) => None,
+    }
+}
+
+/// The note under a step row, with `by Tidewatch` after it for a tick Tidewatch made.
 pub(crate) fn why_with_tick(why: Option<&str>, by_tidewatch: bool) -> Option<String> {
     match (why, by_tidewatch) {
         (Some(why), true) => Some(format!("{why} \u{b7} by Tidewatch")),

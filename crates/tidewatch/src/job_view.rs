@@ -21,14 +21,13 @@ const BAR_H: f32 = 6.0;
 const DETAIL_H: f32 = 16.0;
 const INNER_GAP: f32 = 10.0;
 const QUIET_H: f32 = 26.0;
-const FINISHED_H: f32 = 26.0;
 const STALLED_PAD_Y: f32 = 8.0;
 const SEGMENT_GAP: f32 = 4.0;
 const MARK_W: f32 = 20.0;
-const MIN_NAME_W: f32 = 16.0;
+const MIN_NAME_ROOM: f32 = 80.0;
 
 /// Draws the cards and returns the job and the message of an Ask agent click.
-pub(crate) fn show(ui: &mut Ui, width: f32, cards: &[Card]) -> Option<(u64, String)> {
+pub(crate) fn show(ui: &mut Ui, width: f32, stack: bool, cards: &[Card]) -> Option<(u64, String)> {
     let mut action = None;
     for (index, card) in cards.iter().enumerate() {
         if index > 0 {
@@ -36,15 +35,15 @@ pub(crate) fn show(ui: &mut Ui, width: f32, cards: &[Card]) -> Option<(u64, Stri
             ui.add_space(if small { 4.0 } else { GAP });
         }
         match card {
-            Card::Bar(card) => bar_card(ui, width, card),
-            Card::Segments(card) => segments_card(ui, width, card),
-            Card::Quiet(line) => quiet_line(ui, width, line),
+            Card::Bar(card) => bar_card(ui, width, stack, card),
+            Card::Segments(card) => segments_card(ui, width, stack, card),
+            Card::Quiet(line) => quiet_line(ui, width, stack, line),
             Card::Stalled(card) => {
-                if stalled_row(ui, width, card) {
+                if stalled_row(ui, width, stack, card) {
                     action = Some((card.id, card.ask.clone()));
                 }
             }
-            Card::Finished(line) => finished_line(ui, width, line),
+            Card::Finished(line) => finished_line(ui, width, stack, line),
         }
     }
     action
@@ -66,8 +65,25 @@ fn card_frame(painter: &egui::Painter, rect: Rect, fill: Color32, line: Color32)
     );
 }
 
-fn name_row(painter: &egui::Painter, row: Rect, name: &str, right: &str) {
+/// Whether a name and its value at the right leave the name `MIN_NAME_ROOM` beside the value.
+fn stacks(painter: &egui::Painter, row_w: f32, stack: bool, right: &str) -> bool {
+    if right.is_empty() {
+        return false;
+    }
+    let right_w = painter.layout_no_wrap(right.to_owned(), body(13.0), brand::MUTED).size().x;
+    stack || row_w - right_w - 10.0 < MIN_NAME_ROOM
+}
+
+fn name_row(painter: &egui::Painter, row: Rect, name: &str, right: &str, stacked: bool) {
     let right_galley = painter.layout_no_wrap(right.to_owned(), body(13.0), brand::MUTED);
+    if stacked {
+        let name = ellipsized(painter, name, heading(TEXT_TITLE), brand::TEXT, row.width());
+        let top = Rect::from_min_size(row.min, vec2(row.width(), NAME_H));
+        painter.galley(pos2(top.left(), top.center().y - name.size().y / 2.0), name, brand::TEXT);
+        let at = pos2(row.left(), row.top() + NAME_H + (NAME_H - right_galley.size().y) / 2.0);
+        painter.galley(at, right_galley, brand::MUTED);
+        return;
+    }
     let room = (row.width() - right_galley.size().x - 10.0).max(1.0);
     let name = ellipsized(painter, name, heading(TEXT_TITLE), brand::TEXT, room);
     painter.galley(pos2(row.left(), row.center().y - name.size().y / 2.0), name, brand::TEXT);
@@ -83,22 +99,28 @@ fn detail_row(painter: &egui::Painter, row: Rect, detail: &str) {
     painter.galley(pos2(row.left(), row.center().y - galley.size().y / 2.0), galley, brand::MUTED);
 }
 
-fn card_height(has_detail: bool) -> f32 {
+fn card_height(has_detail: bool, stacked: bool) -> f32 {
     2.0 * PAD_Y
         + NAME_H
+        + if stacked { NAME_H } else { 0.0 }
         + INNER_GAP
         + BAR_H
         + if has_detail { INNER_GAP - 2.0 + DETAIL_H } else { 0.0 }
 }
 
-fn bar_card(ui: &mut Ui, width: f32, card: &BarCard) {
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(width, card_height(!card.detail.is_empty())), Sense::hover());
+fn bar_card(ui: &mut Ui, width: f32, stack: bool, card: &BarCard) {
+    let right = card.right.as_deref().unwrap_or("");
+    let stacked = stacks(ui.painter(), width - 2.0 * PAD_X, stack, right);
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(width, card_height(!card.detail.is_empty(), stacked)),
+        Sense::hover(),
+    );
     let painter = ui.painter();
     card_frame(painter, rect, brand::SEGMENT, brand::ITEM_LINE);
     let inner = rect.shrink2(vec2(PAD_X, PAD_Y));
-    let name = Rect::from_min_size(inner.min, vec2(inner.width(), NAME_H));
-    name_row(painter, name, &card.name, card.right.as_deref().unwrap_or(""));
+    let name_h = if stacked { 2.0 * NAME_H } else { NAME_H };
+    let name = Rect::from_min_size(inner.min, vec2(inner.width(), name_h));
+    name_row(painter, name, &card.name, right, stacked);
     let track = Rect::from_min_size(
         pos2(inner.left(), name.bottom() + INNER_GAP),
         vec2(inner.width(), BAR_H),
@@ -116,14 +138,18 @@ fn bar_card(ui: &mut Ui, width: f32, card: &BarCard) {
     }
 }
 
-fn segments_card(ui: &mut Ui, width: f32, card: &SegmentsCard) {
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(width, card_height(!card.sub.is_empty())), Sense::hover());
+fn segments_card(ui: &mut Ui, width: f32, stack: bool, card: &SegmentsCard) {
+    let stacked = stacks(ui.painter(), width - 2.0 * PAD_X, stack, &card.label);
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(width, card_height(!card.sub.is_empty(), stacked)),
+        Sense::hover(),
+    );
     let painter = ui.painter();
     card_frame(painter, rect, brand::SEGMENT, brand::ITEM_LINE);
     let inner = rect.shrink2(vec2(PAD_X, PAD_Y));
-    let name = Rect::from_min_size(inner.min, vec2(inner.width(), NAME_H));
-    name_row(painter, name, &card.name, &card.label);
+    let name_h = if stacked { 2.0 * NAME_H } else { NAME_H };
+    let name = Rect::from_min_size(inner.min, vec2(inner.width(), name_h));
+    name_row(painter, name, &card.name, &card.label, stacked);
     let count = card.segments.len().max(1) as f32;
     let each = ((inner.width() - SEGMENT_GAP * (count - 1.0)) / count).max(1.0);
     let top = name.bottom() + INNER_GAP;
@@ -146,29 +172,57 @@ fn segments_card(ui: &mut Ui, width: f32, card: &SegmentsCard) {
     }
 }
 
-fn quiet_line(ui: &mut Ui, width: f32, line: &QuietLine) {
-    let (rect, _) = ui.allocate_exact_size(vec2(width, QUIET_H), Sense::hover());
-    let painter = ui.painter();
+/// A name and its value at the right, one line or, with no room for both, the value under it.
+fn two_part_line(
+    ui: &mut Ui,
+    width: f32,
+    stack: bool,
+    (name, value): (&str, &str),
+    mark: impl FnOnce(&egui::Painter, Rect),
+) {
+    let painter = ui.painter().clone();
+    let value = painter.layout_no_wrap(value.to_owned(), body(13.0), brand::MUTED);
+    let stacked = stack || width - 2.0 * PAD_X - MARK_W - value.size().x - 10.0 < MIN_NAME_ROOM;
+    let height = if stacked { 2.0 * QUIET_H - 6.0 } else { QUIET_H };
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let inner = row_inner(rect);
-    painter.circle_filled(pos2(inner.left() + 3.0, rect.center().y), 3.0, brand::FAINT);
-    let elapsed = painter.layout_no_wrap(line.elapsed.clone(), body(13.0), brand::MUTED);
+    let first = Rect::from_min_size(rect.min, vec2(width, QUIET_H));
+    mark(&painter, first);
     let text_x = inner.left() + MARK_W;
-    let room = (inner.right() - elapsed.size().x - 10.0 - text_x).max(1.0);
-    if room >= MIN_NAME_W {
-        let name = ellipsized(painter, &line.name, body(13.0), brand::MUTED, room);
-        painter.galley(pos2(text_x, rect.center().y - name.size().y / 2.0), name, brand::MUTED);
+    if stacked {
+        let name =
+            ellipsized(&painter, name, body(13.0), brand::MUTED, (inner.right() - text_x).max(1.0));
+        painter.galley(pos2(text_x, first.center().y - name.size().y / 2.0), name, brand::MUTED);
+        let y = first.bottom() - 6.0 + (QUIET_H - value.size().y) / 2.0 - 4.0;
+        painter.galley(pos2(text_x, y), value, brand::MUTED);
+        return;
     }
+    let room = (inner.right() - value.size().x - 10.0 - text_x).max(1.0);
+    let name = ellipsized(&painter, name, body(13.0), brand::MUTED, room);
+    painter.galley(pos2(text_x, rect.center().y - name.size().y / 2.0), name, brand::MUTED);
     painter.galley(
-        pos2(inner.right() - elapsed.size().x, rect.center().y - elapsed.size().y / 2.0),
-        elapsed,
+        pos2(inner.right() - value.size().x, rect.center().y - value.size().y / 2.0),
+        value,
         brand::MUTED,
     );
 }
 
-fn stalled_row(ui: &mut Ui, width: f32, card: &StalledCard) -> bool {
+fn quiet_line(ui: &mut Ui, width: f32, stack: bool, line: &QuietLine) {
+    two_part_line(ui, width, stack, (&line.name, &line.elapsed), |painter, first| {
+        let inner = row_inner(first);
+        painter.circle_filled(pos2(inner.left() + 3.0, first.center().y), 3.0, brand::FAINT);
+    });
+}
+
+fn stalled_row(ui: &mut Ui, width: f32, stack: bool, card: &StalledCard) -> bool {
     let button_w = button_width(ui, "Ask agent", Size::Compact);
+    let stacked = stack || width - 2.0 * PAD_X - button_w - 32.0 < MIN_NAME_ROOM;
+    let rows = if stacked { 2.0 } else { 1.0 };
     let (rect, _) = ui.allocate_exact_size(
-        vec2(width, Size::Compact.height() + 2.0 * STALLED_PAD_Y),
+        vec2(
+            width,
+            rows * Size::Compact.height() + 2.0 * STALLED_PAD_Y + if stacked { 4.0 } else { 0.0 },
+        ),
         Sense::hover(),
     );
     let painter = ui.painter();
@@ -179,55 +233,58 @@ fn stalled_row(ui: &mut Ui, width: f32, card: &StalledCard) -> bool {
         brand::ORANGE.gamma_multiply(0.3),
     );
     let inner = rect.shrink2(vec2(PAD_X, STALLED_PAD_Y));
-    painter.circle_filled(pos2(inner.left() + 4.0, inner.center().y), 4.0, brand::ORANGE);
+    let line_row = Rect::from_min_size(inner.min, vec2(inner.width(), Size::Compact.height()));
+    painter.circle_filled(pos2(inner.left() + 4.0, line_row.center().y), 4.0, brand::ORANGE);
     let text_x = inner.left() + 20.0;
-    let room = (inner.right() - button_w - 12.0 - text_x).max(1.0);
-    let line = ellipsized(painter, &card.line, body(13.0), brand::ORANGE_SOFT, room);
-    painter.galley(pos2(text_x, inner.center().y - line.size().y / 2.0), line, brand::ORANGE_SOFT);
-    let button = Rect::from_center_size(
-        pos2(inner.right() - button_w / 2.0, inner.center().y),
-        vec2(button_w, Size::Compact.height()),
+    let room =
+        if stacked { inner.right() - text_x } else { inner.right() - button_w - 12.0 - text_x };
+    let line = ellipsized(painter, &card.line, body(13.0), brand::ORANGE_SOFT, room.max(1.0));
+    painter.galley(
+        pos2(text_x, line_row.center().y - line.size().y / 2.0),
+        line,
+        brand::ORANGE_SOFT,
     );
+    let button = if stacked {
+        Rect::from_min_size(
+            pos2(text_x, inner.top() + Size::Compact.height() + 4.0),
+            vec2(button_w, Size::Compact.height()),
+        )
+    } else {
+        Rect::from_center_size(
+            pos2(inner.right() - button_w / 2.0, inner.center().y),
+            vec2(button_w, Size::Compact.height()),
+        )
+    };
     let mut child = ui.new_child(UiBuilder::new().max_rect(button));
     quiet_button(&mut child, "Ask agent", true, Size::Compact).clicked()
 }
 
-fn finished_line(ui: &mut Ui, width: f32, line: &FinishedLine) {
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FINISHED_H), Sense::hover());
-    let painter = ui.painter();
+fn finished_line(ui: &mut Ui, width: f32, stack: bool, line: &FinishedLine) {
     let ink = match (line.failed, line.ended) {
         (true, _) => brand::RED,
         (false, true) => brand::FAINT,
         (false, false) => brand::GREEN,
     };
-    let inner = row_inner(rect);
-    let mark = pos2(inner.left() + 4.5, rect.center().y);
-    if line.ended {
-        painter
-            .line_segment([mark + vec2(-4.0, 0.0), mark + vec2(4.0, 0.0)], Stroke::new(2.0, ink));
-    } else if line.failed {
-        let arm = 4.0;
-        for (a, b) in [(vec2(-arm, -arm), vec2(arm, arm)), (vec2(-arm, arm), vec2(arm, -arm))] {
-            painter.line_segment([mark + a, mark + b], Stroke::new(2.0, ink));
+    two_part_line(ui, width, stack, (&line.name, &line.detail), |painter, first| {
+        let inner = row_inner(first);
+        let mark = pos2(inner.left() + 4.5, first.center().y);
+        if line.ended {
+            painter.line_segment(
+                [mark + vec2(-4.0, 0.0), mark + vec2(4.0, 0.0)],
+                Stroke::new(2.0, ink),
+            );
+        } else if line.failed {
+            let arm = 4.0;
+            for (a, b) in [(vec2(-arm, -arm), vec2(arm, arm)), (vec2(-arm, arm), vec2(arm, -arm))] {
+                painter.line_segment([mark + a, mark + b], Stroke::new(2.0, ink));
+            }
+        } else {
+            painter.add(Shape::line(
+                vec![mark + vec2(-4.5, 0.0), mark + vec2(-1.5, 3.5), mark + vec2(4.5, -4.0)],
+                Stroke::new(2.0, ink),
+            ));
         }
-    } else {
-        painter.add(Shape::line(
-            vec![mark + vec2(-4.5, 0.0), mark + vec2(-1.5, 3.5), mark + vec2(4.5, -4.0)],
-            Stroke::new(2.0, ink),
-        ));
-    }
-    let detail = painter.layout_no_wrap(line.detail.clone(), body(13.0), brand::MUTED);
-    let text_x = inner.left() + MARK_W;
-    let room = (inner.right() - detail.size().x - 10.0 - text_x).max(1.0);
-    if room >= MIN_NAME_W {
-        let name = ellipsized(painter, &line.name, body(13.0), brand::MUTED, room);
-        painter.galley(pos2(text_x, rect.center().y - name.size().y / 2.0), name, brand::MUTED);
-    }
-    painter.galley(
-        pos2(inner.right() - detail.size().x, rect.center().y - detail.size().y / 2.0),
-        detail,
-        brand::MUTED,
-    );
+    });
 }
 
 #[cfg(test)]

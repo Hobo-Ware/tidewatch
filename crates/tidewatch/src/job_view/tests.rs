@@ -54,7 +54,7 @@ impl Frame {
         let output = self.ctx.run_ui(raw, |ui| {
             ui.set_max_width(width);
             let top = ui.cursor().top();
-            asked = show(ui, width, cards);
+            asked = show(ui, width, false, cards);
             height = ui.cursor().top() - top;
         });
         self.height = height;
@@ -230,4 +230,40 @@ fn quiet_and_finished_lines_keep_the_cards_inner_edges() {
     let card = right("3 of 5 checks");
     assert!((right("2,246 passed \u{b7} 4m") - card).abs() < 0.01);
     assert!((right("2m") - card).abs() < 0.01);
+}
+
+#[test]
+fn a_value_that_leaves_a_job_name_under_80_px_goes_under_the_name_and_the_name_stays_whole() {
+    let card = Card::Bar(crate::job_model::BarCard {
+        id: 1,
+        name: "recap-people-backfill".to_owned(),
+        right: Some("4% \u{b7} about 9h 46m left".to_owned()),
+        fraction: 0.04,
+        detail: String::new(),
+    });
+    let narrow = Frame::new(vec![card.clone()], 200.0);
+    let name = narrow.texts.iter().find(|(t, _)| t == "recap-people-backfill").unwrap().1;
+    let right = narrow.texts.iter().find(|(t, _)| t.starts_with("4%")).unwrap().1;
+    assert!(
+        right.top() >= name.bottom() - 0.5 && right.left() == name.left(),
+        "{name:?} {right:?}"
+    );
+    let wide = Frame::new(vec![card], 520.0);
+    let name = wide.texts.iter().find(|(t, _)| t == "recap-people-backfill").unwrap().1;
+    let right = wide.texts.iter().find(|(t, _)| t.starts_with("4%")).unwrap().1;
+    assert!((name.center().y - right.center().y).abs() < 2.0);
+}
+
+#[test]
+fn a_quiet_line_with_no_room_for_both_stacks_its_elapsed_time_and_keeps_the_name() {
+    let line = Card::Quiet(crate::job_model::QuietLine {
+        id: 2,
+        name: "deploy-the-staging-environment".to_owned(),
+        elapsed: "3m".to_owned(),
+    });
+    let narrow = Frame::new(vec![line], 140.0);
+    let (_, name) = narrow.texts.iter().find(|(t, _)| t.starts_with("deploy")).unwrap();
+    let (_, elapsed) = narrow.texts.iter().find(|(t, _)| t == "3m").unwrap();
+    assert!(elapsed.top() >= name.bottom() - 0.5, "{name:?} {elapsed:?}");
+    assert!(narrow.texts.iter().all(|(_, r)| r.right() <= 140.5));
 }

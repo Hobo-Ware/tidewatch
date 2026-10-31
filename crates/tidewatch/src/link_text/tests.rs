@@ -17,7 +17,7 @@ fn frame(
     };
     let mut rects = Vec::new();
     let out = ctx.run_ui(raw, |ui| {
-        let laid = Text::line(TEXT, body(14.0), brand::TEXT, 500.0).lay_out(ui.painter());
+        let laid = one_line(TEXT).lay_out(ui.painter());
         rects = laid.link_rects(pos2(20.0, 20.0)).into_iter().map(|(_, rect)| rect).collect();
         laid.paint(ui, Id::new("line"), pos2(20.0, 20.0), brand::TEXT);
     });
@@ -33,7 +33,7 @@ fn selectable_frame(ctx: &egui::Context, events: Vec<Event>) -> (Vec<Rect>, Curs
     };
     let mut rects = Vec::new();
     let out = ctx.run_ui(raw, |ui| {
-        let laid = Text::line(TEXT, body(14.0), brand::TEXT, 500.0).lay_out(ui.painter());
+        let laid = one_line(TEXT).lay_out(ui.painter());
         rects = laid.link_rects(pos2(20.0, 20.0)).into_iter().map(|(_, rect)| rect).collect();
         laid.paint_selectable(ui, Id::new("line"), pos2(20.0, 20.0), brand::TEXT);
     });
@@ -123,7 +123,7 @@ fn the_pointer_over_a_selectable_link_is_a_pointing_hand_and_over_its_text_a_tex
 fn only_link_sections_are_underlined_at_rest() {
     let ctx = egui::Context::default();
     let _ = ctx.run_ui(RawInput::default(), |ui| {
-        let laid = Text::line(TEXT, body(14.0), brand::TEXT, 500.0).lay_out(ui.painter());
+        let laid = one_line(TEXT).lay_out(ui.painter());
         let marks: Vec<(String, Stroke)> = laid
             .job
             .sections
@@ -149,9 +149,15 @@ fn only_link_sections_are_underlined_at_rest() {
 fn a_hovered_link_is_underlined_in_full_teal() {
     let ctx = egui::Context::default();
     let _ = ctx.run_ui(RawInput::default(), |ui| {
-        let laid = Text::line(TEXT, body(14.0), brand::TEXT, 500.0).lay_out(ui.painter());
+        let laid = one_line(TEXT).lay_out(ui.painter());
         let strokes: Vec<Stroke> =
             laid.underlined(0).sections.iter().map(|s| s.format.underline).collect();
         assert_eq!(strokes, [Stroke::NONE, Stroke::new(1.0, brand::TEAL_TEXT), Stroke::NONE]);
     });
+}
+
+fn one_line(text: &str) -> Text {
+    let mut line = Text::new();
+    line.run(text, &egui::epaint::text::TextFormat::simple(body(14.0), brand::TEXT));
+    line.wrapped(500.0, 1)
 }

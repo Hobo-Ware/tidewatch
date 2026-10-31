@@ -75,9 +75,11 @@ fn an_age_reads_now_then_minutes_hours_and_days() {
 fn a_quiet_source_names_the_last_time_it_spoke_and_the_count_since_the_report_is_plural() {
     let at = 14 * 60 * MIN + 2 * MIN;
     assert_eq!(quiet_text(at, &TimeZone::UTC), "no word since 14:02");
-    assert_eq!(since_text(0), None);
-    assert_eq!(since_text(1).as_deref(), Some("1 thing happened since"));
-    assert_eq!(since_text(3).as_deref(), Some("3 things happened since"));
+    assert_eq!(since_text(0, 0), None);
+    assert_eq!(since_text(0, 1).as_deref(), Some("1 thing happened since"));
+    assert_eq!(since_text(0, 3).as_deref(), Some("3 things happened since"));
+    assert_eq!(since_text(1, 9).as_deref(), Some("1 answer since"));
+    assert_eq!(since_text(3, 9).as_deref(), Some("3 answers since"));
 }
 
 #[test]
@@ -212,7 +214,7 @@ fn a_step_tidewatch_ticked_reads_done_only_when_the_report_left_it_open() {
         (Mark::Todo, true, (Mark::Done, true)),
         (Mark::Doing, true, (Mark::Done, true)),
         (Mark::Done, true, (Mark::Done, false)),
-        (Mark::Blocked, true, (Mark::Blocked, false)),
+        (Mark::Blocked, true, (Mark::Done, true)),
         (Mark::Skipped, true, (Mark::Skipped, false)),
         (Mark::Todo, false, (Mark::Todo, false)),
     ];
@@ -226,6 +228,42 @@ fn a_step_tidewatch_ticked_reads_done_only_when_the_report_left_it_open() {
     );
     assert_eq!(why_with_tick(Some("ran 8 tests"), false).as_deref(), Some("ran 8 tests"));
     assert_eq!(why_with_tick(None, false), None);
+}
+
+#[test]
+fn a_finished_step_is_checked_when_tidewatch_ticked_or_ran_it_and_claimed_when_only_the_agent_says_so()
+ {
+    let checks = [
+        CheckSeen { name: "cargo test".into(), passed: true, at_ms: 0 },
+        CheckSeen { name: "cargo clippy".into(), passed: false, at_ms: 0 },
+    ];
+    let cases = [
+        (true, None, Some(Proof::Checked)),
+        (true, Some("ran it"), Some(Proof::Checked)),
+        (false, Some("`cargo test --workspace`: 5195 passed"), Some(Proof::Checked)),
+        (false, Some("Cargo Test passed"), Some(Proof::Checked)),
+        (false, Some("`cargo clippy` clean"), Some(Proof::Claimed)),
+        (false, Some("looked fine to me"), Some(Proof::Claimed)),
+        (false, None, None),
+    ];
+    for (ticked, evidence, want) in cases {
+        assert_eq!(proof(ticked, evidence, &checks), want, "{ticked} {evidence:?}");
+    }
+    assert_eq!([Proof::Checked.word(), Proof::Claimed.word()], ["checked", "claimed"]);
+}
+
+#[test]
+fn an_answer_since_the_report_is_what_the_since_line_says() {
+    let mut story = Story::new().at(0, Source::Hook, hook(HookKind::TurnStarted));
+    story = story.report(MIN, "working", "- nothing");
+    for (n, question) in ["Step 1?", "Step 2?", "Step 3?"].iter().enumerate() {
+        let fact = Fact::QuestionAnswered { question: (*question).into(), answer: "Yes".into() };
+        story = story.at(2 * MIN + n as i64, Source::Transcript, fact);
+        story = story.at(2 * MIN + 10 + n as i64, Source::Hook, tool(n as u32));
+    }
+    let (blocks, _) = story.blocks(7 * MIN);
+    assert_eq!(blocks.report.as_deref(), Some("6m ago"));
+    assert_eq!(blocks.since.as_deref(), Some("3 answers since"));
 }
 
 fn counter_with(on_time: u32, late: u32, missed: u32) -> (Counter, i64) {

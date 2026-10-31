@@ -90,19 +90,16 @@ impl Harness {
 }
 
 #[test]
-fn the_stage_card_draws_four_bars_in_a_row_inside_the_card_over_the_status_box() {
+fn the_stage_card_is_the_task_and_the_status_box_with_no_bars_of_its_own() {
     let harness = Harness::new(card_of(&running(), 12 * MIN), 420.0);
     let placed = harness.placed();
     let card = placed.card.unwrap();
-    let bars: Vec<egui::Rect> = placed.bars.iter().map(|bar| bar.unwrap()).collect();
-    for pair in bars.windows(2) {
-        assert!(pair[0].right() < pair[1].left(), "bars do not overlap");
-        assert_eq!(pair[0].top(), pair[1].top());
-    }
-    assert!(bars.iter().all(|bar| card.contains_rect(*bar)));
     let status = placed.status.unwrap();
-    assert!(card.contains_rect(status) && status.top() > bars[0].bottom());
+    assert!(card.contains_rect(status));
     assert!(placed.struggle.is_none() && placed.take_over.is_none());
+    for (name, _) in &harness.card.bars {
+        assert!(harness.texts.iter().all(|(text, _)| text != name), "{name} is drawn by the panel");
+    }
 }
 
 #[test]
@@ -129,14 +126,12 @@ fn take_over_and_give_up_are_clicks_that_say_which_and_only_on_release() {
 
 #[test]
 fn nothing_overlaps_or_leaves_the_card_from_a_narrow_panel_up() {
-    for width in [220.0, 260.0, 320.0, 420.0, 600.0] {
+    for width in [200.0, 220.0, 260.0, 320.0, 420.0, 600.0] {
         let checking = Meeseeks { phase: Phase::Checking(Step::Tests), ..struggling() };
         let harness = Harness::new(card_of(&checking, 38 * MIN), width);
         let placed = harness.placed();
         let stage = placed.card.unwrap();
         assert!((stage.width() - width).abs() < 0.5, "{width}");
-        let bars: Vec<egui::Rect> = placed.bars.iter().map(|bar| bar.unwrap()).collect();
-        assert!(bars.iter().all(|bar| bar.width() > 10.0 && stage.contains_rect(*bar)), "{width}");
         let struggle = placed.struggle.unwrap();
         assert!(struggle.top() >= stage.bottom(), "{width}");
         assert!(struggle.contains_rect(placed.take_over.unwrap()), "{width}");
@@ -145,46 +140,9 @@ fn nothing_overlaps_or_leaves_the_card_from_a_narrow_panel_up() {
 }
 
 #[test]
-fn an_unticked_stage_and_every_checking_phase_still_draw_four_bars() {
-    let mut meeseeks = running();
-    meeseeks.criteria.tests = false;
-    for phase in [
-        Phase::Checking(Step::Change),
-        Phase::Checking(Step::Tests),
-        Phase::Checking(Step::Proof),
-        Phase::Checking(Step::HandOff),
-        Phase::Poofing,
-    ] {
-        meeseeks.phase = phase;
-        let harness = Harness::new(card_of(&meeseeks, 5 * MIN), 380.0);
-        assert!(harness.placed().bars.iter().all(Option::is_some), "{phase:?}");
-    }
-}
-
-#[test]
-fn a_working_meeseeks_has_no_bars_and_a_shorter_card() {
-    let mut meeseeks = running();
-    let checking = Harness::new(card_of(&meeseeks, 5 * MIN), 380.0).placed();
-    meeseeks.phase = Phase::Working;
-    let working = Harness::new(card_of(&meeseeks, 5 * MIN), 380.0).placed();
-    assert!(working.bars.iter().all(Option::is_none));
-    assert!(working.card.unwrap().height() < checking.card.unwrap().height());
-}
-
-#[test]
-fn each_stage_label_sits_left_aligned_under_its_own_bar() {
-    for width in [320.0, 420.0, 600.0] {
-        let harness = Harness::new(card_of(&running(), 12 * MIN), width);
-        let placed = harness.placed();
-        for (index, (name, _)) in harness.card.bars.iter().enumerate() {
-            let bar = placed.bars[index].unwrap();
-            let (_, at) = harness
-                .texts
-                .iter()
-                .find(|(text, _)| text == name)
-                .unwrap_or_else(|| panic!("{name}: {:?}", harness.texts));
-            assert_eq!(at.x, bar.left(), "{name} at {width}");
-            assert!(at.y > bar.bottom(), "{name} at {width}");
-        }
-    }
+fn a_task_with_no_room_beside_its_meta_gets_the_whole_line_and_the_meta_goes_under_it() {
+    let harness = Harness::new(card_of(&running(), 12 * MIN), 172.0);
+    let title = harness.texts.iter().find(|(text, _)| text.starts_with("Bump")).unwrap().1;
+    let meta = harness.texts.iter().find(|(text, _)| text.contains("12m")).unwrap().1;
+    assert!(meta.y > title.y && meta.x == title.x, "{title:?} {meta:?}");
 }

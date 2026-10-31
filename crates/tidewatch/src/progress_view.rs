@@ -1,19 +1,19 @@
-//! The Progress panel in the History card: ring and goal, a bar per phase, the question, the last
-//! turn's summary, the current phase's rows and the tags that open the lists. Which side a tab shows is kept here.
+//! The Progress panel in the History card, top to bottom: the goal, Waiting on you, Now, Waiting
+//! for, the stage bars and steps, Coming up, the lists, the done check and the links. Which side a
+//! tab shows is kept here.
 
 use std::collections::HashMap;
 use std::time::Duration;
 use tidewatch_core::prefs::RightPanel;
 
-use egui::epaint::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align2, Color32, CornerRadius, Frame, Margin, Rect, ScrollArea, Sense, Shape, Stroke,
-    StrokeKind, Ui, UiBuilder, pos2, vec2,
+    CornerRadius, Frame, Margin, Rect, ScrollArea, Sense, Shape, Stroke, Ui, UiBuilder, pos2, vec2,
 };
 use tidewatch_core::link_board::LinkBoard;
 use tidewatch_core::panel_rules::fresh;
-use tidewatch_core::panel_state::MarkSeen;
-use tidewatch_core::progress::{Entry, Ledger, Mark, State};
+use tidewatch_core::panel_state::{CheckSeen, MarkSeen};
+use tidewatch_core::panel_view::Why;
+use tidewatch_core::progress::{Ledger, State};
 
 use crate::brand;
 use crate::job_model::Card;
@@ -25,29 +25,24 @@ use crate::link_view;
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::panel_blocks::{self, Blocks};
+use crate::progress_blocks::{self as blocks_view, Column, Steps};
 use crate::progress_model::{
-    self as model, Bar, BarKind, ItemRow, Now, StageRows, StageShape, TAGS, Tag, Tone, entries,
-    stage_rows, stages_shown,
+    self as model, Bar, BarKind, StageShape, TAGS, Tag, Tone, entries, stage_rows, stages_shown,
 };
-use crate::progress_ring::{paint_mark, tone_color};
 use crate::progress_state::TabLedger;
-use crate::reader_view::{ellipsized, paint_item};
-use crate::screen_kit::{Size, body, heading, mono};
-use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG};
-use crate::selectable;
+use crate::reader_view::ellipsized;
+use crate::screen_kit::{Size, TEXT_SECONDARY, body, heading};
 
 const WIDE_PAD: f32 = 22.0;
 const NARROW_PAD: f32 = 14.0;
 const NARROW_BELOW: f32 = 330.0;
+/// Below this panel width a row puts its label over its value.
+pub(crate) const STACK_BELOW: f32 = 360.0;
 const GAP: f32 = 22.0;
-const ROW_H: f32 = 30.0;
-const MARK_W: f32 = 18.0;
 const BAR_H: f32 = 5.0;
 const BAR_MIN_W: f32 = 52.0;
+const BAR_MAX_W: f32 = 120.0;
 const BAR_GAP: f32 = 6.0;
-const TAG_H: f32 = Size::Compact.height();
-const TAG_GAP: f32 = 8.0;
-const LIST_LIMIT: usize = 6;
 const SPIN_EVERY: Duration = Duration::from_millis(40);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,22 +108,31 @@ pub(crate) struct TabState {
     pub(crate) chosen: Option<Side>,
     pub(crate) shown: Option<Side>,
     seen: Option<u64>,
-    open: [bool; 3],
+    all_entries: [bool; 3],
+    verified_open: bool,
     all_rows: bool,
-    all_links: bool,
-    archive_links: bool,
+    links: (bool, bool),
 }
 
 impl TabState {
-    pub(crate) fn toggle(&mut self, tag: Tag) {
-        self.open[tag.index()] ^= true;
+    /// Whether the list of `tag` shows all its entries.
+    pub(crate) fn shows_all(self, tag: Tag) -> bool {
+        self.all_entries[tag.index()]
     }
 
-    pub(crate) fn is_open(self, tag: Tag) -> bool {
-        self.open[tag.index()]
+    pub(crate) fn toggle_entries(&mut self, tag: Tag) {
+        self.all_entries[tag.index()] ^= true;
     }
 
-    /// Whether the last turn has Needs you items or a done check the panel has not shown yet.
+    pub(crate) fn verified_open(self) -> bool {
+        self.verified_open
+    }
+
+    pub(crate) fn toggle_verified(&mut self) {
+        self.verified_open ^= true;
+    }
+
+    /// Whether the panel has something new for the owner that it has not shown yet.
     pub(crate) fn unseen(self, attention: Option<u64>) -> bool {
         attention.is_some() && self.seen != attention
     }
@@ -139,6 +143,14 @@ impl TabState {
 
     pub(crate) fn toggle_rows(&mut self) {
         self.all_rows ^= true;
+    }
+
+    fn forget_short_folds(&mut self, counts: [usize; 3]) {
+        for tag in TAGS {
+            if counts[tag.index()] <= blocks_view::LIST_LIMIT {
+                self.all_entries[tag.index()] = false;
+            }
+        }
     }
 }
 
@@ -191,6 +203,44 @@ pub(crate) struct Input<'a> {
     pub(crate) blocks: Blocks,
     /// The steps Tidewatch ticked itself.
     pub(crate) marks: &'a [MarkSeen],
+    /// The checks Tidewatch ran and saw finish.
+    pub(crate) checks: &'a [CheckSeen],
+}
+
+impl Input<'_> {
+    /// The ledger as the panel reads it: the report with its question and wait taken out when the
+    /// facts contradict it.
+    fn ledger_shown(&self) -> Option<std::borrow::Cow<'_, Ledger>> {
+        self.ledger.map(|known| fresh(&known.ledger, self.stale))
+    }
+
+    /// The questions the owner is asked: the report's, else the Needs you items of the last message.
+    fn asked(&self) -> Option<model::Asked> {
+        let fallback: &[String] = self.last_turn.as_ref().map_or(&[], |turn| &turn.needs);
+        match self.ledger_shown() {
+            Some(ledger) => model::asked(&ledger, fallback),
+            None => model::asked(&Ledger::default(), fallback),
+        }
+    }
+
+    /// A number for what wants the owner's eye: a question and the last turn's done check. It
+    /// changes whenever either does, which is what makes them new.
+    pub(crate) fn attention(&self) -> Option<u64> {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let turn = self.last_turn.as_ref().and_then(LastTurn::attention);
+        let asked = self.asked();
+        if turn.is_none() && asked.is_none() {
+            return None;
+        }
+        let mut hasher = DefaultHasher::new();
+        (turn, asked).hash(&mut hasher);
+        Some(hasher.finish())
+    }
+
+    /// Whether the report on show was saved before the turn that runs now.
+    fn holds_last_turn(&self) -> bool {
+        matches!(self.blocks.out_of_date, Some(Why::DoneButTurnRunning | Why::OlderThanTurn))
+    }
 }
 
 fn pad_of(width: f32) -> f32 {
@@ -207,97 +257,159 @@ pub(crate) fn show(
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect).id_salt("progress-panel"));
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
     let pad = pad_of(rect.width()) as i8;
-    state.seen = input.last_turn.as_ref().and_then(LastTurn::attention);
+    state.seen = input.attention();
+    let stack = rect.width() < STACK_BELOW;
     ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
         Frame::new().inner_margin(Margin::symmetric(pad, pad)).show(ui, |ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            action = content(ui, input, state);
+            action = content(ui, input, state, stack);
         });
     });
     action
 }
 
-fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState) -> Option<Action> {
+/// The space between two blocks: none before the first.
+struct Gaps(bool);
+
+impl Gaps {
+    fn before(&mut self, ui: &mut Ui) {
+        if std::mem::replace(&mut self.0, true) {
+            ui.add_space(GAP);
+        }
+    }
+}
+
+fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState, stack: bool) -> Option<Action> {
     let width = ui.available_width();
     let mut action = None;
-    let links = input.links.filter(|board| !board.is_empty());
+    let mut gaps = Gaps(false);
+    let old = input.holds_last_turn();
+    let column = Column { width, stack, dim: false };
     if let Some(card) = input.meeseeks {
+        gaps.before(ui);
         action = meeseeks_view::show(ui, width, card).map(|clicked| match clicked {
             meeseeks_view::Action::TakeOver => Action::TakeOver,
             meeseeks_view::Action::GiveUp => Action::GiveUp,
         });
-        if !input.jobs.is_empty()
-            || input.ledger.is_some()
-            || input.last_turn.is_some()
-            || links.is_some()
-        {
-            ui.add_space(GAP);
-        }
     }
-    let Some(known) = input.ledger else {
-        if let Some(board) = links {
-            action = link_card(ui, width, board, input, state).or(action);
-            if !input.jobs.is_empty() || input.last_turn.is_some() {
-                ui.add_space(GAP);
-            }
-        }
-        let asked = jobs_block(ui, width, input.jobs, input.blocks.jobs.as_deref());
-        action = action.or(asked);
-        if let Some(turn) = &input.last_turn {
-            if !input.jobs.is_empty() {
-                ui.add_space(GAP);
-            }
-            let picked = last_turn_view::show(ui, width, turn, input.blocks.turn.as_deref());
-            action = action.or(picked);
-        }
-        return action;
-    };
-    let ledger = &*fresh(&known.ledger, input.stale);
+    let ledger = input.ledger_shown();
+    let ledger = ledger.as_deref();
     let shape = input.meeseeks.map_or_else(StageShape::default, |card| card.shape);
-    let tone = input.shown.map_or_else(|| model::tone(ledger), model::tone_of);
-    header(ui, width, ledger, tone, &input.blocks);
-    if let Some(board) = links {
-        ui.add_space(GAP);
-        action = link_card(ui, width, board, input, state).or(action);
+    let tone = match (input.shown, ledger) {
+        (Some(state), _) => model::tone_of(state),
+        (None, Some(ledger)) => model::tone(ledger),
+        (None, None) => Tone::Working,
+    };
+    if let Some(ledger) = ledger {
+        gaps.before(ui);
+        header(ui, width, ledger, &input.blocks);
     }
-    let now = model::now_line(ledger, tone, input.jobs);
-    if let Some(now) = &now {
-        ui.add_space(GAP);
-        now_block(ui, width, now);
+    if let Some(asked) = input.asked() {
+        gaps.before(ui);
+        blocks_view::asked_block(ui, column, &asked);
+    }
+    let mut lead = None;
+    if let Some(ledger) = ledger {
+        gaps.before(ui);
+        let now = model::now_line(ledger, tone, input.jobs, old);
+        blocks_view::now_block(ui, column, &now, &input.blocks);
+        lead = now.job.map(|job| job.id);
+        if let Some(what) = model::waiting_for(ledger, tone) {
+            ui.add_space(8.0);
+            blocks_view::waiting_block(ui, column, &what);
+        }
     }
     let rest: Vec<Card> = input
         .jobs
         .iter()
-        .filter(|card| !matches!(card, Card::Bar(bar) if now.as_ref().and_then(|now| now.job) == Some(bar.id)))
+        .filter(|card| !matches!(card, Card::Bar(bar) if lead == Some(bar.id)))
         .cloned()
         .collect();
     if !rest.is_empty() {
-        ui.add_space(GAP);
-        let picked = jobs_block(ui, width, &rest, input.blocks.jobs.as_deref());
+        gaps.before(ui);
+        let picked = jobs_block(ui, width, stack, &rest, input.blocks.jobs.as_deref());
         action = action.or(picked);
     }
-    ui.add_space(GAP);
-    phase_bars(ui, width, ledger, tone, shape);
-    if let Some(turn) = &input.last_turn {
-        ui.add_space(GAP);
-        let picked = last_turn_view::show(ui, width, turn, input.blocks.turn.as_deref());
+    let mut bars = ledger.map_or_else(Vec::new, |ledger| model::bars(ledger, shape));
+    bars.extend(input.meeseeks.and_then(crate::meeseeks_model::Card::checks_bar));
+    if !bars.is_empty() {
+        gaps.before(ui);
+        phase_bars(ui, width, &bars, tone);
+    }
+    let mut heading_shown = !old;
+    if let Some(ledger) = ledger {
+        let report = Column { dim: old, ..column };
+        report_blocks(ui, (input, ledger), (&mut gaps, &mut heading_shown), report, state);
+    }
+    if let Some(turn) = input.last_turn.as_ref().filter(|turn| turn.check.is_some()) {
+        gaps.before(ui);
+        let picked = last_turn_view::show_check(ui, width, turn, input.blocks.turn.as_deref());
         action = picked.or(action);
     }
-    let stages = stage_rows(ledger, shape.kind);
-    if !stages.is_empty() {
-        ui.add_space(GAP);
-        steps_block(ui, width, &stages, input, state);
-    }
-    if TAGS.iter().any(|tag| !entries(ledger, *tag).is_empty()) {
-        ui.add_space(GAP);
-        tags(ui, width, ledger, state);
+    if let Some(board) = input.links.filter(|board| !board.is_empty()) {
+        gaps.before(ui);
+        action = link_card(ui, width, stack, board, input, state).or(action);
     }
     action
+}
+
+fn old_heading(ui: &mut Ui, column: Column, shown: &mut bool) {
+    if !std::mem::replace(shown, true) {
+        blocks_view::section_label(ui, Column { dim: false, ..column }, "From the last turn", None);
+        ui.add_space(4.0);
+    }
+}
+
+/// The blocks that come from the report itself: the steps, Coming up and the lists. A report from
+/// the last turn shows them dimmed under one heading.
+fn report_blocks(
+    ui: &mut Ui,
+    (input, ledger): (&Input<'_>, &Ledger),
+    (gaps, heading_shown): (&mut Gaps, &mut bool),
+    column: Column,
+    state: &mut TabState,
+) {
+    let shape = input.meeseeks.map_or_else(StageShape::default, |card| card.shape);
+    let stages = stage_rows(ledger, shape.kind);
+    if !stages.is_empty() {
+        gaps.before(ui);
+        old_heading(ui, column, heading_shown);
+        steps_block(ui, column, &stages, input, state);
+    }
+    let coming = model::coming_up(ledger);
+    if !coming.is_empty() {
+        gaps.before(ui);
+        old_heading(ui, column, heading_shown);
+        blocks_view::coming_block(ui, column, &coming);
+    }
+    state.forget_short_folds(TAGS.map(|tag| entries(ledger, tag).len()));
+    for tag in [Tag::Decisions, Tag::NotVerified, Tag::Verified] {
+        let list = entries(ledger, tag);
+        if list.is_empty() {
+            continue;
+        }
+        gaps.before(ui);
+        old_heading(ui, column, heading_shown);
+        if tag == Tag::Verified && !state.verified_open() {
+            let text = format!("Show {} verified", list.len());
+            if blocks_view::fold_link(ui, &text, "verified") {
+                state.toggle_verified();
+            }
+            continue;
+        }
+        if blocks_view::list_block(ui, column, (tag, &list), state.shows_all(tag)) {
+            state.toggle_entries(tag);
+        }
+        if tag == Tag::Verified && blocks_view::fold_link(ui, "Hide verified", "verified-hide") {
+            state.toggle_verified();
+        }
+    }
 }
 
 fn link_card(
     ui: &mut Ui,
     width: f32,
+    stack: bool,
     board: &LinkBoard,
     input: &Input<'_>,
     state: &mut TabState,
@@ -305,45 +417,33 @@ fn link_card(
     let copied = link_view::show(
         ui,
         width,
+        stack,
         board,
         input.now_ms,
-        (&mut state.all_links, &mut state.archive_links),
+        (&mut state.links.0, &mut state.links.1),
         input.blocks.links.as_deref(),
     );
     copied.map(Action::CopyLink)
 }
 
-fn single_line(
-    painter: &egui::Painter,
-    text: &str,
-    font: egui::FontId,
-    ink: Color32,
-    w: f32,
-) -> std::sync::Arc<egui::Galley> {
-    ellipsized(painter, text, font, ink, w)
-}
-
-fn header(ui: &mut Ui, width: f32, ledger: &Ledger, tone: Tone, blocks: &Blocks) {
+/// The goal as the panel's title, wrapped, with the mark of a report the facts contradict beside
+/// it or, when the title leaves no room, under it.
+fn header(ui: &mut Ui, width: f32, ledger: &Ledger, blocks: &Blocks) {
     let narrow = width < NARROW_BELOW - 2.0 * NARROW_PAD;
     let title_size = if narrow { 15.0 } else { 17.0 };
     let painter = ui.painter().clone();
     let title =
         if ledger.title.trim().is_empty() { ledger.goal.trim() } else { ledger.title.trim() };
-    let flag_w =
-        blocks.out_of_date.map_or(0.0, |_| panel_blocks::out_of_date_width(&painter) + 8.0);
-    let title = Text::line(title, heading(title_size), brand::TEXT, (width - flag_w).max(40.0))
-        .lay_out(&painter);
-    let age_w = blocks.card_age().map_or(0.0, |text| panel_blocks::age_width(&painter, text) + 8.0);
-    let meta = meta_line(&painter, tone, (width - age_w).max(40.0));
-    let since = blocks
-        .since
-        .as_deref()
-        .map(|text| painter.layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), brand::MUTED));
-    let since_h = since.as_ref().map_or(0.0, |galley| galley.size().y + 4.0);
-    let block = title.size().y + meta.size().y + 4.0 + since_h;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, block), Sense::hover());
-    let title_h = title.size().y;
-    let title_w = title.size().x;
+    let flag_w = blocks.out_of_date.map(|_| panel_blocks::out_of_date_width(&painter));
+    let mut text = Text::new();
+    text.run(title, &egui::epaint::text::TextFormat::simple(heading(title_size), brand::TEXT));
+    let title = text.wrapped(width.max(40.0), 3).lay_out(&painter);
+    let size = title.size();
+    let single = size.y < title_size * 1.8;
+    let beside = flag_w.is_some_and(|flag| single && size.x + 8.0 + flag <= width);
+    let below = flag_w.is_some() && !beside;
+    let extra = if below { Size::Tag.height() + 6.0 } else { 0.0 };
+    let (rect, _) = ui.allocate_exact_size(vec2(width, size.y + extra), Sense::hover());
     title
         .paint_selectable(
             ui,
@@ -353,64 +453,66 @@ fn header(ui: &mut Ui, width: f32, ledger: &Ledger, tone: Tone, blocks: &Blocks)
         )
         .on_hover_text(ledger.goal.trim());
     if let Some(why) = blocks.out_of_date {
-        panel_blocks::paint_out_of_date(
-            ui,
-            rect.left() + title_w + 8.0,
-            rect.top() + title_h / 2.0,
-            why,
-        );
+        let (left, mid) = if beside {
+            (rect.left() + size.x + 8.0, rect.top() + size.y / 2.0)
+        } else {
+            (rect.left(), rect.top() + size.y + 6.0 + Size::Tag.height() / 2.0)
+        };
+        panel_blocks::paint_out_of_date(ui, left, mid, why);
     }
-    let meta_top = rect.top() + title_h + 4.0;
-    let meta_mid = meta_top + meta.size().y / 2.0;
-    let meta_h = paint_row(ui, rect.left(), meta_top, meta);
-    if let Some(text) = blocks.card_age() {
-        panel_blocks::paint_age(&painter, rect.right(), meta_mid, text);
-    }
-    if let Some(galley) = since {
-        selectable::galley(ui, pos2(rect.left(), meta_top + meta_h), galley, brand::MUTED);
-    }
-}
-
-fn paint_row(ui: &Ui, x: f32, y: f32, galley: std::sync::Arc<egui::Galley>) -> f32 {
-    let height = galley.size().y;
-    selectable::galley(ui, pos2(x, y), galley, brand::MUTED);
-    height + 4.0
-}
-
-fn meta_line(painter: &egui::Painter, tone: Tone, room: f32) -> std::sync::Arc<egui::Galley> {
-    let ink = tone_color(tone);
-    let mut job = LayoutJob::default();
-    job.append("\u{25cf} ", 0.0, TextFormat::simple(body(TEXT_SECONDARY), ink));
-    job.append(tone.word(), 0.0, TextFormat::simple(body(TEXT_SECONDARY), ink));
-    job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
-    painter.layout_job(job)
 }
 
 /// The job cards under a caption row that carries the block's age, when it has one.
-fn jobs_block(ui: &mut Ui, width: f32, cards: &[Card], age: Option<&str>) -> Option<Action> {
+fn jobs_block(
+    ui: &mut Ui,
+    width: f32,
+    stack: bool,
+    cards: &[Card],
+    age: Option<&str>,
+) -> Option<Action> {
     if let Some(age) = age.filter(|_| !cards.is_empty()) {
         let painter = ui.painter().clone();
-        let galley = painter.layout_no_wrap("JOBS".to_owned(), body(12.0), brand::MUTED);
+        let galley =
+            painter.layout_no_wrap("Jobs".to_owned(), heading(TEXT_SECONDARY), brand::SOFT);
         let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + 8.0), Sense::hover());
         let mid = rect.top() + galley.size().y / 2.0;
-        painter.galley(pos2(rect.left(), rect.top()), galley, brand::MUTED);
+        painter.galley(pos2(rect.left(), rect.top()), galley, brand::SOFT);
         panel_blocks::paint_age(&painter, rect.right(), mid, age);
     }
-    job_view::show(ui, width, cards).map(|(job, message)| Action::Ask { job, message })
+    job_view::show(ui, width, stack, cards).map(|(job, message)| Action::Ask { job, message })
 }
 
-/// How many bars fit in a row of `width`, and so how the phases wrap.
-pub(crate) fn bar_columns(width: f32, count: usize) -> usize {
-    let fit = ((width + BAR_GAP) / (BAR_MIN_W + BAR_GAP)).floor() as usize;
+/// Where pills of `row_h` tall, `gap` apart, sit when they flow in rows of `width`: the top left
+/// of each, and the height of everything.
+pub(crate) fn flow(widths: &[f32], width: f32, row_h: f32, gap: f32) -> (Vec<(f32, f32)>, f32) {
+    let mut at = Vec::with_capacity(widths.len());
+    let (mut x, mut y) = (0.0_f32, 0.0_f32);
+    for pill in widths {
+        if x > 0.0 && x + pill > width {
+            x = 0.0;
+            y += row_h + gap;
+        }
+        at.push((x, y));
+        x += pill + gap;
+    }
+    (at, if widths.is_empty() { 0.0 } else { y + row_h })
+}
+
+/// How many bars fit in a row of `width` when none may be narrower than `min`, and so how the
+/// phases wrap.
+pub(crate) fn bar_columns(width: f32, count: usize, min: f32) -> usize {
+    let fit = ((width + BAR_GAP) / (min.max(BAR_MIN_W) + BAR_GAP)).floor() as usize;
     fit.clamp(1, count.max(1))
 }
 
-fn phase_bars(ui: &mut Ui, width: f32, ledger: &Ledger, tone: Tone, shape: StageShape) {
-    let bars = model::bars(ledger, shape);
-    if bars.is_empty() {
-        return;
-    }
-    let columns = bar_columns(width, bars.len());
+fn phase_bars(ui: &mut Ui, width: f32, bars: &[Bar], tone: Tone) {
+    let painter = ui.painter().clone();
+    let labels: Vec<_> = bars
+        .iter()
+        .map(|bar| painter.layout_no_wrap(bar.label.clone(), body(12.0), brand::MUTED))
+        .collect();
+    let widest = labels.iter().map(|galley| galley.size().x).fold(0.0, f32::max);
+    let columns = bar_columns(width, bars.len(), widest.min(BAR_MAX_W));
     let col_w = (width - BAR_GAP * (columns - 1) as f32) / columns as f32;
     let label_h = 16.0;
     let row_h = BAR_H + 7.0 + label_h;
@@ -451,7 +553,7 @@ fn paint_bar(ui: &mut Ui, column: Rect, bar: &Bar, tone: Tone, index: usize) {
         }
     }
     let ink = if bar.current { brand::TEXT } else { brand::MUTED };
-    let label = single_line(painter, &bar.label, body(12.0), ink, column.width());
+    let label = ellipsized(painter, &bar.label, body(12.0), ink, column.width());
     let at = pos2(column.left(), track.bottom() + 7.0);
     painter.galley(at, label, ink);
     let area = Rect::from_min_size(column.min, vec2(column.width(), column.height()));
@@ -463,285 +565,35 @@ fn paint_bar(ui: &mut Ui, column: Rect, bar: &Bar, tone: Tone, index: usize) {
     ui.interact(area, ui.id().with(("progress-bar", index)), Sense::hover()).on_hover_text(tip);
 }
 
-fn now_block(ui: &mut Ui, width: f32, now: &Now) {
-    const LINE_H: f32 = 22.0;
-    const BAR_GAP: f32 = 6.0;
-    const BAR_HEIGHT: f32 = 6.0;
-    const MIN_TEXT_W: f32 = 90.0;
-    let painter = ui.painter().clone();
-    let label = painter.layout_no_wrap(now.label.to_owned(), body(14.0), brand::MUTED);
-    let right = now
-        .right
-        .as_ref()
-        .map(|text| painter.layout_no_wrap(text.clone(), body(14.0), brand::MUTED));
-    let right_w = right.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
-    let text_x = label.size().x + 8.0;
-    let stacked = right.is_some() && width - text_x - right_w < MIN_TEXT_W;
-    let text_room = if stacked { width - text_x } else { width - text_x - right_w };
-    let text = ellipsized(&painter, &now.text, body(14.0), brand::TEXT, text_room.max(20.0));
-    let lines = if stacked { 2.0 } else { 1.0 };
-    let bar_h = if now.fraction.is_some() { BAR_GAP + BAR_HEIGHT } else { 0.0 };
-    let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_H * lines + bar_h), Sense::hover());
-    let mid = rect.top() + LINE_H / 2.0;
-    painter.galley(pos2(rect.left(), mid - label.size().y / 2.0), label, brand::MUTED);
-    selectable::galley(
-        ui,
-        pos2(rect.left() + text_x, mid - text.size().y / 2.0),
-        text,
-        brand::TEXT,
-    );
-    if let (Some(right), Some(full)) = (right, now.right.as_deref()) {
-        if stacked {
-            let fitted = ellipsized(&painter, full, body(14.0), brand::MUTED, width);
-            let at = pos2(rect.left(), mid + LINE_H - fitted.size().y / 2.0);
-            painter.galley(at, fitted, brand::MUTED);
-        } else {
-            let at = pos2(rect.right() - right.size().x, mid - right.size().y / 2.0);
-            painter.galley(at, right, brand::MUTED);
-        }
-    }
-    if let Some(fraction) = now.fraction {
-        let track = Rect::from_min_size(
-            pos2(rect.left(), rect.top() + LINE_H * lines + BAR_GAP),
-            vec2(rect.width(), BAR_HEIGHT),
-        );
-        let radius = CornerRadius::same(3);
-        painter.rect_filled(track, radius, brand::ITEM_LINE);
-        if fraction > 0.0 {
-            let fill = Rect::from_min_size(track.min, vec2(track.width() * fraction, BAR_HEIGHT));
-            painter.rect_filled(fill, radius, brand::TEAL);
-        }
-    }
-}
-
 fn steps_block(
     ui: &mut Ui,
-    width: f32,
-    stages: &[StageRows<'_>],
+    column: Column,
+    stages: &[model::StageRows<'_>],
     input: &Input<'_>,
     state: &mut TabState,
 ) {
-    let shown = stages_shown(stages, state.show_all_rows());
+    let all = state.show_all_rows();
+    let shown = stages_shown(stages, all);
     let hidden = stages.len() - shown.len();
-    let mut spinning = false;
-    for (index, stage) in shown.iter().enumerate() {
-        if index > 0 {
-            ui.add_space(12.0);
-        }
-        stage_heading(ui, width, &stage.title);
-        for row in &stage.rows {
-            let (mark, by_tidewatch) = panel_blocks::tick(
-                row.mark,
-                panel_blocks::ticked_by_tidewatch(input.marks, row.text),
-            );
-            spinning |= mark == Mark::Doing;
-            item_row(ui, width, (row, mark, by_tidewatch), input.time);
-        }
-    }
+    let folds = stages.iter().any(|stage| stage.over) && stages.iter().any(|stage| !stage.over);
+    let steps =
+        Steps { stages: &shown, marks: input.marks, checks: input.checks, time: input.time };
+    let spinning = blocks_view::steps_block(ui, column, &steps);
     if spinning && input.animate {
         ui.ctx().request_repaint_after(SPIN_EVERY);
     }
-    if hidden > 0 || state.show_all_rows() {
-        let text = if state.show_all_rows() {
-            "Show less".to_owned()
-        } else {
-            format!("Show {hidden} finished stage{}", if hidden == 1 { "" } else { "s" })
-        };
-        ui.add_space(4.0);
-        if link(ui, &text) {
-            state.toggle_rows();
-        }
+    if !folds {
+        state.all_rows = false;
+        return;
     }
-}
-
-fn stage_heading(ui: &mut Ui, width: f32, title: &str) {
-    let painter = ui.painter().clone();
-    let galley = ellipsized(&painter, &title.to_uppercase(), body(12.0), brand::MUTED, width);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + 8.0), Sense::hover());
-    selectable::galley(ui, pos2(rect.left(), rect.top()), galley, brand::MUTED);
-}
-
-fn item_row(
-    ui: &mut Ui,
-    width: f32,
-    (row, mark, by_tidewatch): (&ItemRow<'_>, Mark, bool),
-    time: f64,
-) {
-    let (rect, response) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
-    let painter = ui.painter();
-    paint_mark(painter, pos2(rect.left() + MARK_W / 2.0, rect.center().y), 14.0, mark, time);
-    let text_x = rect.left() + MARK_W + 12.0;
-    let muted = matches!(mark, Mark::Skipped);
-    let ink = if muted { brand::FAINT } else { brand::TEXT };
-    let room = (rect.right() - text_x).max(1.0);
-    let why_ink = if mark == Mark::Blocked { brand::NEEDS } else { brand::FAINT };
-    let why_text = panel_blocks::why_with_tick(row.why, by_tidewatch);
-    let why = why_text.as_deref().map(|why| {
-        Text::line(why, body(TEXT_SECONDARY), why_ink, (room * 0.42).max(40.0)).lay_out(painter)
-    });
-    let why_w = why.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
-    let label =
-        Text::line(row.text, body(TEXT_BODY), ink, (room - why_w).max(1.0)).lay_out(painter);
-    let at = pos2(text_x, rect.center().y - label.size().y / 2.0);
-    let tip = match why_text.as_deref() {
-        Some(why) => format!("{} - {why}", row.text),
-        None => row.text.to_owned(),
+    let text = if all {
+        "Show less".to_owned()
+    } else {
+        format!("Show {hidden} finished stage{}", if hidden == 1 { "" } else { "s" })
     };
-    label.paint_selectable(ui, response.id.with("label"), at, ink).on_hover_text(&tip);
-    if let Some(galley) = why {
-        let at = pos2(rect.right() - galley.size().x, rect.center().y - galley.size().y / 2.0);
-        galley.paint_selectable(ui, response.id.with("why"), at, why_ink).on_hover_text(&tip);
-    }
-    response.on_hover_text(tip);
-}
-
-fn link(ui: &mut Ui, text: &str) -> bool {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), brand::MUTED);
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(galley.size().x + 8.0, 22.0), Sense::click());
-    let ink = if response.hovered() { brand::TEXT } else { brand::MUTED };
-    ui.painter().galley(rect.left_center() + vec2(0.0, -galley.size().y / 2.0), galley, ink);
-    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-}
-
-/// Where pills of `row_h` tall, `gap` apart, sit when they flow in rows of `width`: the top left
-/// of each, and the height of everything.
-pub(crate) fn flow(widths: &[f32], width: f32, row_h: f32, gap: f32) -> (Vec<(f32, f32)>, f32) {
-    let mut at = Vec::with_capacity(widths.len());
-    let (mut x, mut y) = (0.0_f32, 0.0_f32);
-    for pill in widths {
-        if x > 0.0 && x + pill > width {
-            x = 0.0;
-            y += row_h + gap;
-        }
-        at.push((x, y));
-        x += pill + gap;
-    }
-    (at, if widths.is_empty() { 0.0 } else { y + row_h })
-}
-
-fn tags(ui: &mut Ui, width: f32, ledger: &Ledger, state: &mut TabState) {
-    let shown: Vec<(Tag, usize)> = TAGS
-        .iter()
-        .map(|tag| (*tag, entries(ledger, *tag).len()))
-        .filter(|(_, count)| *count > 0)
-        .collect();
-    let labels: Vec<_> = shown.iter().map(|(tag, count)| tag.label(*count)).collect();
-    let icon_w = |tag: Tag| if tag == Tag::Decisions { 0.0 } else { 16.0 };
-    let widths: Vec<f32> = shown
-        .iter()
-        .zip(&labels)
-        .map(|((tag, _), label)| {
-            let text =
-                ui.painter().layout_no_wrap(label.clone(), body(TEXT_SECONDARY), brand::SOFT);
-            (text.size().x + 22.0 + icon_w(*tag)).min(width)
-        })
-        .collect();
-    let (places, height) = flow(&widths, width, TAG_H, TAG_GAP);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    for (index, ((tag, _), label)) in shown.iter().zip(&labels).enumerate() {
-        let (x, y) = places[index];
-        let pill = Rect::from_min_size(rect.min + vec2(x, y), vec2(widths[index], TAG_H));
-        let response =
-            ui.interact(pill, ui.id().with(("progress-tag", tag.index())), Sense::click());
-        let open = state.is_open(*tag);
-        let painter = ui.painter();
-        let line = if open {
-            brand::TEAL.gamma_multiply(0.6)
-        } else if response.hovered() {
-            brand::FIELD_LINE
-        } else {
-            brand::ITEM_LINE
-        };
-        painter.rect(
-            pill,
-            CornerRadius::same(Size::Compact.radius()),
-            Color32::TRANSPARENT,
-            Stroke::new(1.0, line),
-            StrokeKind::Inside,
-        );
-        let ink = if open { brand::TEXT } else { brand::SOFT };
-        let mut left = pill.left() + 11.0;
-        match tag {
-            Tag::Verified => {
-                paint_mark(painter, pos2(left + 5.0, pill.center().y), 12.0, Mark::Done, 0.0);
-                left += 16.0;
-            }
-            Tag::NotVerified => {
-                paint_mark(painter, pos2(left + 5.0, pill.center().y), 12.0, Mark::Todo, 0.0);
-                left += 16.0;
-            }
-            Tag::Decisions => {}
-        }
-        let text = single_line(
-            painter,
-            label,
-            body(TEXT_SECONDARY),
-            ink,
-            (pill.right() - 11.0 - left).max(1.0),
-        );
-        painter.galley(pos2(left, pill.center().y - text.size().y / 2.0), text, ink);
-        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            state.toggle(*tag);
-        }
-    }
-    for (tag, _) in &shown {
-        if state.is_open(*tag) {
-            ui.add_space(14.0);
-            entry_list(ui, width, *tag, &entries(ledger, *tag));
-        }
-    }
-}
-
-fn entry_list(ui: &mut Ui, width: f32, tag: Tag, list: &[&Entry]) {
-    const PAD: f32 = 10.0;
-    const BULLET: f32 = 16.0;
-    let painter = ui.painter().clone();
-    let caption = painter.layout_no_wrap(tag.caption().to_owned(), body(TEXT_TAG), brand::FAINT);
-    let (cap_rect, _) = ui.allocate_exact_size(vec2(width, caption.size().y + 6.0), Sense::hover());
-    selectable::galley(ui, cap_rect.left_top(), caption, brand::FAINT);
-    let text_w = (width - 2.0 * PAD - BULLET).max(40.0);
-    let galleys: Vec<_> = list
-        .iter()
-        .take(LIST_LIMIT)
-        .map(|entry| {
-            let mut text = Text::new();
-            text.run(entry.text.trim(), &TextFormat::simple(body(TEXT_SECONDARY), brand::SOFT));
-            if let Some(why) = entry.why.as_deref().map(str::trim).filter(|why| !why.is_empty()) {
-                text.run(&format!("  {why}"), &TextFormat::simple(body(12.0), brand::FAINT));
-            }
-            text.wrapped(text_w, 3).lay_out(&painter)
-        })
-        .collect();
-    let more = list.len().saturating_sub(LIST_LIMIT);
-    let more_h = if more > 0 { 20.0 } else { 0.0 };
-    let body_h: f32 = galleys.iter().map(|galley| galley.size().y + 8.0).sum::<f32>() - 8.0;
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(width, body_h + more_h + 2.0 * PAD), Sense::hover());
-    paint_item(&painter, rect, false);
-    let mut y = rect.top() + PAD;
-    for (index, galley) in galleys.into_iter().enumerate() {
-        let center = pos2(rect.left() + PAD + 5.0, y + 8.0);
-        match tag {
-            Tag::Verified => paint_mark(&painter, center, 12.0, Mark::Done, 0.0),
-            Tag::NotVerified => paint_mark(&painter, center, 12.0, Mark::Todo, 0.0),
-            Tag::Decisions => {
-                painter.circle_filled(center, 2.0, brand::FAINT);
-            }
-        }
-        let height = galley.size().y;
-        let line_id = ui.id().with(("entry-text", tag.caption(), index));
-        galley.paint_selectable(ui, line_id, pos2(rect.left() + PAD + BULLET, y), brand::SOFT);
-        y += height + if index + 1 < LIST_LIMIT { 8.0 } else { 0.0 };
-    }
-    if more > 0 {
-        painter.text(
-            pos2(rect.left() + PAD + BULLET, rect.bottom() - PAD - 8.0),
-            Align2::LEFT_CENTER,
-            format!("+{more} more"),
-            mono(TEXT_TAG),
-            brand::FAINT,
-        );
+    ui.add_space(4.0);
+    if blocks_view::fold_link(ui, &text, "stages") {
+        state.toggle_rows();
     }
 }
 

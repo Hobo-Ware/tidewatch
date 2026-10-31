@@ -147,3 +147,31 @@ fn a_task_that_names_a_pull_request_checks_and_labels_the_update_of_it() {
     let names: Vec<&str> = card(&meeseeks, "x", 0, None).bars.iter().map(|(n, _)| *n).collect();
     assert_eq!(names, ["Change", "Tests", "Proof", "Hand off"]);
 }
+
+fn card_with(looks: [Look; 4]) -> Card {
+    let mut shown = card(&running(), "x", 0, None);
+    shown.bars =
+        ["Change", "Tests", "Proof", "Hand off"].into_iter().zip(looks).collect::<Vec<_>>();
+    shown
+}
+
+#[test]
+fn the_four_checks_are_one_bar_of_the_stage_row_filled_by_what_is_done() {
+    let none = card(&running(), "x", 0, None);
+    assert_eq!(none.checks_bar(), None, "no bar until a check has begun");
+    let half = card_with([Look::Done, Look::Active, Look::Pending, Look::Pending]);
+    let bar = half.checks_bar().unwrap();
+    assert_eq!((bar.label.as_str(), bar.current, bar.done, bar.total), ("Checks", true, 1, 4));
+    assert_eq!(bar.fill, 0.375);
+    let over = card_with([Look::Done, Look::Done, Look::Done, Look::Done]).checks_bar().unwrap();
+    assert_eq!((over.fill, over.current), (1.0, false));
+}
+
+#[test]
+fn skipped_checks_leave_the_bar_and_all_skipped_is_a_dashed_bar() {
+    let some = card_with([Look::Done, Look::Skipped, Look::Skipped, Look::Pending]);
+    let bar = some.checks_bar().unwrap();
+    assert_eq!((bar.total, bar.fill, bar.kind), (2, 0.5, BarKind::Plain));
+    let all = card_with([Look::Skipped; 4]).checks_bar().unwrap();
+    assert_eq!((all.total, all.kind), (0, BarKind::Skipped));
+}
