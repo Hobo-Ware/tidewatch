@@ -38,6 +38,7 @@ pub(crate) struct Polled {
     pub(crate) wake: Wake,
     /// Every status that changed, by tab id.
     pub(crate) changes: Vec<(u64, Change)>,
+    pub(crate) seen: Vec<(u64, TermSnapshot)>,
 }
 
 /// What a message asks the app to do beyond updating the tab's run.
@@ -169,6 +170,7 @@ pub(crate) fn poll<T>(
 ) -> Polled {
     let mut wake = Wake::default();
     let mut changes = Vec::new();
+    let mut looked = Vec::new();
     for tab in tabs.items_mut() {
         let Some(agent) = tab.pane.agent.as_mut() else { continue };
         if let Body::Shell(term) = &tab.pane.body {
@@ -176,6 +178,7 @@ pub(crate) fn poll<T>(
             if seen.activity {
                 agent.reader.poke(now);
             }
+            looked.push((tab.id, seen.clone()));
             agent.run.feed(seen, now);
         }
         if let Some(change) = agent.run.refresh(now) {
@@ -190,7 +193,7 @@ pub(crate) fn poll<T>(
             wake.next_change = Some(wake.next_change.map_or(at, |soonest| soonest.min(at)));
         }
     }
-    Polled { wake, changes }
+    Polled { wake, changes, seen: looked }
 }
 
 pub(crate) fn settle_restarts<T>(
@@ -713,5 +716,21 @@ mod tests {
         let (mut plain, plain_id) = tabs_with_agent();
         assert_eq!(route(&mut plain, said(plain_id), 1.0), None, "an ordinary agent is ignored");
         assert_eq!(route(&mut tabs, said(99), 1.0), None, "and so is a closed tab");
+    }
+
+    #[test]
+    fn the_poll_hands_back_what_each_agent_tabs_terminal_showed_and_nothing_for_other_tabs() {
+        let (mut tabs, id) = tabs_with_agent();
+        let (mut notifier, _) = recording_notifier();
+        let seen = |_: &u32| TermSnapshot {
+            activity: true,
+            title: Some("claude".into()),
+            ..TermSnapshot::default()
+        };
+        let polled = poll(&mut tabs, seen, &mut notifier, false, 1.0);
+        assert_eq!(polled.seen.len(), 1);
+        assert_eq!(polled.seen[0].0, id);
+        assert_eq!(polled.seen[0].1.title.as_deref(), Some("claude"));
+        assert!(polled.seen[0].1.activity);
     }
 }

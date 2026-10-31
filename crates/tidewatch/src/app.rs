@@ -109,6 +109,7 @@ use crate::overview_checklist;
 use crate::palette::Palette;
 use crate::pane::Pane;
 use crate::pane_jobs;
+use crate::panel_host;
 use crate::pr_glue;
 use crate::progress_glue;
 use crate::progress_view;
@@ -198,6 +199,7 @@ pub(crate) struct Tidewatch {
     comments: comment_glue::Host,
     progress: progress_glue::Host,
     job_live: job_glue::Host,
+    panel: panel_host::Host,
     link_live: link_glue::Host,
     me: me_glue::Host,
     avatar_live: avatar_glue::Host,
@@ -364,6 +366,10 @@ impl Tidewatch {
             &cc.egui_ctx,
         );
         let dev_view = DevView::from_env();
+        let panel = panel_host::Host::from_env(
+            paths.is_some() && screenshot.is_none(),
+            dev_view.status_log,
+        );
         let trust = Trust::new(paths.as_ref(), cli_home);
         let dev_session = DevSession::from_env();
         let saver = Saver::new(paths.as_ref(), screenshot.is_none(), dev_session.debounce());
@@ -444,6 +450,7 @@ impl Tidewatch {
             comments: comment_glue::Host::new(),
             progress,
             job_live,
+            panel,
             link_live,
             me,
             avatar_live,

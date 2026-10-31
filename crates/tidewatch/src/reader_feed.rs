@@ -4,11 +4,13 @@
 //! that is idle costs one stat and one empty read every few seconds, and no repaint.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::transcript::{Entry, Source, Tail};
+use tidewatch_core::transcript_facts::{self, Timed};
 use tidewatch_core::transcript_locate::Locator;
 
 const LOCATE_FAST: Duration = Duration::from_millis(500);
@@ -17,6 +19,7 @@ const LOCATE_FAST_WINDOW: Duration = Duration::from_secs(30);
 const MISSING_AFTER: Duration = Duration::from_secs(20);
 const TAIL_FIRST: Duration = Duration::from_millis(400);
 const TAIL_MAX: Duration = Duration::from_secs(15);
+const TAIL_MAX_WORKING: Duration = Duration::from_secs(2);
 const NEWER_COPY_LOOK: Duration = Duration::from_secs(5);
 
 /// How long to wait before the next look for the file: a fast retry right after launch (the file
@@ -33,8 +36,12 @@ pub(crate) fn is_missing(since_start: Duration) -> bool {
 
 /// How long to wait before the next read: short right after new lines, doubling for every read
 /// that found nothing, up to a ceiling.
-pub(crate) fn tail_delay(empty_reads: u32) -> Duration {
-    TAIL_FIRST.saturating_mul(1_u32.checked_shl(empty_reads).unwrap_or(u32::MAX)).min(TAIL_MAX)
+///
+/// A working agent gets a lower ceiling: a turn that ends is seen within seconds even when no hook
+/// says so.
+pub(crate) fn tail_delay(empty_reads: u32, working: bool) -> Duration {
+    let ceiling = if working { TAIL_MAX_WORKING } else { TAIL_MAX };
+    TAIL_FIRST.saturating_mul(1_u32.checked_shl(empty_reads).unwrap_or(u32::MAX)).min(ceiling)
 }
 
 #[derive(Debug)]
@@ -42,6 +49,7 @@ pub(crate) enum Message {
     Found(PathBuf),
     Missing,
     Entries(Vec<Entry>),
+    Facts(Vec<Timed>),
     Title(String),
 }
 
@@ -54,6 +62,7 @@ enum Command {
 pub(crate) struct Feed {
     commands: Sender<Command>,
     messages: Receiver<Message>,
+    working: std::sync::Arc<AtomicBool>,
 }
 
 impl Feed {
@@ -75,8 +84,19 @@ impl Feed {
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (message_tx, messages) = mpsc::channel();
-        thread::spawn(move || run(source, locator, copy_look, &command_rx, &message_tx, &wake));
-        Self { commands, messages }
+        let working = std::sync::Arc::new(AtomicBool::new(false));
+        let reading = std::sync::Arc::clone(&working);
+        thread::spawn(move || {
+            run(source, locator, copy_look, &reading, &command_rx, &message_tx, &wake);
+        });
+        Self { commands, messages, working }
+    }
+
+    /// A switch to working pokes the thread so the lower ceiling applies at once.
+    pub(crate) fn set_working(&self, working: bool) {
+        if self.working.swap(working, Ordering::Relaxed) != working && working {
+            self.poke();
+        }
     }
 
     pub(crate) fn poke(&self) {
@@ -103,11 +123,13 @@ fn run(
     source: Source,
     mut locator: Locator,
     copy_look: Duration,
+    working: &AtomicBool,
     commands: &Receiver<Command>,
     messages: &Sender<Message>,
     wake: &impl Fn(),
 ) {
     let started = Instant::now();
+    let since_ms = locator.started_after_ms.unwrap_or(0);
     let mut tail: Option<Tail> = None;
     let mut empty_reads = 0_u32;
     let mut said_missing = false;
@@ -164,7 +186,7 @@ fn run(
                 }
             }
         }
-        let entries = tail.as_mut().map(Tail::poll).unwrap_or_default();
+        let (entries, marks) = tail.as_mut().map(Tail::poll_marked).unwrap_or_default();
         let title = tail
             .as_ref()
             .and_then(Tail::session_title)
@@ -176,15 +198,19 @@ fn run(
                 return;
             }
         }
-        if entries.is_empty() {
+        if entries.is_empty() && marks.is_empty() {
             empty_reads = empty_reads.saturating_add(1);
         } else {
             empty_reads = 0;
-            if !send(Message::Entries(entries)) {
+            let facts = transcript_facts::facts_of(&entries, &marks, since_ms);
+            if !facts.is_empty() && !send(Message::Facts(facts)) {
+                return;
+            }
+            if !entries.is_empty() && !send(Message::Entries(entries)) {
                 return;
             }
         }
-        delay = tail_delay(empty_reads);
+        delay = tail_delay(empty_reads, working.load(Ordering::Relaxed));
         if source == Source::Claude {
             delay = delay.min(copy_look.saturating_sub(copy_looked.elapsed()));
         }
@@ -213,9 +239,16 @@ mod tests {
 
     #[test]
     fn reads_back_off_while_the_file_is_quiet_and_reset_after_lines() {
-        let delays: Vec<_> = (0..8).map(tail_delay).map(|d| d.as_millis()).collect();
+        let delays: Vec<_> = (0..8).map(|n| tail_delay(n, false).as_millis()).collect();
         assert_eq!(delays, [400, 800, 1600, 3200, 6400, 12800, 15000, 15000]);
-        assert_eq!(tail_delay(u32::MAX), TAIL_MAX);
+        assert_eq!(tail_delay(u32::MAX, false), TAIL_MAX);
+    }
+
+    #[test]
+    fn a_working_agent_is_looked_at_every_two_seconds_at_most() {
+        let delays: Vec<_> = (0..8).map(|n| tail_delay(n, true).as_millis()).collect();
+        assert_eq!(delays, [400, 800, 1600, 2000, 2000, 2000, 2000, 2000]);
+        assert_eq!(tail_delay(u32::MAX, true), TAIL_MAX_WORKING);
     }
 
     fn claude_line(text: &str) -> String {
@@ -417,5 +450,48 @@ mod tests {
         thread::sleep(Duration::from_millis(500));
         let seen = feed.drain();
         assert!(seen.iter().all(|m| !matches!(m, Message::Found(_) | Message::Entries(_))));
+    }
+
+    const SESSION: &str = "33333333-aaaa-bbbb-cccc-000000000003";
+
+    fn turn_file(since_ms: Option<i64>) -> (tempfile::TempDir, Feed) {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("work");
+        fs::create_dir_all(&cwd).unwrap();
+        let dir = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(tidewatch_core::transcript_locate::claude_project_dir_name(&cwd));
+        fs::create_dir_all(&dir).unwrap();
+        let prompt = "{\"type\":\"user\",\"timestamp\":\"2026-10-13T10:00:00Z\",\"message\":{\"content\":\"go\"}}\n";
+        let end = "{\"type\":\"assistant\",\"timestamp\":\"2026-10-13T10:00:05Z\",\"message\":{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\n";
+        fs::write(dir.join(format!("{SESSION}.jsonl")), format!("{prompt}{end}")).unwrap();
+        let mut locator = Locator::new(home.path(), &cwd);
+        locator.session_id = Some(SESSION.into());
+        locator.started_after_ms = since_ms;
+        (home, Feed::start(Source::Claude, locator, || {}))
+    }
+
+    #[test]
+    fn the_turn_a_transcript_shows_arrives_as_panel_facts_beside_its_entries() {
+        let (_home, feed) = turn_file(None);
+        let seen = wait_for(&feed, |m| matches!(m, Message::Entries(_)));
+        let facts: Vec<_> = seen
+            .iter()
+            .filter_map(|m| match m {
+                Message::Facts(facts) => Some(facts.iter().map(|timed| timed.fact.name())),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(facts, ["turn_started", "said", "turn_ended"]);
+    }
+
+    #[test]
+    fn a_turn_written_before_the_tab_started_is_history_and_sends_no_facts() {
+        let (_home, feed) = turn_file(Some(1_791_936_000_000));
+        let seen = wait_for(&feed, |m| matches!(m, Message::Entries(_)));
+        assert!(seen.iter().all(|m| !matches!(m, Message::Facts(_))));
     }
 }

@@ -3,6 +3,9 @@
 use std::time::Duration;
 
 use stdusk_core::terminal::PtyTerm;
+use tidewatch_core::events::TabEvent;
+use tidewatch_core::panel_event::{ChecksWord, Fact, PrFacts, PrWord, Source};
+use tidewatch_core::pr_status::{State, Summary, SummaryChecks};
 use tidewatch_core::trust::TrustCli;
 
 use super::{ANIMATION_FRAME_MS, Tidewatch, WAKE_SLACK_S, wall_ms};
@@ -12,6 +15,7 @@ use crate::agent_run::TermSnapshot;
 use crate::notify;
 use crate::pane::{Body, Pane};
 use crate::pane_jobs;
+use crate::panel_host;
 use crate::prompt_ghost;
 use crate::tabs::Tabs;
 
@@ -119,10 +123,45 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn drive_panel(&mut self) {
+        let now_ms = wall_ms() as i64;
+        for (tab, report) in self.job_live.take_told() {
+            self.panel.push(tab, Source::Job, Fact::Job(report), now_ms);
+        }
+        for (tab, link) in self.link_live.take_told() {
+            self.panel.push(tab, Source::Link, Fact::Link(link), now_ms);
+        }
+        for (tab, passed) in self.done_check.take_finished() {
+            let check = Fact::Check { name: "done check".to_owned(), passed };
+            self.panel.push(tab, Source::Tidewatch, check, now_ms);
+        }
+        let prs: Vec<(u64, PrFacts)> = self
+            .tabs
+            .items()
+            .iter()
+            .filter_map(|tab| {
+                let summary = self.pr.watch(tab.id)?.summary()?;
+                Some((tab.id, pr_facts(summary)))
+            })
+            .collect();
+        for (tab, facts) in prs {
+            self.panel.pr(tab, facts, now_ms);
+        }
+    }
+
     /// Takes what agents reported, feeds terminal signals into every agent tab's status and
     /// notifies for changes while the window is away.
     pub(super) fn drive_agents(&mut self, ctx: &egui::Context, now: f64) {
+        let now_ms = wall_ms() as i64;
+        self.panel.sync(&self.tabs, ctx);
         for message in self.hooks.drain() {
+            if matches!(message.event, TabEvent::Hook(_)) && self.panel.drops_hook() {
+                if self.status_log {
+                    eprintln!("tidewatch: panel dropped hook tab={} at {now_ms}", message.tab_id);
+                }
+                continue;
+            }
+            self.panel.heard(&message, now_ms);
             if self.status_log {
                 eprintln!(
                     "tidewatch: hook tab={} gen={} {:?} at {}",
@@ -138,8 +177,21 @@ impl Tidewatch {
         }
         let (focused, minimized) = ctx.input(|i| (i.viewport().focused, i.viewport().minimized));
         let away = notify::window_is_away(focused, minimized);
+        self.panel.collect(&mut self.tabs, now, now_ms);
         let polled =
             agent_frame::poll(&mut self.tabs, TermSnapshot::of, &mut self.notifier, away, now);
+        let (targets, open) = panel_host::Host::targets(&self.tabs);
+        let asks = [
+            self.panel.terminal(&polled.seen, now_ms).map(|at| at - now_ms),
+            self.panel.probe(targets, open, ctx, now_ms),
+            self.panel.shadow(&self.tabs, now_ms).map(|at| at - now_ms),
+        ];
+        if let Some(wait) = asks.into_iter().flatten().min() {
+            let wait = u64::try_from(wait.max(0)).unwrap_or(0);
+            ctx.request_repaint_after(
+                Duration::from_millis(wait) + Duration::from_secs_f64(WAKE_SLACK_S),
+            );
+        }
         if self.status_log {
             for (tab, change) in &polled.changes {
                 eprintln!(
@@ -167,6 +219,23 @@ impl Tidewatch {
             ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
         }
         schedule(ctx, polled.wake, now, minimized == Some(true));
+    }
+}
+
+fn pr_facts(summary: &Summary) -> PrFacts {
+    PrFacts {
+        number: summary.number,
+        state: match summary.state {
+            State::Open => PrWord::Open,
+            State::Merged => PrWord::Merged,
+            State::Closed => PrWord::Closed,
+        },
+        checks: match summary.checks {
+            SummaryChecks::None => None,
+            SummaryChecks::Running => Some(ChecksWord::Running),
+            SummaryChecks::Failed => Some(ChecksWord::Failed),
+            SummaryChecks::Passed => Some(ChecksWord::Passed),
+        },
     }
 }
 

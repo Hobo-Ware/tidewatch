@@ -414,6 +414,7 @@ fn agent_tab(entry: &AgentEntry, dir: &Path, now: f64, notes: &mut Vec<String>) 
     let mut run = AgentRun::setting_up(entry.agent_id.clone(), now);
     run.started(entry.notes_file.clone(), now);
     if entry.credential.is_some() {
+        run.kept_running();
         if entry.at_prompt {
             run.resumed(now);
         } else {
