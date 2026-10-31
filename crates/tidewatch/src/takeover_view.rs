@@ -10,7 +10,6 @@ use egui::{
 use tidewatch_core::elsewhere::Key as SessionKey;
 
 use crate::brand;
-use crate::notice::key_hint;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_TITLE;
 use crate::screen_kit::{
@@ -385,7 +384,6 @@ pub(crate) fn dialog(
         }
         ui.add_space(4.0);
         outcome = buttons(ui, view);
-        key_hint(ui, "Enter moves  -  Esc cancels");
     });
     if outcome.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
         outcome = Some(DialogOutcome::Accept);
@@ -435,7 +433,7 @@ fn commands(ui: &mut Ui, view: &DialogView) {
 
 fn buttons(ui: &mut Ui, view: &DialogView) -> Option<DialogOutcome> {
     let mut outcome = None;
-    footer_row(ui, "", |ui| {
+    footer_row(ui, "Enter moves  -  Esc cancels", |ui| {
         if primary_button(ui, &view.confirm, true, Size::Regular).clicked() {
             outcome = Some(DialogOutcome::Accept);
         }

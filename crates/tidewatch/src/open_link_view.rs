@@ -9,7 +9,6 @@ use tidewatch_core::github_clone::Landing;
 
 use crate::brand;
 use crate::new_tab_fields::section_label;
-use crate::notice::key_hint;
 use crate::open_link::{Cloning, OpenLink, Phase, Verdict, fraction_of};
 use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
@@ -107,7 +106,7 @@ fn form_body(
     }
     ui.add_space(6.0);
     let label = primary_label(verdict);
-    footer_row(ui, "", |ui| {
+    footer_row(ui, "Enter opens  -  Esc cancels  -  a folder you pick opens as it is", |ui| {
         if primary_button_keyed(
             ui,
             label.unwrap_or("Open"),
@@ -129,7 +128,6 @@ fn form_body(
     if entered && label.is_some() && outcome.is_none() {
         outcome = Some(Outcome::Go);
     }
-    key_hint(ui, "Enter opens  -  Esc cancels  -  a folder you pick opens as it is");
     outcome
 }
 

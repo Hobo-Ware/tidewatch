@@ -17,6 +17,7 @@ const CAP_MIN_W: f32 = 22.0;
 const CAP_GAP: f32 = 8.0;
 const CAP_RADIUS: u8 = 5;
 const FOOTER_GAP: f32 = 8.0;
+const HINT_GAP: f32 = 16.0;
 pub(crate) const DIALOG_HEADER_H: f32 = 48.0;
 const DIALOG_PAD: i8 = 16;
 const ROW_RADIUS: u8 = 8;
@@ -401,18 +402,47 @@ pub(crate) fn primary_button_keyed(
 }
 
 /// A dialog or form footer: `hint` muted at the left, the buttons `add` draws right-aligned (the
-/// rightmost first) with 8 px between them, all on one centered row `Size::Regular` tall.
+/// rightmost first) with 8 px between them, all on one centered row `Size::Regular` tall. A hint
+/// the buttons leave no room for goes under the row as `notice::key_hint` does.
 pub(crate) fn footer_row(ui: &mut Ui, hint: &str, add: impl FnOnce(&mut Ui)) {
+    let mut below = false;
     ui.horizontal(|ui| {
         ui.set_min_height(Size::Regular.height());
-        if !hint.is_empty() {
-            ui.label(RichText::new(hint).size(TEXT_TAG).color(brand::MUTED));
+        let left = ui.cursor().left();
+        let centre = ui.min_rect().center().y;
+        let buttons = ui
+            .with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = FOOTER_GAP;
+                add(ui);
+            })
+            .response
+            .rect;
+        if hint.is_empty() {
+            return;
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = FOOTER_GAP;
-            add(ui);
-        });
+        let text = RichText::new(hint).size(TEXT_TAG).color(brand::MUTED);
+        let width = ui
+            .painter()
+            .layout_no_wrap(hint.to_owned(), FontId::proportional(TEXT_TAG), brand::MUTED)
+            .size()
+            .x;
+        if hint_fits(left, width, buttons.left()) {
+            let at = Rect::from_min_size(
+                pos2(left, centre - Size::Regular.height() / 2.0),
+                vec2(width, Size::Regular.height()),
+            );
+            ui.put(at, egui::Label::new(text).wrap_mode(egui::TextWrapMode::Extend));
+        } else {
+            below = true;
+        }
     });
+    if below {
+        crate::notice::key_hint(ui, hint);
+    }
+}
+
+fn hint_fits(left: f32, hint_width: f32, buttons_left: f32) -> bool {
+    left + hint_width + HINT_GAP <= buttons_left
 }
 
 /// The shortcut that confirms a form or a dialog, as the text of a key cap.
@@ -714,6 +744,61 @@ mod tests {
         assert_eq!(rects[0].center().y, rects[1].center().y);
         assert_eq!(rects[1].right() + 8.0, rects[0].left());
         assert_eq!(rects[0].right(), footer.right());
+    }
+
+    fn footer_rects(width: f32, hint: &str) -> (Rect, Rect, f32) {
+        let mut buttons = Rect::NOTHING;
+        let mut left = 0.0;
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 200.0))),
+            ..egui::RawInput::default()
+        };
+        let out = Context::default().run_ui(input, |ui| {
+            left = ui.max_rect().left();
+            footer_row(ui, hint, |ui| {
+                buttons = primary_button(ui, "Go", true, Size::Regular).rect;
+                buttons = buttons.union(quiet_button(ui, "Cancel", true, Size::Regular).rect);
+            });
+        });
+        let hint_rect = out
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == hint => {
+                    Some(text.visual_bounding_rect())
+                }
+                _ => None,
+            })
+            .expect("the hint is drawn");
+        (buttons, hint_rect, left)
+    }
+
+    #[test]
+    fn a_footer_hint_sits_left_of_the_buttons_on_their_row() {
+        let (buttons, hint, left) = footer_rects(600.0, "Esc cancels");
+        assert!(hint.right() < buttons.left());
+        assert!((hint.center().y - buttons.center().y).abs() < 1.0);
+        assert!((hint.left() - left).abs() < 3.0, "{} vs {left}", hint.left());
+    }
+
+    #[test]
+    fn a_footer_hint_the_buttons_leave_no_room_for_goes_under_the_row() {
+        let long = "Enter deletes the branch  -  Esc cancels  -  nothing happens until you pick";
+        let (buttons, hint, _) = footer_rects(260.0, long);
+        assert!(hint.top() >= buttons.bottom());
+    }
+
+    #[test]
+    fn a_hint_needs_its_width_and_a_gap_before_the_buttons() {
+        let cases = [
+            (0.0, 100.0, 116.0, true),
+            (0.0, 100.0, 115.0, false),
+            (8.0, 100.0, 124.0, true),
+            (8.0, 100.0, 50.0, false),
+        ];
+        for (left, width, buttons_left, want) in cases {
+            assert_eq!(hint_fits(left, width, buttons_left), want, "{left} {width} {buttons_left}");
+        }
     }
 
     #[test]
