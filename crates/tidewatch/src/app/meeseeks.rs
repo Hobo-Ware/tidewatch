@@ -200,7 +200,7 @@ impl Tidewatch {
             let send = Send::auto(&text, Reason::MeeseeksCheck, because::MEESEEKS);
             match flow_glue::offer_to_agent(&mut self.tabs, &mut self.flow, tab, &send, ctx, now) {
                 Offer::Go | Offer::Refuse(_) => {}
-                Offer::Wait | Offer::Paused => {
+                Offer::Wait | Offer::Paused | Offer::Saving => {
                     self.meeseeks.put_back_paste(tab, text);
                     ctx.request_repaint_after(Duration::from_secs_f64(HOLD_LOOK_S));
                 }

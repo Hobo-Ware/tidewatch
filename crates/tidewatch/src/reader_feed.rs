@@ -9,6 +9,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tidewatch_core::token_usage::Tally;
 use tidewatch_core::transcript::{Entry, Source, Tail};
 use tidewatch_core::transcript_facts::{self, Timed};
 use tidewatch_core::transcript_locate::Locator;
@@ -51,6 +52,7 @@ pub(crate) enum Message {
     Entries(Vec<Entry>),
     Facts(Vec<Timed>),
     Title(String),
+    Tokens(Tally),
 }
 
 enum Command {
@@ -134,6 +136,7 @@ fn run(
     let mut empty_reads = 0_u32;
     let mut said_missing = false;
     let mut sent_title: Option<String> = None;
+    let mut sent_stamp = (0_u32, 0_u32);
     let mut delay = Duration::ZERO;
     let mut copy_looked = Instant::now();
     let send = |message: Message| {
@@ -195,6 +198,15 @@ fn run(
         if let Some(title) = title {
             sent_title = Some(title.clone());
             if !send(Message::Title(title)) {
+                return;
+            }
+        }
+        let stamp = tail.as_ref().map_or((0, 0), Tail::token_stamp);
+        if stamp != sent_stamp {
+            sent_stamp = stamp;
+            if let Some(tail) = &tail
+                && !send(Message::Tokens(tail.tokens()))
+            {
                 return;
             }
         }
@@ -369,6 +381,44 @@ mod tests {
         feed.poke();
         let seen = wait_for(&feed, |m| matches!(m, Message::Title(_)));
         assert_eq!(titles(&seen), ["Send people back after login"]);
+    }
+
+    #[test]
+    fn the_tokens_of_a_transcript_are_sent_when_they_change_and_not_otherwise() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("work");
+        fs::create_dir_all(&cwd).unwrap();
+        let dir = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(tidewatch_core::transcript_locate::claude_project_dir_name(&cwd));
+        fs::create_dir_all(&dir).unwrap();
+        let id = "44444444-aaaa-bbbb-cccc-000000000004";
+        let file = dir.join(format!("{id}.jsonl"));
+        let usage = include_str!("../../tidewatch-core/tests/fixtures/claude_usage.jsonl");
+        let lines: Vec<&str> = usage.lines().collect();
+        fs::write(&file, format!("{}\n", lines[..5].join("\n"))).unwrap();
+        let mut locator = Locator::new(home.path(), &cwd);
+        locator.session_id = Some(id.into());
+        let feed = Feed::start(Source::Claude, locator, || {});
+        let tokens = |seen: &[Message]| -> Vec<(u32, u32)> {
+            seen.iter()
+                .filter_map(|m| match m {
+                    Message::Tokens(tally) => Some((tally.calls, tally.turn_count)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let seen = wait_for(&feed, |m| matches!(m, Message::Tokens(_)));
+        assert_eq!(tokens(&seen), [(2, 1)]);
+        feed.poke();
+        thread::sleep(Duration::from_millis(900));
+        assert_eq!(tokens(&feed.drain()), Vec::<(u32, u32)>::new());
+        fs::write(&file, usage).unwrap();
+        feed.poke();
+        let seen = wait_for(&feed, |m| matches!(m, Message::Tokens(_)));
+        assert_eq!(tokens(&seen), [(3, 2)]);
     }
 
     fn user_line(text: &str) -> String {

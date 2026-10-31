@@ -7,6 +7,7 @@ mod agents;
 mod amphetamine;
 mod autofetch;
 mod bar;
+mod budget;
 mod central;
 mod closed;
 mod comments;
@@ -71,6 +72,7 @@ use crate::amphetamine_view;
 use crate::autofetch_glue;
 use crate::avatar_glue;
 use crate::brand;
+use crate::budget_glue;
 use crate::catalog::Catalog;
 use crate::close_dialog::Closing;
 use crate::comment_glue;
@@ -209,6 +211,7 @@ pub(crate) struct Tidewatch {
     meeseeks: meeseeks_glue::Host,
     done_check: done_check_glue::Host,
     keep_awake: keep_awake_glue::Host<RealHold>,
+    budget: budget_glue::Host,
     autofetch: autofetch_glue::Host,
     amphetamine: amphetamine_glue::Host<Box<dyn Hold>>,
     amphetamine_view: amphetamine_view::Memory,
@@ -353,6 +356,7 @@ impl Tidewatch {
                     std::env::var("TIDEWATCH_DEV_KEEP_AWAKE").ok().as_deref(),
                 ),
         );
+        let budget = budget_glue::Host::new(loaded.budget.save_mode, wall_ms() as i64);
         let autofetch = autofetch_glue::Host::new(
             loaded.git,
             screenshot.is_none()
@@ -465,6 +469,7 @@ impl Tidewatch {
             meeseeks,
             done_check,
             keep_awake,
+            budget,
             autofetch,
             amphetamine,
             amphetamine_view: amphetamine_view::Memory::from_env(),

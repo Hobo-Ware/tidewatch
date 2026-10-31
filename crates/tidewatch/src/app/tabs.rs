@@ -78,6 +78,10 @@ impl Tidewatch {
     pub(super) fn start_draft(&mut self, ctx: &egui::Context, tab: u64, request: Request) {
         match &request {
             Request::Agent(agent) => self.last_profile = Some(agent.profile_id.clone()),
+            Request::Meeseeks(_) if self.budget.saving() => {
+                self.show_toast(tidewatch_core::save_mode::MEESEEKS_HELD, ctx);
+                return;
+            }
             Request::Meeseeks(request) => {
                 let agent = request.tabs.first().map(|tab| tab.agent.id.clone());
                 self.remember_meeseeks(request.ticks, agent);

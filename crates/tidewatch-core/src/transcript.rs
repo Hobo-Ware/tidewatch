@@ -210,6 +210,12 @@ impl Parser {
         self.usage.tally()
     }
 
+    /// Changes whenever the tokens do; cheaper to compare than the tally.
+    #[must_use]
+    pub fn token_stamp(&self) -> (u32, u32) {
+        self.usage.stamp()
+    }
+
     /// The entries one line adds. A line that is not a JSON object, or that holds nothing worth
     /// showing, adds none.
     pub fn feed_line(&mut self, line: &str) -> Vec<Entry> {
@@ -773,6 +779,12 @@ impl Tail {
     #[must_use]
     pub fn tokens(&self) -> Tally {
         self.parser.tokens()
+    }
+
+    /// Changes whenever the tokens do; cheaper to compare than the tally.
+    #[must_use]
+    pub fn token_stamp(&self) -> (u32, u32) {
+        self.parser.token_stamp()
     }
 
     /// [`poll`](Self::poll) with the turn boundaries of the same lines, each placed by how many of

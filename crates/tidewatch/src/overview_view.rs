@@ -56,6 +56,7 @@ const WHY_H: f32 = 18.0;
 const ONE_BUTTON_GAP: f32 = 12.0;
 const STAGE_ROOM: f32 = 70.0;
 const MIN_STAGE_W: f32 = 24.0;
+const TOKENS_MIN_ROOM: f32 = 150.0;
 const AGE_GAP: f32 = 10.0;
 const ONE_BUTTON_MID: f32 = f32::midpoint(NAME_MID, LINE_MID);
 const NAME_MID: f32 = 10.0;
@@ -830,6 +831,22 @@ fn card(
     let marks_below = lost_flag.is_some() || lost_quiet.is_some();
     let clock = clock.filter(|_| !marks_below);
     let clock_w = clock.as_ref().map_or(0.0, |clock| clock.size().x + 8.0);
+    let tokens = row
+        .tokens
+        .as_ref()
+        .filter(|_| !marks_below)
+        .map(|tokens| {
+            painter.layout_no_wrap(
+                tokens.short.clone(),
+                FontId::monospace(TEXT_SECONDARY),
+                brand::FAINT,
+            )
+        })
+        .filter(|galley| {
+            inner.right() - text_x - button_room - clock_w - galley.size().x - 8.0
+                >= TOKENS_MIN_ROOM
+        });
+    let tokens_w = tokens.as_ref().map_or(0.0, |galley| galley.size().x + 8.0);
     let line_mid = inner.top() + LINE_MID;
     let (text, ink) = match ask {
         Some(ask) => (ask.text.clone(), brand::NEEDS),
@@ -850,7 +867,7 @@ fn card(
         painter.galley(pos2(line_left, line_mid - dot.size().y / 2.0), dot.clone(), brand::MUTED);
         line_left += dot.size().x + 6.0;
     }
-    let line_room = (inner.right() - line_left - button_room - clock_w).max(1.0);
+    let line_room = (inner.right() - line_left - button_room - clock_w - tokens_w).max(1.0);
     let marks_w = lost_flag.map_or(0.0, |_| panel_blocks::out_of_date_width(&painter) + 6.0)
         + lost_quiet.map_or(0.0, |text| panel_blocks::age_width(&painter, text) + 6.0);
     let repo_fits = !marks_below || line_room - marks_w >= MIN_STAGE_W + 6.0;
@@ -892,6 +909,13 @@ fn card(
             brand::FAINT,
         );
     }
+    if let Some(galley) = tokens {
+        let at = pos2(
+            inner.right() - button_room - clock_w - galley.size().x,
+            line_mid - galley.size().y / 2.0,
+        );
+        painter.galley(at, galley, brand::FAINT);
+    }
     let mut out = CardOut::default();
     match lane {
         Lane::Needs => {
@@ -922,15 +946,20 @@ fn card(
         }
         Lane::Waiting | Lane::Idle => {}
     }
-    let tip = match ask {
-        Some(ask) => ask.why.as_deref().map_or_else(
+    let tip = if let Some(ask) = ask {
+        ask.why.as_deref().map_or_else(
             || ask.text.clone(),
             |why| format!("{}\n{}", ask.text, answer_chips::sentence(why)),
-        ),
-        None => match row.stamp.age.as_deref() {
+        )
+    } else {
+        let status = match row.stamp.age.as_deref() {
             Some(age) => format!("{} \u{b7} {age}", status_view::describe(&row.status)),
             None => status_view::describe(&row.status),
-        },
+        };
+        match &row.tokens {
+            Some(tokens) => format!("{status}\n{}", tokens.tip),
+            None => status,
+        }
     };
     let card_clicked =
         resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked();
@@ -1121,6 +1150,7 @@ mod tests {
             done_check: None,
             look: None,
             job_line: None,
+            tokens: None,
             avatar: None,
             kind: AgentKind::Cli("claude".into()),
             auto_pick: None,
@@ -1891,6 +1921,97 @@ mod tests {
             "the kind is plain text on a working card, not a pill"
         );
         assert!(found.iter().all(|(text, _)| text != "12m 00s"));
+    }
+
+    fn with_tokens(mut row: Row) -> Row {
+        row.tokens = Some(crate::token_budget::TabTokens {
+            short: "1.2M tokens".into(),
+            tip: "1.2M tokens \u{b7} 96% cached \u{b7} 18 turns".into(),
+        });
+        row
+    }
+
+    #[test]
+    fn a_card_with_tokens_shows_them_at_the_right_of_its_second_line_and_drops_them_before_crowding()
+     {
+        for width in [2000.0, 1200.0, 900.0, 700.0] {
+            let mut working = row(1, "soundtrack-matcher", "acme-workers", AgentStatus::Working);
+            working.elapsed = 720.0;
+            let idle = row(2, "migrate-billing", "acme-workers", AgentStatus::Done);
+            let mut screen = Screen::new(overview(vec![with_tokens(working), with_tokens(idle)]));
+            screen.width = width;
+            let (found, boxes) = screen.drawn();
+            for (index, (a, a_rect)) in found.iter().enumerate() {
+                for (b, b_rect) in &found[index + 1..] {
+                    assert!(
+                        !a_rect.shrink(0.5).intersects(b_rect.shrink(0.5)),
+                        "{width}: {a:?} {a_rect:?} overlaps {b:?} {b_rect:?}"
+                    );
+                }
+            }
+            for title in ["soundtrack-matcher", "migrate-billing"] {
+                let card = card_around(&boxes, &rect_of(&found, title));
+                for (text, rect) in found.iter().filter(|(text, _)| text == "1.2M tokens") {
+                    if card.intersects(*rect) {
+                        assert!(card.contains_rect(*rect), "{width}: {text} {rect:?} {card:?}");
+                    }
+                }
+            }
+            if width >= 1200.0 {
+                let shown = found.iter().filter(|(text, _)| text == "1.2M tokens").count();
+                assert_eq!(shown, 2, "{width}: {found:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_one_button_card_keeps_its_tokens_clear_of_its_button() {
+        for width in [2000.0, 1200.0, 900.0] {
+            let needs = with_tokens(row(
+                2,
+                "web-asks",
+                "acme-web",
+                AgentStatus::NeedsYou(Reason::Question),
+            ));
+            let mut screen = Screen::new(overview(vec![needs]));
+            screen.width = width;
+            let (found, boxes) = screen.drawn();
+            let button = box_around(&boxes, &rect_of(&found, "Answer"));
+            for (text, rect) in found.iter().filter(|(text, _)| text == "1.2M tokens") {
+                assert!(!rect.intersects(button), "{width}: {text} {rect:?} {button:?}");
+            }
+            if width >= 2000.0 {
+                assert_eq!(found.iter().filter(|(t, _)| t == "1.2M tokens").count(), 1, "{width}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_working_card_puts_its_tokens_left_of_its_clock() {
+        let mut working = row(1, "soundtrack-matcher", "acme-workers", AgentStatus::Working);
+        working.elapsed = 720.0;
+        let mut screen = Screen::new(overview(vec![with_tokens(working)]));
+        screen.width = 2000.0;
+        let (found, boxes) = screen.drawn();
+        let card = card_around(&boxes, &rect_of(&found, "soundtrack-matcher"));
+        let tokens = rect_of(&found, "1.2M tokens");
+        let clock = rect_of(&found, "12m");
+        assert!(tokens.right() < clock.left(), "{tokens:?} {clock:?}");
+        assert!((tokens.center().y - clock.center().y).abs() < 2.0, "{tokens:?} {clock:?}");
+        assert!(card.contains_rect(tokens), "{tokens:?} {card:?}");
+    }
+
+    #[test]
+    fn a_card_without_tokens_draws_none() {
+        let mut screen = Screen::new(overview(vec![row(
+            1,
+            "soundtrack-matcher",
+            "acme-workers",
+            AgentStatus::Working,
+        )]));
+        screen.width = 2000.0;
+        let (found, _) = screen.drawn();
+        assert_eq!(found.iter().filter(|(text, _)| text.contains("tokens")).count(), 0);
     }
 
     #[test]

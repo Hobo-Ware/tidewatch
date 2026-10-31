@@ -109,6 +109,13 @@ impl Send {
         self
     }
 
+    /// A message Tidewatch chose to send on its own, which save mode holds back. An answer to a
+    /// question the agent waits on is not one: it spends nothing the agent had not already begun.
+    fn held_by_save_mode(&self) -> bool {
+        self.origin == Origin::Auto
+            && self.tell.as_ref().is_some_and(|tell| tell.reason != Reason::AutoPick)
+    }
+
     fn counted(&self) -> bool {
         self.origin == Origin::Auto
             && self.tell.as_ref().is_some_and(|tell| {
@@ -129,6 +136,8 @@ pub(crate) enum Offer {
     Go,
     Wait,
     Paused,
+    /// Save mode is holding back what Tidewatch sends on its own.
+    Saving,
     Refuse(&'static str),
 }
 
@@ -170,6 +179,7 @@ struct Lane {
 #[derive(Debug, Default)]
 pub(crate) struct Outbox {
     lanes: HashMap<u64, Lane>,
+    saving: bool,
 }
 
 fn decide(status: Option<&AgentStatus>, kind: Kind, held: bool) -> Offer {
@@ -244,6 +254,10 @@ impl Outbox {
         self.lanes.entry(tab).or_default()
     }
 
+    pub(crate) fn set_saving(&mut self, saving: bool) {
+        self.saving = saving;
+    }
+
     pub(crate) fn offer(
         &mut self,
         tab: u64,
@@ -252,6 +266,9 @@ impl Outbox {
         screen: Screen,
         now: f64,
     ) -> Offer {
+        if self.saving && send.held_by_save_mode() {
+            return Offer::Saving;
+        }
         let lane = self.lane(tab);
         if send.counted() && lane.auto_sends >= MAX_AUTO_SENDS {
             return Offer::Paused;
@@ -300,6 +317,9 @@ impl Outbox {
         now: f64,
     ) -> Ready {
         let Some(lane) = self.lanes.get_mut(&tab) else { return Ready::Nothing };
+        if self.saving {
+            lane.queue.retain(|send| !send.held_by_save_mode());
+        }
         let Some(front) = lane.queue.front() else { return Ready::Nothing };
         let kind = front.kind();
         match lane.look(status, screen, kind, now) {
@@ -309,7 +329,7 @@ impl Outbox {
                 lane.queue.drain(..count);
                 Ready::Dropped(Dropped { count, why })
             }
-            Offer::Wait | Offer::Paused => Ready::Nothing,
+            Offer::Wait | Offer::Paused | Offer::Saving => Ready::Nothing,
         }
     }
 
@@ -652,6 +672,60 @@ mod tests {
         outbox.sent(TAB, &command, 0.0);
         let next = Send::reply("go on");
         assert_eq!(offer(&mut outbox, &next, &AgentStatus::Done, 1.0), Offer::Go);
+    }
+
+    #[test]
+    fn save_mode_holds_what_tidewatch_chose_to_send_and_nothing_the_owner_sent() {
+        let mut outbox = Outbox::default();
+        outbox.set_saving(true);
+        let done = Some(&AgentStatus::Done);
+        let held = [
+            Reason::AutoFix,
+            Reason::AutoPush,
+            Reason::DueToday,
+            Reason::LedgerGuard,
+            Reason::CommentGuard,
+            Reason::DoneCheck,
+            Reason::StuckJob,
+            Reason::BackgroundJob,
+            Reason::Avatar,
+        ];
+        for reason in held {
+            let send = Send::auto("x", reason, "a rule fired");
+            assert_eq!(
+                outbox.offer(TAB, &send, done, Screen::Free, 0.0),
+                Offer::Saving,
+                "{reason:?}"
+            );
+        }
+        let goes = [
+            ("a hand send", Send::by_hand("x", Reason::DoneCheck, "you asked")),
+            ("an untold review", Send::untold("x", Origin::Auto)),
+            ("a pick for a waiting agent", Send::auto("x", Reason::AutoPick, "nobody answered")),
+        ];
+        for (what, send) in goes {
+            assert_eq!(outbox.offer(TAB, &send, done, Screen::Free, 0.0), Offer::Go, "{what}");
+        }
+        outbox.set_saving(false);
+        let send = Send::auto("x", Reason::AutoFix, "a rule fired");
+        assert_eq!(outbox.offer(TAB, &send, done, Screen::Free, 0.0), Offer::Go);
+    }
+
+    #[test]
+    fn save_mode_empties_the_line_of_automatic_sends_but_keeps_the_owners() {
+        let mut outbox = Outbox::default();
+        assert_eq!(
+            outbox.enqueue(TAB, Send::auto("auto", Reason::CommentGuard, "new comments")),
+            Ok(())
+        );
+        assert_eq!(outbox.enqueue(TAB, Send::untold("review", Origin::Auto)), Ok(()));
+        outbox.set_saving(true);
+        let Ready::Send(next) = outbox.next_ready(TAB, Some(&AgentStatus::Done), Screen::Free, 0.0)
+        else {
+            panic!("the review was not ready");
+        };
+        assert_eq!(next.text, "review");
+        assert_eq!(outbox.waiting_tabs(), Vec::<u64>::new());
     }
 
     #[test]

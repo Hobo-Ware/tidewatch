@@ -438,6 +438,7 @@ fn agent_strip(
                                 }),
                                 can_draw: false,
                                 mood: Mood::default(),
+                                tokens: None,
                             },
                         ),
                     );

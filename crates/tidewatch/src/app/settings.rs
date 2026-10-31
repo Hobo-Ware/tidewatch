@@ -10,7 +10,7 @@ use tidewatch_core::ui_zoom::{self, Direction};
 use super::{Tidewatch, wall_ms};
 use crate::agent_jobs;
 use crate::font_view;
-use crate::general_view::General;
+use crate::general_view::{BudgetState, General};
 use crate::guards_view;
 use crate::login_item;
 use crate::macos;
@@ -144,6 +144,7 @@ impl Tidewatch {
         self.done_check.set_enabled(prefs.done_check.enabled);
         self.chat_prefs = prefs.chat;
         self.keep_awake.set_enabled(prefs.keep_awake.enabled);
+        self.budget.set_enabled(prefs.budget.save_mode);
         self.guards = prefs.guards;
         self.pr.set_default(prefs.github);
         self.terminal_prefs = prefs.terminal.clone();
@@ -235,6 +236,17 @@ impl Tidewatch {
         }
     }
 
+    fn set_save_mode(&mut self, enabled: bool) {
+        self.budget.set_enabled(enabled);
+        if let Some(paths) = self.paths.clone() {
+            std::thread::spawn(move || {
+                if let Err(e) = Prefs::update(&paths, |p| p.budget.save_mode = enabled) {
+                    eprintln!("tidewatch: cannot save settings.toml: {e}");
+                }
+            });
+        }
+    }
+
     fn set_guards(&mut self, change: &guards_view::Change) {
         change.apply(&mut self.guards);
         if let Some(paths) = self.paths.clone() {
@@ -304,6 +316,10 @@ impl Tidewatch {
             done_check: DoneCheckPrefs { enabled: self.done_check.enabled() },
             chat: self.chat_prefs,
             keep_awake: KeepAwakePrefs { enabled: self.keep_awake.enabled() },
+            budget: BudgetState {
+                save_mode: self.budget.enabled(),
+                limits_known: self.budget.limits().is_some(),
+            },
             touch_id: self.amphetamine.touch_id(),
             default_branch,
             profiles: self
@@ -433,6 +449,7 @@ impl Tidewatch {
             Some(settings_view::Action::DoneCheck(on)) => self.set_done_check(on),
             Some(settings_view::Action::AnimateEmoji(on)) => self.set_animate_emoji(on),
             Some(settings_view::Action::KeepAwake(on)) => self.set_keep_awake(on),
+            Some(settings_view::Action::SaveMode(on)) => self.set_save_mode(on),
             Some(settings_view::Action::TouchId(click)) => {
                 self.amphetamine.change_touch_id(click, ctx);
             }

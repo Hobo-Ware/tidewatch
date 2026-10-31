@@ -111,6 +111,11 @@ pub(crate) struct Counter {
 }
 
 impl Counter {
+    /// Changes whenever a call or a turn is counted, so a caller can tell cheaply that `tally` moved.
+    pub(crate) fn stamp(&self) -> (u32, u32) {
+        (self.calls, self.turn_count)
+    }
+
     pub(crate) fn tally(&self) -> Tally {
         Tally {
             total: self.total,
