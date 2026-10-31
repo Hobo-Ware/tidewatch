@@ -1,6 +1,7 @@
 //! Settings shell: every page renders, the sidebar switches pages, Esc closes, General reports changes.
 
-use egui::{Event, PointerButton, Pos2, RawInput, Vec2};
+use egui::{Event, PointerButton, Pos2, RawInput, Rect, UiBuilder, Vec2, pos2, vec2};
+
 use tidewatch_core::prefs::{ResumeAgents, WindowPrefs};
 use tidewatch_core::profiles::Profiles;
 
@@ -8,6 +9,7 @@ use super::*;
 use crate::catalog::Availability;
 use crate::general_view::KeepAwakeChange;
 use crate::macos::LoginItem;
+use crate::settings_ui::page_header;
 use crate::touch_id_view::{self, TouchId};
 use crate::window_view;
 
@@ -446,4 +448,48 @@ fn open_at_login_sits_in_the_startup_card_and_asks_the_app_to_register() {
 #[test]
 fn a_platform_without_a_login_item_shows_no_row_for_it() {
     assert_eq!(login_actions(false), Vec::new());
+}
+
+fn title_left(out: &egui::FullOutput, title: &str) -> f32 {
+    out.shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text() == title => Some(text.pos.x),
+            _ => None,
+        })
+        .expect("the title is drawn")
+}
+
+#[test]
+fn the_profiles_page_title_starts_where_every_other_pages_does() {
+    for width in [700.0, 1000.0, 1300.0, 2200.0] {
+        let main = Rect::from_min_size(pos2(248.0, 40.0), vec2(width, 700.0));
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width + 300.0, 800.0))),
+            ..RawInput::default()
+        };
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::fonts::definitions());
+        let _ = ctx.run_ui(input.clone(), |_| {});
+        let other = ctx.run_ui(input.clone(), |ui| {
+            let mut child = ui.new_child(UiBuilder::new().max_rect(content_column(main)));
+            page_header(&mut child, "General", "Saved as you change them");
+        });
+        let profiles = ctx.run_ui(input, |ui| {
+            let inner = crate::settings_ui::editor::page_area(main);
+            crate::settings_ui::editor::page_top(
+                ui,
+                main,
+                inner,
+                ("Agents and profiles", "A profile is an agent.", "profiles.toml"),
+                "New profile",
+            );
+        });
+        assert_eq!(
+            title_left(&profiles, "Agents and profiles"),
+            title_left(&other, "General"),
+            "{width}"
+        );
+        assert!(content_column(main).width() <= CONTENT_MAX);
+    }
 }

@@ -3,7 +3,8 @@
 use egui::scroll_area::ScrollAreaOutput;
 use egui::{
     Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Layout, Margin, Mesh, Painter,
-    Rect, Response, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, epaint::Vertex, pos2, vec2,
+    Rangef, Rect, Response, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, epaint::Vertex, pos2,
+    vec2,
 };
 use kelp_ui::theme::semibold;
 
@@ -48,18 +49,33 @@ pub(crate) fn note(ui: &mut Ui, text: &str, color: Color32) {
 pub(crate) fn page_header(ui: &mut Ui, title: &str, subtitle: &str) -> Response {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
-    let painter = ui.painter_at(rect);
+    let divider = ui.clip_rect().x_range();
+    header_at(ui, rect, rect.right(), divider, title, subtitle);
+    response
+}
+
+/// The page header drawn in `bar`: the title and its subtitle clipped at `text_right`, and the
+/// divider under the bar across `divider`. Returns the title's rect.
+pub(crate) fn header_at(
+    ui: &Ui,
+    bar: Rect,
+    text_right: f32,
+    divider: Rangef,
+    title: &str,
+    subtitle: &str,
+) -> Rect {
+    let painter = ui.painter_at(Rect::from_min_max(bar.min, pos2(text_right, bar.bottom())));
     let title =
-        painter.text(rect.left_center(), Align2::LEFT_CENTER, title, font_semibold(16.0), TEXT);
+        painter.text(bar.left_center(), Align2::LEFT_CENTER, title, font_semibold(16.0), TEXT);
     painter.text(
-        pos2(title.right() + 14.0, rect.center().y + 1.0),
+        pos2(title.right() + 14.0, bar.center().y + 1.0),
         Align2::LEFT_CENTER,
         subtitle,
         FontId::proportional(13.0),
         MUTED,
     );
-    ui.painter().hline(ui.clip_rect().x_range(), rect.bottom(), Stroke::new(1.0, CARD_LINE));
-    response
+    ui.painter().hline(divider, bar.bottom(), Stroke::new(1.0, CARD_LINE));
+    title
 }
 
 pub(crate) fn footer_note(ui: &mut Ui, text: &str) {
