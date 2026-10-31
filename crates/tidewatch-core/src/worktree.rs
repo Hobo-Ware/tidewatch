@@ -195,6 +195,8 @@ pub struct Leftover {
     pub repo: Option<PathBuf>,
     /// Whether the registry, or the `agent/<folder name>` rule, says Tidewatch made it.
     pub recorded: bool,
+    /// When the folder last changed, in unix milliseconds. `None` when the file system will not say.
+    pub modified_ms: Option<i64>,
 }
 
 impl Leftover {
@@ -816,26 +818,38 @@ pub fn leftovers(paths: &TidewatchPaths, open: &[PathBuf]) -> Vec<Leftover> {
         .filter(|dir| dir.join(".git").is_file() && !open.contains(dir))
         .filter(|dir| !is_main_checkout(dir))
         .map(|path| {
+            let modified_ms = modified_ms(&path);
             let known = stored
                 .iter()
                 .find(|w| w.path == path)
                 .map(|w| (w.repo.clone(), w.branch.clone()))
                 .or_else(|| claim(paths, &path));
             match known {
-                Some((repo, branch)) => {
-                    Leftover { path, repo: Some(repo), branch: Some(branch), recorded: true }
-                }
+                Some((repo, branch)) => Leftover {
+                    path,
+                    repo: Some(repo),
+                    branch: Some(branch),
+                    recorded: true,
+                    modified_ms,
+                },
                 None => Leftover {
                     repo: main_checkout(&path),
                     branch: checked_out_branch(&path),
                     path,
                     recorded: false,
+                    modified_ms,
                 },
             }
         })
         .collect();
     found.sort_by(|a, b| a.path.cmp(&b.path));
     found
+}
+
+fn modified_ms(path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(since.as_millis()).ok()
 }
 
 fn git_dirs(dir: &Path) -> Option<(PathBuf, PathBuf)> {

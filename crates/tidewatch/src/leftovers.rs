@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use tidewatch_core::worktree::{BranchChoice, BranchOutcome, Leftover, RemoveMode, Worktree};
 use tidewatch_core::worktree_safety::Safety;
 
+use crate::review::plural;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RowState {
     Inspecting,
@@ -189,14 +191,62 @@ pub(crate) fn status_text(state: &RowState) -> String {
     }
 }
 
-/// The line under a row, or `None` when the row has nothing to say. A worktree this Tidewatch did
-/// not make says "nothing to lose" when clean, so its row is never silent about the loss.
-pub(crate) fn row_text(row: &Row) -> Option<String> {
-    match (&row.state, row.leftover.recorded) {
-        (RowState::Ready(Safety::Safe), true) => None,
-        (RowState::Ready(Safety::Safe), false) => Some("nothing to lose".to_owned()),
-        (state, _) => Some(status_text(state)),
+/// How long the folder has sat there, for the row's right edge: `under an hour`, `5 hours`,
+/// `3 days`.
+pub(crate) fn age_text(now_ms: i64, modified_ms: i64) -> String {
+    let minutes = (now_ms - modified_ms).max(0) / 60_000;
+    match minutes {
+        0..60 => "under an hour".to_owned(),
+        60..2880 => plural(usize::try_from(minutes / 60).unwrap_or(0), "hour"),
+        _ => plural(usize::try_from(minutes / 1440).unwrap_or(0), "day"),
     }
+}
+
+/// What the right edge of a row says: the age of a worktree proven safe, what the others would
+/// lose or why they cannot be read.
+pub(crate) fn right_text(row: &Row, now_ms: i64) -> String {
+    let age = row.leftover.modified_ms.map(|at| age_text(now_ms, at));
+    match (&row.state, row.leftover.recorded, age) {
+        (RowState::Ready(Safety::Safe), true, age) => age.unwrap_or_default(),
+        (RowState::Ready(Safety::Safe), false, Some(age)) => {
+            format!("nothing to lose \u{b7} {age}")
+        }
+        (RowState::Ready(Safety::Safe), false, None) => "nothing to lose".to_owned(),
+        (state, _, _) => status_text(state),
+    }
+}
+
+/// The branch a row shows after its name: none when it is the `agent/<name>` Tidewatch gave it.
+pub(crate) fn shown_branch(row: &Row, name: &str) -> Option<String> {
+    row.leftover.branch.clone().filter(|branch| *branch != format!("agent/{name}"))
+}
+
+/// The line over the list: how many worktrees no tab owns, and how many of them are safe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Summary {
+    pub(crate) lead: String,
+    pub(crate) rest: String,
+}
+
+pub(crate) fn summary(cleanup: &Cleanup) -> Summary {
+    let total = cleanup.rows.len();
+    let safe = cleanup.clean_count();
+    let lead = format!("{} no tab owns.", plural(total, "worktree"));
+    let rest = if total == 0 {
+        String::new()
+    } else if cleanup.busy() {
+        "Looking at what each one would lose...".to_owned()
+    } else if safe == total && total == 1 {
+        "It is safe to remove: nothing uncommitted, nothing unpushed.".to_owned()
+    } else if safe == total {
+        format!("All {total} are safe to remove: nothing uncommitted, nothing unpushed.")
+    } else if safe == 0 {
+        "None is proven safe to remove. Each row says what it would lose.".to_owned()
+    } else {
+        let verb = if safe == 1 { "is" } else { "are" };
+        format!("{safe} {verb} safe to remove. The others say what they would lose.")
+    };
+    Summary { lead, rest }
 }
 
 #[cfg(test)]
@@ -211,6 +261,7 @@ mod tests {
             branch: Some(format!("agent/{name}")),
             repo: Some(PathBuf::from("/work/web")),
             recorded,
+            modified_ms: None,
         }
     }
 
@@ -220,6 +271,7 @@ mod tests {
             branch: None,
             repo: None,
             recorded: false,
+            modified_ms: None,
         }
     }
 
@@ -359,9 +411,9 @@ mod tests {
     }
 
     #[test]
-    fn the_row_text_lists_what_an_unrecorded_worktree_would_lose() {
+    fn the_right_edge_lists_what_an_unrecorded_worktree_would_lose() {
         let cases: [(&str, bool, Safety, Option<&str>); 6] = [
-            ("recorded and clean says nothing", true, Safety::Safe, None),
+            ("recorded and clean says nothing", true, Safety::Safe, Some("")),
             ("unrecorded and clean", false, Safety::Safe, Some("nothing to lose")),
             (
                 "unrecorded and dirty",
@@ -393,15 +445,86 @@ mod tests {
         ];
         for (what, recorded, safety, want) in cases {
             let cleanup = opened(&[("x", recorded, Some(safety))]);
-            assert_eq!(row_text(&cleanup.rows[0]).as_deref(), want, "{what}");
+            assert_eq!(Some(right_text(&cleanup.rows[0], 0).as_str()), want, "{what}");
         }
         let looking = opened(&[("x", false, None)]);
-        assert_eq!(row_text(&looking.rows[0]).as_deref(), Some("looking..."));
+        assert_eq!(right_text(&looking.rows[0], 0), "looking...");
         let broken = opened_unreadable(&["x"]);
         assert_eq!(
-            row_text(&broken.rows[0]).as_deref(),
-            Some("git can't read this folder; Discard moves it to the Trash")
+            right_text(&broken.rows[0], 0),
+            "git can't read this folder; Discard moves it to the Trash"
         );
+    }
+
+    #[test]
+    fn a_safe_row_says_how_long_it_has_sat_there() {
+        const HOUR: i64 = 3_600_000;
+        let cases = [
+            (30 * 60_000, "under an hour"),
+            (HOUR, "1 hour"),
+            (5 * HOUR, "5 hours"),
+            (47 * HOUR, "47 hours"),
+            (48 * HOUR, "2 days"),
+            (72 * HOUR, "3 days"),
+            (-HOUR, "under an hour"),
+        ];
+        for (idle, want) in cases {
+            assert_eq!(age_text(1_000_000_000, 1_000_000_000 - idle), want, "{idle}");
+        }
+        let mut cleanup =
+            opened(&[("old", true, Some(Safety::Safe)), ("by-hand", false, Some(Safety::Safe))]);
+        for row in &mut cleanup.rows {
+            row.leftover.modified_ms = Some(1_000_000_000 - 72 * HOUR);
+        }
+        assert_eq!(right_text(&cleanup.rows[0], 1_000_000_000), "3 days");
+        assert_eq!(right_text(&cleanup.rows[1], 1_000_000_000), "nothing to lose \u{b7} 3 days");
+    }
+
+    #[test]
+    fn the_branch_is_shown_only_when_it_is_not_agent_slash_the_name() {
+        let cleanup = opened(&[("calm-comet", true, None)]);
+        let row = &cleanup.rows[0];
+        assert_eq!(shown_branch(row, "calm-comet"), None);
+        assert_eq!(shown_branch(row, "other"), Some("agent/calm-comet".to_owned()));
+        let bare = opened_unreadable(&["x"]);
+        assert_eq!(shown_branch(&bare.rows[0], "x"), None);
+    }
+
+    #[test]
+    fn the_summary_says_how_many_are_safe() {
+        let safe = || Some(Safety::Safe);
+        let dirty = || Some(unsafe_with(Risk::Uncommitted { files: 1 }));
+        let cases = [
+            (opened(&[]), "0 worktrees no tab owns.", ""),
+            (
+                opened(&[("a", true, safe())]),
+                "1 worktree no tab owns.",
+                "It is safe to remove: nothing uncommitted, nothing unpushed.",
+            ),
+            (
+                opened(&[("a", true, safe()), ("b", true, safe())]),
+                "2 worktrees no tab owns.",
+                "All 2 are safe to remove: nothing uncommitted, nothing unpushed.",
+            ),
+            (
+                opened(&[("a", true, safe()), ("b", true, dirty()), ("c", true, dirty())]),
+                "3 worktrees no tab owns.",
+                "1 is safe to remove. The others say what they would lose.",
+            ),
+            (
+                opened(&[("a", true, dirty())]),
+                "1 worktree no tab owns.",
+                "None is proven safe to remove. Each row says what it would lose.",
+            ),
+            (
+                opened(&[("a", true, safe()), ("b", true, None)]),
+                "2 worktrees no tab owns.",
+                "Looking at what each one would lose...",
+            ),
+        ];
+        for (cleanup, lead, rest) in cases {
+            assert_eq!(summary(&cleanup), Summary { lead: lead.into(), rest: rest.into() });
+        }
     }
 
     #[test]

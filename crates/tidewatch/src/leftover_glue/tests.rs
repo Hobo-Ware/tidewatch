@@ -282,7 +282,7 @@ fn an_unrecorded_worktree_on_a_detached_head_is_discarded_with_its_commits_liste
     f.settle();
     let row = &dialog_of(&f).rows[0];
     assert!(
-        crate::leftovers::row_text(row).unwrap().contains("1 commit found nowhere else"),
+        crate::leftovers::right_text(row, 0).contains("1 commit found nowhere else"),
         "{:?}",
         row.state
     );
