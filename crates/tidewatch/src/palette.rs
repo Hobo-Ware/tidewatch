@@ -210,6 +210,38 @@ pub(crate) fn filter(items: &[Item], query: &str) -> Vec<Hit> {
     hits.into_iter().map(|(_, hit)| hit).collect()
 }
 
+/// The label over a group of rows: what `Item::kind` stands for.
+pub(crate) fn group_title(kind: &str) -> &'static str {
+    match kind {
+        "tabs" => "Tabs",
+        "view" => "View",
+        "app" => "App",
+        "dialogs" => "Dialogs",
+        "tab" => "Open tabs",
+        "repo" => "Repos",
+        "profile" => "New tab",
+        _ => "Other",
+    }
+}
+
+/// `hits` with the rows of one kind together: groups in the order their first row shows, each
+/// keeping its rows' order.
+pub(crate) fn grouped(hits: Vec<Hit>, items: &[Item]) -> Vec<Hit> {
+    let mut kinds: Vec<&str> = Vec::new();
+    for hit in &hits {
+        let kind = items[hit.item].kind;
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    let mut by_kind: Vec<Vec<Hit>> = kinds.iter().map(|_| Vec::new()).collect();
+    for hit in hits {
+        let at = kinds.iter().position(|kind| *kind == items[hit.item].kind).unwrap_or_default();
+        by_kind[at].push(hit);
+    }
+    by_kind.into_iter().flatten().collect()
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Palette {
     pub(crate) query: String,
@@ -449,5 +481,39 @@ mod tests {
         let palette = Palette::open("tab");
         assert_eq!(palette.query, "tab");
         assert!(palette.focus);
+    }
+
+    fn hit(item: usize) -> Hit {
+        Hit { item, positions: Vec::new(), alias: None }
+    }
+
+    fn item(kind: &'static str) -> Item {
+        Item { label: kind.to_owned(), keys: String::new(), kind, target: Target::OpenRepo }
+    }
+
+    #[test]
+    fn rows_of_one_kind_come_together_groups_in_first_seen_order_and_rows_in_their_order() {
+        let items = [item("app"), item("tabs"), item("app"), item("repo"), item("tabs")];
+        let hits = (0..5).map(hit).collect::<Vec<_>>();
+        let order: Vec<usize> = grouped(hits, &items).iter().map(|hit| hit.item).collect();
+        assert_eq!(order, [0, 2, 1, 4, 3]);
+    }
+
+    #[test]
+    fn grouping_nothing_or_one_group_changes_nothing() {
+        let items = [item("app"), item("app")];
+        assert_eq!(grouped(Vec::new(), &items), Vec::<Hit>::new());
+        assert_eq!(grouped(vec![hit(1), hit(0)], &items), vec![hit(1), hit(0)]);
+    }
+
+    #[test]
+    fn every_kind_the_palette_makes_has_its_own_title() {
+        let made = items(&sources(), Platform::CURRENT);
+        let mut titles: Vec<&str> = made.iter().map(|item| group_title(item.kind)).collect();
+        titles.sort_unstable();
+        titles.dedup();
+        assert!(!titles.contains(&"Other"), "{titles:?}");
+        assert_eq!(group_title("tab"), "Open tabs");
+        assert_eq!(group_title("tabs"), "Tabs");
     }
 }
