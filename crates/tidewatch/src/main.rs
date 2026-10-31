@@ -263,6 +263,8 @@ mod welcome_view;
 mod window_chrome;
 mod window_settings;
 mod window_view;
+mod workflow_glue;
+mod workflow_view;
 mod worktree_jobs;
 mod worktree_setup_view;
 

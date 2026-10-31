@@ -3,6 +3,7 @@ use egui::{Context, Event, PointerButton, RawInput, Shape};
 use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Seen, Summary, SummaryChecks, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
+use tidewatch_core::workflow_profile::Workflow;
 
 use crate::pr_watch::{Handling, Pause, Watch};
 
@@ -212,7 +213,9 @@ fn a_click_on_the_primary_button_asks_for_that_card() {
 #[test]
 fn a_waiting_message_and_a_pause_draw_at_the_end_and_their_buttons_click() {
     let mut watch = watch_with(vec![]);
-    let message = tidewatch_core::pr_prompt::message(&every_kind().remove(2), 42).unwrap();
+    let message =
+        tidewatch_core::pr_prompt::message(&every_kind().remove(2), 42, Workflow::default())
+            .unwrap();
     watch.pending.push(crate::pr_watch::Pending { id: 3, message });
     watch.pause = Some(Pause::SignedOut);
     let (_, clicks) = run_frames(&watch, vec![vec![]], None);

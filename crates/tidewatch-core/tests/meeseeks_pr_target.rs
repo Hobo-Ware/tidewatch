@@ -10,6 +10,7 @@ use tidewatch_core::meeseeks_check::{Work, change, hand_off};
 use tidewatch_core::meeseeks_target::Target;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::workflow_profile::Workflow;
 use tidewatch_core::worktree::{self, Worktree};
 
 const URL: &str = "https://github.com/acme/web/pull/2437";
@@ -88,7 +89,7 @@ fn hand_off_with(
     gh: &FakeGh,
     work: &Work,
 ) -> Result<tidewatch_core::meeseeks_check::Checked, String> {
-    hand_off(&Tools::with_path(gh.path()), &dir(f), &f.worktree.branch, work)
+    hand_off(&Tools::with_path(gh.path()), &dir(f), &f.worktree.branch, work, Workflow::default())
 }
 
 #[test]

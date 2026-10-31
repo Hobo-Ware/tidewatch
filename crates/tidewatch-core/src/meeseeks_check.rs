@@ -15,6 +15,7 @@ use crate::paths::TidewatchPaths;
 use crate::pr_ask;
 use crate::test_command::{self, Gate};
 use crate::tools::{GhError, Tools, run_gh};
+use crate::workflow_profile::Workflow;
 use crate::worktree::{self, BranchChoice, RemoveMode, Terms, Why, Worktree};
 use crate::worktree_safety::Owner;
 
@@ -275,7 +276,12 @@ fn new_on_fetched(tools: &Tools, dir: &Path, started_ms: i64) -> Result<usize, S
     Ok(lines_of(tools, dir, &args)?.len())
 }
 
-fn on_pull_request(tools: &Tools, dir: &Path, pr: &PullRequest) -> Result<Option<Checked>, String> {
+fn on_pull_request(
+    tools: &Tools,
+    dir: &Path,
+    pr: &PullRequest,
+    workflow: Workflow,
+) -> Result<Option<Checked>, String> {
     let Some(seen) = view(tools, dir, pr)? else { return Ok(None) };
     let label = pr.label();
     let passed = |detail: String| Ok(Some(Checked { detail, pr_url: Some(seen.url.clone()) }));
@@ -289,7 +295,9 @@ fn on_pull_request(tools: &Tools, dir: &Path, pr: &PullRequest) -> Result<Option
             fetch_head(tools, dir, &seen.head)?;
             match missing_from_fetched(tools, dir)? {
                 0 => passed(format!("Everything is on {label}")),
-                missing => Err(pr_ask::meeseeks_push_to_pr(pr.number, &seen.head, missing)),
+                missing => {
+                    Err(pr_ask::meeseeks_push_to_pr(pr.number, &seen.head, missing, workflow))
+                }
             }
         }
     }
@@ -330,9 +338,15 @@ fn at_head(url: String) -> Checked {
 
 /// The pull request the task names when it names one, else the open pull request at this
 /// worktree's head. A task that names none can still point at one in its summary, in this repo.
-pub fn hand_off(tools: &Tools, dir: &Path, branch: &str, work: &Work) -> Result<Checked, String> {
+pub fn hand_off(
+    tools: &Tools,
+    dir: &Path,
+    branch: &str,
+    work: &Work,
+    workflow: Workflow,
+) -> Result<Checked, String> {
     if let Target::Existing(pr) = &work.target
-        && let Some(checked) = on_pull_request(tools, dir, pr)?
+        && let Some(checked) = on_pull_request(tools, dir, pr, workflow)?
     {
         return Ok(checked);
     }
@@ -342,11 +356,12 @@ pub fn hand_off(tools: &Tools, dir: &Path, branch: &str, work: &Work) -> Result<
     if work.target == Target::New
         && let Some(pr) = meeseeks_target::in_summary(&work.summary)
         && in_this_repo(&pr, origin_repo(tools, dir).as_ref())
-        && let Ok(Some(checked)) = on_pull_request(tools, dir, &pr)
+        && let Ok(Some(checked)) = on_pull_request(tools, dir, &pr, workflow)
     {
         return Ok(checked);
     }
-    Err(pr_ask::meeseeks_fix(branch, delivery::detect_base(tools, dir).as_deref()))
+    let base = delivery::detect_base(tools, dir);
+    Err(pr_ask::meeseeks_fix(branch, base.as_deref(), workflow))
 }
 
 pub fn poof(paths: &TidewatchPaths, worktree: &Worktree) -> Result<(), String> {

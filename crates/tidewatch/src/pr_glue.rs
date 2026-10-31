@@ -10,6 +10,7 @@ use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_status::Body;
 use tidewatch_core::prefs::GithubPrefs;
 use tidewatch_core::tools::Tools;
+use tidewatch_core::workflow_profile::Workflow;
 use tidewatch_core::worktree::{BRANCH_PREFIX, Worktree};
 
 use crate::jobs::Jobs;
@@ -103,6 +104,11 @@ impl Host {
         push_of(self.tabs.get(&tab), self.default, autonomous, meeseeks)
     }
 
+    /// The workflow profile the tab's messages use, as the last frame saw it.
+    pub(crate) fn workflow(&self, tab: u64) -> Workflow {
+        self.tabs.get(&tab).map_or_else(Workflow::default, |watch| watch.workflow)
+    }
+
     pub(crate) fn watch(&self, tab: u64) -> Option<&Watch> {
         self.tabs.get(&tab)
     }
@@ -162,6 +168,7 @@ impl Host {
             }
             watch.set_live(fact.live, now);
             watch.autonomous = fact.autonomous;
+            watch.workflow = fact.workflow;
             watch.see_busy(fact.busy, now);
             if watch.take_load() {
                 pr_jobs::load(&self.jobs, ctx, fact.id, watch.file.clone());

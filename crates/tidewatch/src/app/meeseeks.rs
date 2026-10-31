@@ -303,7 +303,8 @@ impl Tidewatch {
             );
             return;
         };
-        let spec = CheckSpec { tools: self.flow.tools(), worktree, work };
+        let workflow = self.workflow.profile(&worktree.repo);
+        let spec = CheckSpec { tools: self.flow.tools(), worktree, work, workflow };
         self.meeseeks.check(ctx, tab, step, spec, pr);
     }
 

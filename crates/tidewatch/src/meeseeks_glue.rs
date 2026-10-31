@@ -17,6 +17,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::test_command::{self, Gate};
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
+use tidewatch_core::workflow_profile::Workflow;
 use tidewatch_core::worktree::{self, Worktree};
 use tidewatch_core::worktree_safety::Owner;
 
@@ -130,6 +131,7 @@ pub(crate) struct CheckSpec {
     pub(crate) tools: Tools,
     pub(crate) worktree: Worktree,
     pub(crate) work: Work,
+    pub(crate) workflow: Workflow,
 }
 
 pub(crate) struct LookSpec {
@@ -148,7 +150,9 @@ pub(crate) fn run_check(step: Step, spec: &CheckSpec, pr: bool) -> Result<Checke
         Step::Change => check::change(tools, &wt.path, &wt.branch, &spec.work),
         Step::Tests => check::tests(&wt.repo, &wt.path),
         Step::Proof => check::proof(tools, &wt.path),
-        Step::HandOff if pr => check::hand_off(tools, &wt.path, &wt.branch, &spec.work),
+        Step::HandOff if pr => {
+            check::hand_off(tools, &wt.path, &wt.branch, &spec.work, spec.workflow)
+        }
         Step::HandOff => Ok(Checked { detail: String::new(), pr_url: None }),
     }
 }

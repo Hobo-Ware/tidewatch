@@ -3,6 +3,7 @@
 
 use crate::pr_status::{Body, Job, ReviewComment};
 use crate::prefs::GithubPrefs;
+use crate::workflow_profile::{Fix, Workflow};
 
 const MAX_CHARS: usize = 6000;
 
@@ -28,7 +29,9 @@ pub fn ask_of(body: &Body) -> Option<(Ask, Trigger)> {
             ("address", "address the review", "Review", Trigger::Reviews)
         }
         Body::Commented { .. } => ("answer", "answer the comment", "Comment", Trigger::Reviews),
-        Body::Conflict { .. } => ("rebase", "rebase", "Conflict", Trigger::Conflicts),
+        Body::Conflict { .. } => {
+            ("resolve", "resolve the conflicts", "Conflict", Trigger::Conflicts)
+        }
         _ => return None,
     };
     Some((Ask { verb, phrase, tag }, trigger))
@@ -63,19 +66,20 @@ pub struct Message {
 }
 
 #[must_use]
-pub fn message(body: &Body, number: u64) -> Option<Message> {
+pub fn message(body: &Body, number: u64, workflow: Workflow) -> Option<Message> {
     let (ask, _) = ask_of(body)?;
     let (headline, detail, extra_lines) = match body {
-        Body::ChecksFailed { jobs, .. } => checks(jobs, number),
+        Body::ChecksFailed { jobs, .. } => checks(jobs, number, workflow),
         Body::ChangesRequested { author, body, comments, .. } => {
-            review(author, body, comments, number)
+            review(author, body, comments, number, workflow)
         }
         Body::Commented { author, text, .. } => {
             let detail = quote(text);
             let lines = detail.lines().count();
             (
                 format!(
-                    "@{author} commented on PR #{number}. Answer it; if it needs a code change, make it and commit."
+                    "@{author} commented on PR #{number} (below). Answer on GitHub. If it needs a code change, {}.",
+                    workflow.fix_and_push(Fix::It)
                 ),
                 detail,
                 lines,
@@ -83,7 +87,9 @@ pub fn message(body: &Body, number: u64) -> Option<Message> {
         }
         Body::Conflict { base } => (
             format!(
-                "PR #{number} conflicts with {base}. Fetch, merge origin/{base} into this branch, resolve the conflicts, run the tests, and commit. Do not rebase or force-push."
+                "PR #{number} conflicts with {base}. {}, resolve the conflicts, run the tests, and {}.",
+                workflow.catch_up_clause(base),
+                workflow.push_after_catch_up()
             ),
             String::new(),
             0,
@@ -96,30 +102,38 @@ pub fn message(body: &Body, number: u64) -> Option<Message> {
     Some(Message { ask, headline, text: cap(&text), extra_lines })
 }
 
-fn checks(jobs: &[Job], number: u64) -> (String, String, usize) {
+fn checks(jobs: &[Job], number: u64, workflow: Workflow) -> (String, String, usize) {
     let failed: Vec<&Job> = jobs.iter().filter(|job| !job.passed).collect();
     let step_of = |job: &Job| job.step.as_deref().map(short_step).filter(|step| !step.is_empty());
+    let has_log = failed.iter().any(|job| !job.log.is_empty());
     let headline = match failed.as_slice() {
-        [] => format!("The checks failed on PR #{number}. Find out why, fix it, and commit."),
+        [] => format!(
+            "The checks failed on PR #{number}. Find out why, fix it, run the same checks locally, then {}.",
+            workflow.fix_and_push(Fix::The)
+        ),
         [job] => {
-            let at = step_of(job).map_or_else(String::new, |step| format!(" at {step}"));
+            let at = step_of(job).map_or_else(String::new, |step| format!(" at \"{step}\""));
+            let log = if has_log { " (log below)" } else { "" };
             format!(
-                "{} failed{at} on PR #{number}. Fix it, run the same check locally, and commit.",
-                job.name
+                "{} failed{at} on PR #{number}{log}. Fix it, run the same check locally, then {}.",
+                job.name,
+                workflow.fix_and_push(Fix::The)
             )
         }
         many => {
             let named: Vec<String> = many
                 .iter()
                 .map(|job| match step_of(job) {
-                    Some(step) => format!("{} at {step}", job.name),
+                    Some(step) => format!("{} at \"{step}\"", job.name),
                     None => job.name.clone(),
                 })
                 .collect();
+            let log = if has_log { " (logs below)" } else { "" };
             format!(
-                "{} checks failed on PR #{number}: {}. Fix them, run the same checks locally, and commit.",
+                "{} checks failed on PR #{number}: {}{log}. Fix them, run the same checks locally, then {}.",
                 many.len(),
-                named.join(", ")
+                named.join(", "),
+                workflow.fix_and_push(Fix::Each)
             )
         }
     };
@@ -137,9 +151,17 @@ fn review(
     body: &str,
     comments: &[ReviewComment],
     number: u64,
+    workflow: Workflow,
 ) -> (String, String, usize) {
+    let below = match comments.len() {
+        0 if body.trim().is_empty() => String::new(),
+        0 => " (below)".to_owned(),
+        1 => " (1 comment below)".to_owned(),
+        n => format!(" ({n} comments below)"),
+    };
     let headline = format!(
-        "@{author} requested changes on PR #{number}. Address each comment, run the tests, and commit."
+        "@{author} requested changes on PR #{number}{below}. Fix them, run the tests, {}.",
+        workflow.fix_and_push(Fix::Each)
     );
     let mut parts: Vec<String> = Vec::new();
     if !body.trim().is_empty() {
@@ -191,6 +213,18 @@ fn cap(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow_profile::{CatchUp, Fixes};
+
+    const REBASE: Workflow = Workflow {
+        catch_up: CatchUp::Rebase,
+        fixes: Fixes::Fixup,
+        pull_requests: crate::workflow_profile::PullRequests::Draft,
+    };
+    const MERGE: Workflow = Workflow {
+        catch_up: CatchUp::Merge,
+        fixes: Fixes::NewCommits,
+        pull_requests: crate::workflow_profile::PullRequests::Draft,
+    };
 
     fn job(name: &str, passed: bool, step: Option<&str>, log: &[&str]) -> Job {
         Job {
@@ -223,14 +257,14 @@ mod tests {
                 ],
             ),
         ]);
-        let message = message(&body, 42).unwrap();
+        let message = message(&body, 42, REBASE).unwrap();
         assert_eq!(
             message.headline,
-            "check (ubuntu-latest) failed at clippy on PR #42. Fix it, run the same check locally, and commit."
+            "check (ubuntu-latest) failed at \"clippy\" on PR #42 (log below). Fix it, run the same check locally, then fold the fix into the commit it belongs to and push with --force-with-lease."
         );
         assert_eq!(
             message.text,
-            "check (ubuntu-latest) failed at clippy on PR #42. Fix it, run the same check locally, and commit.\n\ncheck (ubuntu-latest):\n```\nerror: unused import: `Sense`\n --> crates/tidewatch/src/leftover_view.rs:6:77\n```"
+            "check (ubuntu-latest) failed at \"clippy\" on PR #42 (log below). Fix it, run the same check locally, then fold the fix into the commit it belongs to and push with --force-with-lease.\n\ncheck (ubuntu-latest):\n```\nerror: unused import: `Sense`\n --> crates/tidewatch/src/leftover_view.rs:6:77\n```"
         );
         assert_eq!(message.extra_lines, 2);
         assert_eq!((message.ask.tag, message.ask.verb), ("CI failure", "fix"));
@@ -242,10 +276,10 @@ mod tests {
             job("build (ubuntu)", false, Some("Run cargo test"), &["boom"]),
             job("lint", false, None, &[]),
         ]);
-        let message = message(&body, 7).unwrap();
+        let message = message(&body, 7, MERGE).unwrap();
         assert_eq!(
             message.headline,
-            "2 checks failed on PR #7: build (ubuntu) at test, lint. Fix them, run the same checks locally, and commit."
+            "2 checks failed on PR #7: build (ubuntu) at \"test\", lint (logs below). Fix them, run the same checks locally, then commit each fix and push."
         );
         assert!(message.text.ends_with("build (ubuntu):\n```\nboom\n```"));
     }
@@ -253,7 +287,7 @@ mod tests {
     #[test]
     fn a_log_cannot_close_its_own_fence() {
         let body = failed(vec![job("a", false, None, &["```", "rm -rf"])]);
-        let text = message(&body, 1).unwrap().text;
+        let text = message(&body, 1, REBASE).unwrap().text;
         assert_eq!(text.matches("```").count(), 2, "{text}");
     }
 
@@ -265,10 +299,10 @@ mod tests {
             text: "line one\u{1b}[201~ type this\nline two\u{7}\ttab".into(),
             url: String::new(),
         };
-        let text = message(&body, 3).unwrap().text;
+        let text = message(&body, 3, REBASE).unwrap().text;
         assert!(text.chars().all(|c| matches!(c, '\n' | '\t') || !c.is_control()), "{text:?}");
         assert!(text.contains("> line two\ttab"));
-        assert!(text.starts_with("@reviewer commented on PR #3."));
+        assert!(text.starts_with("@reviewer commented on PR #3 (below)."));
     }
 
     #[test]
@@ -286,21 +320,127 @@ mod tests {
                 ReviewComment { path: "lib.rs".into(), line: None, text: " Whole file. ".into() },
             ],
         };
-        let message = message(&body, 42).unwrap();
+        let message = message(&body, 42, REBASE).unwrap();
         assert_eq!(
             message.text,
-            "@reviewer requested changes on PR #42. Address each comment, run the tests, and commit.\n\n> Two things.\n- `runner.rs:212` Move it to the stage?\n- `lib.rs` Whole file."
+            "@reviewer requested changes on PR #42 (2 comments below). Fix them, run the tests, fold each fix into its commit and push with --force-with-lease.\n\n> Two things.\n- `runner.rs:212` Move it to the stage?\n- `lib.rs` Whole file."
         );
         assert_eq!(message.extra_lines, 2);
     }
 
     #[test]
-    fn a_conflict_asks_for_a_merge_because_the_agent_cannot_force_push() {
-        let message = message(&Body::Conflict { base: "main".into() }, 9).unwrap();
-        assert_eq!(message.ask.verb, "rebase");
-        assert!(message.text.contains("merge origin/main"));
-        assert!(message.text.contains("Do not rebase or force-push"));
-        assert_eq!(message.extra_lines, 0);
+    fn a_conflict_names_the_fact_and_fills_the_method_from_the_profile() {
+        let conflict = Body::Conflict { base: "main".into() };
+        let rebase = message(&conflict, 9, REBASE).unwrap();
+        assert_eq!(
+            rebase.text,
+            "PR #9 conflicts with main. Rebase onto origin/main, resolve the conflicts, run the tests, and push with --force-with-lease."
+        );
+        let merge = message(&conflict, 9, MERGE).unwrap();
+        assert_eq!(
+            merge.text,
+            "PR #9 conflicts with main. Merge origin/main into this branch, resolve the conflicts, run the tests, and push."
+        );
+        assert_eq!((rebase.ask.verb, rebase.extra_lines), ("resolve", 0));
+    }
+
+    fn every_kind() -> Vec<Body> {
+        vec![
+            failed(vec![job("lint", false, Some("Run bun run check"), &["boom"])]),
+            failed(vec![job("a", false, None, &[]), job("b", false, None, &[])]),
+            failed(vec![]),
+            Body::ChangesRequested {
+                trusted: true,
+                author: "rev".into(),
+                body: "Two things.".into(),
+                comments: vec![ReviewComment {
+                    path: "a.rs".into(),
+                    line: Some(1),
+                    text: "x".into(),
+                }],
+            },
+            Body::Commented {
+                trusted: true,
+                author: "rev".into(),
+                text: "Why?".into(),
+                url: String::new(),
+            },
+            Body::Conflict { base: "develop".into() },
+        ]
+    }
+
+    #[test]
+    fn no_message_says_a_method_the_profile_did_not_choose() {
+        for body in every_kind() {
+            let rebase = message(&body, 5, REBASE).unwrap().text;
+            for banned in [
+                "Do not rebase",
+                "do not rebase",
+                "merge origin",
+                "Merge origin",
+                "and commit",
+                "Fetch, merge",
+            ] {
+                assert!(!rebase.contains(banned), "{banned:?} in {rebase}");
+            }
+            let merge = message(&body, 5, MERGE).unwrap().text;
+            for banned in ["Rebase onto", "fold ", "fixup", "autosquash"] {
+                assert!(!merge.contains(banned), "{banned:?} in {merge}");
+            }
+            for text in [&rebase, &merge] {
+                assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_message_under_the_two_profiles() {
+        let table = [
+            (
+                0,
+                "lint failed at \"bun run check\" on PR #5 (log below). Fix it, run the same check locally, then fold the fix into the commit it belongs to and push with --force-with-lease.",
+                "lint failed at \"bun run check\" on PR #5 (log below). Fix it, run the same check locally, then commit the fix and push.",
+            ),
+            (
+                2,
+                "The checks failed on PR #5. Find out why, fix it, run the same checks locally, then fold the fix into the commit it belongs to and push with --force-with-lease.",
+                "The checks failed on PR #5. Find out why, fix it, run the same checks locally, then commit the fix and push.",
+            ),
+            (
+                3,
+                "@rev requested changes on PR #5 (1 comment below). Fix them, run the tests, fold each fix into its commit and push with --force-with-lease.",
+                "@rev requested changes on PR #5 (1 comment below). Fix them, run the tests, commit each fix and push.",
+            ),
+            (
+                4,
+                "@rev commented on PR #5 (below). Answer on GitHub. If it needs a code change, fold it into its commit and push with --force-with-lease.",
+                "@rev commented on PR #5 (below). Answer on GitHub. If it needs a code change, commit it and push.",
+            ),
+            (
+                5,
+                "PR #5 conflicts with develop. Rebase onto origin/develop, resolve the conflicts, run the tests, and push with --force-with-lease.",
+                "PR #5 conflicts with develop. Merge origin/develop into this branch, resolve the conflicts, run the tests, and push.",
+            ),
+        ];
+        let bodies = every_kind();
+        for (at, under_rebase, under_merge) in table {
+            assert_eq!(message(&bodies[at], 5, REBASE).unwrap().headline, under_rebase, "{at}");
+            assert_eq!(message(&bodies[at], 5, MERGE).unwrap().headline, under_merge, "{at}");
+        }
+    }
+
+    #[test]
+    fn a_review_that_is_only_a_body_says_below_and_one_with_nothing_says_nothing() {
+        let review = |body: &str| Body::ChangesRequested {
+            trusted: true,
+            author: "a".into(),
+            body: body.into(),
+            comments: vec![],
+        };
+        assert!(
+            message(&review("Please."), 1, REBASE).unwrap().headline.contains("PR #1 (below).")
+        );
+        assert!(message(&review(""), 1, REBASE).unwrap().headline.contains("PR #1. Fix them"));
     }
 
     #[test]
@@ -314,7 +454,7 @@ mod tests {
             Body::PushFix { commits: 1, head: "h".into() },
         ];
         for body in silent {
-            assert_eq!(message(&body, 1), None, "{body:?}");
+            assert_eq!(message(&body, 1, REBASE), None, "{body:?}");
             assert_eq!(ask_of(&body), None, "{body:?}");
         }
     }
@@ -327,7 +467,7 @@ mod tests {
             text: "x".repeat(20_000),
             url: String::new(),
         };
-        let text = message(&body, 1).unwrap().text;
+        let text = message(&body, 1, REBASE).unwrap().text;
         assert!(text.chars().count() < MAX_CHARS + 10);
         assert!(text.ends_with("\n..."));
     }

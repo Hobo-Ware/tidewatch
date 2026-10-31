@@ -348,7 +348,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 format!("{base} has moved on"),
             );
             if asks {
-                m.buttons.push(ask("rebase"));
+                m.buttons.push(ask("resolve"));
             }
             if current {
                 m.note = Some(note_of(&context, &card.body));

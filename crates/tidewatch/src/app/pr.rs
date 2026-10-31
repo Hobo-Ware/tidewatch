@@ -56,6 +56,7 @@ impl Tidewatch {
                     name: worktree.name(),
                     branch: &worktree.branch,
                     live: live.contains(&worktree.repo),
+                    workflow: self.workflow.profile(&worktree.repo),
                     pr,
                     autonomous: agent.autonomous(),
                     busy: Busy::of(
@@ -217,17 +218,18 @@ impl Tidewatch {
         now: f64,
     ) {
         let Some(Body::PushFix { commits, .. }) = self.pr.body(tab, card) else { return };
-        let Some(branch) = self
+        let Some(repo) = self
             .tabs
             .items()
             .iter()
             .find(|candidate| candidate.id == tab)
             .and_then(|candidate| candidate.pane.worktree.as_ref())
-            .map(|worktree| worktree.branch.clone())
+            .map(|worktree| worktree.repo.clone())
         else {
             return;
         };
-        let text = pr_ask::push_commits(&branch, commits);
+        let number = self.pr.watch(tab).and_then(|watch| watch.cards.number);
+        let text = pr_ask::push_commits(number, commits, self.workflow.profile(&repo));
         let send = if on_its_own {
             Send::auto(&text, Reason::AutoPush, because::ASK_PUSH_OWN)
         } else {
