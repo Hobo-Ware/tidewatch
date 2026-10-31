@@ -15,7 +15,7 @@ use tidewatch_core::transcript::Source;
 
 use crate::agent_avatar::Face;
 use crate::agent_ready::Ready;
-use crate::ask_model::Ask;
+use crate::ask_model::{self, Ask};
 use crate::brand;
 use crate::commands::Command;
 use crate::dev_reader::DevReader;
@@ -552,6 +552,31 @@ fn go_with_picks<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) -> Option<String>
     })
 }
 
+/// What became of a ready answer offered to the question the agent has open.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Opened {
+    /// No single question waits: the caller sends it as a plain reply.
+    NotOpen,
+    Answered,
+    Refused(&'static str),
+}
+
+/// Gives `text`, a ready answer picked outside the Reader, to the one question the agent has open
+/// with its question tool: the option it names, else as typed.
+pub(crate) fn answer_open<T: ShowsScreen>(pane: &mut Pane<T>, text: &str, now: f64) -> Opened {
+    let Some(row) = pane.agent.as_ref().and_then(|agent| agent.reader.rows.pending_question())
+    else {
+        return Opened::NotOpen;
+    };
+    let Kind::Question(asked) = &row.kind else { return Opened::NotOpen };
+    let Some(given) = ask_model::given_for(&asked.questions, text) else { return Opened::NotOpen };
+    let seq = row.seq;
+    match answer_question(pane, seq, Reply::Answered(given), now) {
+        Some(reason) => Opened::Refused(reason),
+        None => Opened::Answered,
+    }
+}
+
 /// Gives the user's answer to the questions in row `seq`. A held `ask_user` call takes it through
 /// its channel, or as a typed message when the call already ended. Claude's menu takes key presses,
 /// one a gap apart; a skip closes the menu with Esc and then says so. Nothing is typed into a Claude
@@ -1001,6 +1026,33 @@ mod tests {
         assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![picked]));
         assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
         assert!(pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
+    }
+
+    #[test]
+    fn a_ready_answer_picked_elsewhere_goes_to_the_one_open_question_as_its_option_or_as_typed() {
+        for (text, want) in [
+            ("Run", Given { picked: vec![1], other: None }),
+            ("Elsewhere", Given { picked: Vec::new(), other: Some("Elsewhere".into()) }),
+        ] {
+            let mut pane = pane_without_questions();
+            let (seq, receiver) = ask_with_recommended(&mut pane);
+            assert_eq!(answer_open(&mut pane, text, 5.0), Opened::Answered);
+            assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![want]));
+            assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
+        }
+    }
+
+    #[test]
+    fn a_ready_answer_is_left_to_the_plain_reply_when_no_single_question_is_open() {
+        let mut none = pane_without_questions();
+        assert_eq!(answer_open(&mut none, "Run", 5.0), Opened::NotOpen);
+        let (mut several, seq) = pane(Origin::Tidewatch(AskReply::new(channel().0)));
+        assert_eq!(
+            answer_open(&mut several, "Run", 5.0),
+            Opened::NotOpen,
+            "two questions in one call"
+        );
+        assert!(matches!(asked_of(&several, seq), Asked::Pending));
     }
 
     #[test]

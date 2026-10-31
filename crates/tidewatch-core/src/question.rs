@@ -15,6 +15,7 @@ use std::sync::mpsc::Sender;
 
 use serde_json::{Map, Value, json};
 
+use crate::progress::{Choice, Entry};
 use crate::user_markup::{self, Record};
 
 pub const TOOL_NAME: &str = "ask_user";
@@ -141,6 +142,31 @@ impl Question {
         let cut: String = text.chars().take(MAX - 3).collect();
         format!("{}...", cut.trim_end())
     }
+}
+
+/// The Needs you lines of a report that stand for `questions`: each question with its options as
+/// answers and the agent's pick marked, so a question asked with a tool fills `needs_you` itself.
+#[must_use]
+pub fn needs_you_entries(questions: &[Question]) -> Vec<Entry> {
+    questions
+        .iter()
+        .map(|question| {
+            let picks = question.picks();
+            Entry {
+                text: question.text.clone(),
+                why: question.decision.clone(),
+                options: question
+                    .options
+                    .iter()
+                    .enumerate()
+                    .map(|(index, option)| Choice {
+                        text: option.shown().to_owned(),
+                        recommended: picks.contains(&index),
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 /// The answers that take every pick of `questions`, or nothing when one of them has none.
@@ -581,6 +607,52 @@ mod tests {
         assert_eq!(multi_none.auto_pick().picked, [0]);
         let all = auto_picks(&[recommended, none]);
         assert_eq!(all.iter().map(|given| given.picked.clone()).collect::<Vec<_>>(), [[1], [0]]);
+    }
+
+    #[test]
+    fn a_claude_question_fills_needs_you_with_its_text_options_and_pick() {
+        let input = json!({"questions": [
+            {"question": "Which color?", "header": "Color",
+             "options": [{"label": "Red"}, {"label": "Blue (Recommended)", "description": "cool"}]},
+            {"question": "Which toppings?", "multiSelect": true,
+             "options": [{"label": "Salt"}, {"label": "Sugar"}]},
+        ]});
+        let entries = needs_you_entries(&from_claude_input(&input).unwrap());
+        let choice = |text: &str, recommended| Choice { text: text.into(), recommended };
+        assert_eq!(
+            entries,
+            [
+                Entry {
+                    text: "Which color?".into(),
+                    why: None,
+                    options: vec![choice("Red", false), choice("Blue", true)],
+                },
+                Entry {
+                    text: "Which toppings?".into(),
+                    why: None,
+                    options: vec![choice("Salt", false), choice("Sugar", false)],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_ask_user_decision_becomes_the_why_and_the_flagged_option_the_pick() {
+        let questions = from_tool_args(&args(&json!({"questions": [{
+            "question": "Where should the retry count live?",
+            "decision": "Pick how the retry count is stored.",
+            "options": [{"label": "On the run"}, {"label": "On the stage", "recommended": true}],
+        }]})))
+        .unwrap();
+        let [entry] = needs_you_entries(&questions).try_into().unwrap();
+        assert_eq!(entry.why.as_deref(), Some("Pick how the retry count is stored."));
+        let picked: Vec<&str> = entry
+            .options
+            .iter()
+            .filter(|choice| choice.recommended)
+            .map(|choice| choice.text.as_str())
+            .collect();
+        assert_eq!(picked, ["On the stage"]);
     }
 
     #[test]
