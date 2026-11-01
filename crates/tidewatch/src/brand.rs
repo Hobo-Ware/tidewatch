@@ -178,6 +178,23 @@ mod tests {
     }
 
     #[test]
+    fn the_agent_icon_colors_are_the_brand_inks_they_are_named_for() {
+        let named = [
+            ("teal", TEAL),
+            ("blue", BLUE),
+            ("green", GREEN),
+            ("amber", AMBER),
+            ("orange", ORANGE),
+            ("red", RED),
+            ("purple", VIOLET_TEXT),
+        ];
+        for (name, ink) in named {
+            let hex = format!("#{:02x}{:02x}{:02x}", ink.r(), ink.g(), ink.b());
+            assert_eq!(tidewatch_core::avatar_icons::color_hex(name), Some(hex), "{name}");
+        }
+    }
+
+    #[test]
     fn the_theme_makes_stdusk_read_teal_for_its_accent() {
         let theme = theme();
         assert_eq!((theme.bg, theme.ansi), (GROUND, colors::one_half_dark().ansi));

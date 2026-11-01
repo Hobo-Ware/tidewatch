@@ -240,3 +240,35 @@ fn a_tab_that_takes_over_gets_its_own_avatar_back_and_the_menu_with_it() {
     fx.until(&mut host, 1, |host| host.get(1).is_some());
     assert_eq!(host.get(1).unwrap().reason, "its own");
 }
+
+#[test]
+fn the_fake_switch_value_picks_the_mockups_or_the_bundled_icons() {
+    let cases = [
+        (None, Fake::Off),
+        (Some(""), Fake::Off),
+        (Some("0"), Fake::Off),
+        (Some("1"), Fake::Mockups),
+        (Some("icons"), Fake::Icons),
+    ];
+    for (value, want) in cases {
+        assert_eq!(fake_mode_of(value), want, "{value:?}");
+    }
+}
+
+#[test]
+fn every_fake_bundled_icon_is_drawn_in_its_own_color_and_reads_on_the_plate() {
+    let reasons: Vec<_> = FAKE_ICONS.iter().map(|(_, _, reason)| *reason).collect();
+    let mut unique = reasons.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), FAKE_ICONS.len());
+    for (index, (icon, color, reason)) in FAKE_ICONS.iter().enumerate() {
+        let face = fake_icon_face(index).unwrap_or_else(|| panic!("{icon} in {color}"));
+        assert_eq!(face.reason, *reason);
+        assert!(face.svg.contains(&avatar_icons::color_hex(color).unwrap()), "{icon}");
+    }
+    assert_eq!(
+        fake_icon_face(FAKE_ICONS.len()).map(|f| f.reason.clone()),
+        Some(FAKE_ICONS[0].2.to_owned())
+    );
+}
