@@ -12,6 +12,17 @@ pub fn plural(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 
+/// `text` cut to `max` characters with `...` after the cut, or unchanged when it fits.
+#[must_use]
+pub fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut clipped: String = text.chars().take(max).collect();
+    clipped.push_str("...");
+    clipped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,5 +50,20 @@ mod tests {
             assert_eq!(plural(count, "file", "files"), want, "count {count}");
         }
         assert_eq!(plural(3, "is", "are"), "3 are");
+    }
+
+    #[test]
+    fn clip_cuts_by_characters_and_marks_the_cut() {
+        let cases = [
+            ("", 3, ""),
+            ("abc", 3, "abc"),
+            ("abcd", 3, "abc..."),
+            ("caf\u{e9}s", 4, "caf\u{e9}..."),
+            ("a\u{1F600}b", 2, "a\u{1F600}..."),
+            ("abc", 0, "..."),
+        ];
+        for (input, max, want) in cases {
+            assert_eq!(clip(input, max), want, "input {input:?} max {max}");
+        }
     }
 }

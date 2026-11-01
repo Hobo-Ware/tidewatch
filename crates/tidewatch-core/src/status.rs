@@ -255,16 +255,7 @@ fn text(value: Option<&Value>) -> Option<String> {
 }
 
 fn clip(message: &str) -> String {
-    clip_to(message, MESSAGE_MAX_CHARS)
-}
-
-fn clip_to(message: &str, max: usize) -> String {
-    if message.chars().count() <= max {
-        return message.to_owned();
-    }
-    let mut clipped: String = message.chars().take(max).collect();
-    clipped.push_str("...");
-    clipped
+    crate::text::clip(message, MESSAGE_MAX_CHARS)
 }
 
 fn clip_tail(message: &str, max: usize) -> String {

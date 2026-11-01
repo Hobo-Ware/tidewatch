@@ -7,6 +7,7 @@
 use kelp_core::review::{Anchor, Side, Thread};
 
 use crate::notes::line_label;
+use crate::text::clip;
 use crate::workflow_profile::Workflow;
 
 const QUOTE_MAX: usize = 200;
@@ -102,7 +103,11 @@ fn place(thread: &Thread) -> String {
 fn quote(anchor: &Anchor) -> Vec<String> {
     if anchor.span == 0 {
         let text = anchor.text.trim();
-        return if text.is_empty() { Vec::new() } else { vec![format!("> {}", shorten(text))] };
+        return if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![format!("> {}", clip(text, QUOTE_MAX))]
+        };
     }
     let covered: Vec<&str> = std::iter::once(anchor.text.as_str())
         .chain(anchor.block.iter().map(String::as_str))
@@ -117,20 +122,14 @@ fn quote(anchor: &Anchor) -> Vec<String> {
         .iter()
         .map(|line| {
             let text = line.trim_end().get(indent..).unwrap_or_default();
-            if text.is_empty() { ">".to_owned() } else { format!("> {}", shorten(text)) }
+            if text.is_empty() { ">".to_owned() } else { format!("> {}", clip(text, QUOTE_MAX)) }
         })
         .collect()
 }
 
-fn shorten(text: &str) -> String {
-    if text.chars().count() <= QUOTE_MAX {
-        return text.to_owned();
-    }
-    let head: String = text.chars().take(QUOTE_MAX).collect();
-    format!("{head}...")
-}
-
-fn clean(text: &str) -> String {
+/// Control characters other than newline and tab are stripped, because other people's text (notes,
+/// pull request comments, CI logs) must never end the bracketed paste early.
+pub(crate) fn clean(text: &str) -> String {
     text.chars().filter(|c| matches!(c, '\n' | '\t') || !c.is_control()).collect()
 }
 
