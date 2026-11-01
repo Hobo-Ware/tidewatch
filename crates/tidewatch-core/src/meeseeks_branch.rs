@@ -5,7 +5,6 @@
 use std::path::Path;
 
 use crate::delivery::{compare_ref, detect_base};
-use crate::limited;
 use crate::tools::Tools;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,25 +51,18 @@ pub fn parse_numstat(text: &str) -> Changed {
     changed
 }
 
-fn git(tools: &Tools, repo: &Path, args: &[&str]) -> Result<String, String> {
-    let mut command = tools.git(repo);
-    command.args(args);
-    let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
-    if out.success { Ok(out.stdout) } else { Err(out.stderr.trim().to_owned()) }
-}
-
 #[must_use]
 pub fn read(tools: &Tools, repo: &Path, branch: &str) -> Branch {
     let local = format!("refs/heads/{branch}");
-    if git(tools, repo, &["show-ref", "--verify", "--quiet", &local]).is_err() {
+    if tools.git_stdout(repo, &["show-ref", "--verify", "--quiet", &local]).is_err() {
         return Branch::Missing;
     }
     let Some(base) = detect_base(tools, repo) else {
         return Branch::Unreadable("no base branch to compare against".to_owned());
     };
     let start = compare_ref(tools, repo, &base);
-    let counted = git(tools, repo, &["rev-list", "--count", &format!("{start}..{branch}")]);
-    let diff = git(tools, repo, &["diff", "--numstat", &format!("{start}...{branch}"), "--"]);
+    let counted = tools.git_stdout(repo, &["rev-list", "--count", &format!("{start}..{branch}")]);
+    let diff = tools.git_stdout(repo, &["diff", "--numstat", &format!("{start}...{branch}"), "--"]);
     match (counted, diff) {
         (Ok(count), Ok(numstat)) => Branch::Found(Found {
             base,

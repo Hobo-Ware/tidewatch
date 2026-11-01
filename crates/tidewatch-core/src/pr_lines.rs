@@ -11,7 +11,6 @@ use std::path::Path;
 use kelp_core::review::Side;
 
 use crate::delivery::{compare_ref, detect_base};
-use crate::limited;
 use crate::tools::Tools;
 
 type Range = (u32, u32);
@@ -44,20 +43,21 @@ impl PrDiffLines {
         let base =
             detect_base(tools, dir).ok_or("cannot tell which branch the pull request targets")?;
         let start = compare_ref(tools, dir, &base);
-        let mut command = tools.git(dir);
-        command
-            .args([
+        let range = format!("{start}...{head}");
+        let diff = tools.git_stdout(
+            dir,
+            &[
                 "-c",
                 "core.quotepath=off",
                 "diff",
                 "--unified=3",
                 "--no-color",
                 "--no-ext-diff",
-            ])
-            .arg(format!("{start}...{head}"))
-            .arg("--");
-        let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
-        if out.success { Ok(Self::parse(&out.stdout)) } else { Err(out.stderr.trim().to_owned()) }
+                &range,
+                "--",
+            ],
+        )?;
+        Ok(Self::parse(&diff))
     }
 
     /// Reads unified diff text.

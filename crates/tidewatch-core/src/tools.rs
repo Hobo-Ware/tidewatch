@@ -77,6 +77,13 @@ impl Tools {
     pub(crate) fn gh(&self, dir: &Path) -> Command {
         self.command("gh", dir)
     }
+
+    pub(crate) fn git_stdout(&self, dir: &Path, args: &[&str]) -> Result<String, String> {
+        let mut command = self.git(dir);
+        command.args(args);
+        let out = self.finish(command).map_err(|e| limited::failure("git", &e))?;
+        if out.success { Ok(out.stdout) } else { Err(out.stderr.trim().to_owned()) }
+    }
 }
 
 /// What went wrong with a `gh` call, in the cases the UI words differently.
@@ -168,6 +175,17 @@ mod tests {
 
     fn failed(stdout: &str, stderr: &str) -> Finished {
         Finished { success: false, stdout: stdout.into(), stderr: stderr.into() }
+    }
+
+    #[test]
+    fn git_stdout_returns_stdout_and_maps_a_failure_to_stderr() {
+        let tools = Tools::system();
+        let dir = tempfile::tempdir().unwrap();
+        let version = tools.git_stdout(dir.path(), &["--version"]).unwrap();
+        assert!(version.starts_with("git version"), "{version:?}");
+        let failure = tools.git_stdout(dir.path(), &["no-such-subcommand"]).unwrap_err();
+        assert_eq!(failure, failure.trim());
+        assert_ne!(failure, "");
     }
 
     #[test]
