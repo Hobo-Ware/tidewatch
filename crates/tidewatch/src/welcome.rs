@@ -26,15 +26,6 @@ impl Recent {
     }
 }
 
-/// The folder as `~/code/web` when it is under `home`, so the list does not show a user name.
-pub(crate) fn shown_path(dir: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| dir.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => dir.display().to_string(),
-    }
-}
-
 /// The repos the last window had, then the ones the session file remembers, each once and only
 /// while the folder is still there. A plain folder (the Other group) and `/` are not repos to offer.
 pub(crate) fn recent(
@@ -169,16 +160,11 @@ mod tests {
     }
 
     #[test]
-    fn tab_counts_read_as_words_and_paths_hide_the_home_folder() {
+    fn tab_counts_read_as_words() {
         let r = |tabs| Recent { name: String::new(), dir: PathBuf::new(), tabs };
         assert_eq!(
             (r(0).tabs_text(), r(1).tabs_text(), r(3).tabs_text()),
             (String::new(), "1 tab".into(), "3 tabs".into())
         );
-        let home = Path::new("/Users/me");
-        assert_eq!(shown_path(Path::new("/Users/me/code/web"), Some(home)), "~/code/web");
-        assert_eq!(shown_path(Path::new("/Users/me"), Some(home)), "~");
-        assert_eq!(shown_path(Path::new("/srv/web"), Some(home)), "/srv/web");
-        assert_eq!(shown_path(Path::new("/srv/web"), None), "/srv/web");
     }
 }

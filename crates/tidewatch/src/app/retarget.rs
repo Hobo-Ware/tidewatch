@@ -27,7 +27,7 @@ use crate::retarget_jobs::{self, Done, LookKey, LookSpec, Request, Retargeted};
 use crate::shell_agents::{EVERY_S, FAKE_SESSION, Probe, Remembered};
 use crate::tabs::{Action, MAIN_TITLE, Tab};
 use crate::takeover::END_WAIT_S;
-use crate::welcome::shown_path;
+use tidewatch_core::folder_repos::tilde;
 
 const DEV_WAIT_S: f64 = 1.0e6;
 const NOT_READY: &str = "Profiles are still loading.";
@@ -205,7 +205,7 @@ impl Tidewatch {
     }
 
     fn shown(&self, dir: &std::path::Path) -> String {
-        shown_path(dir, self.paths.as_ref().and_then(|paths| paths.root().parent()))
+        tilde(dir, self.paths.as_ref().and_then(|paths| paths.root().parent()))
     }
 
     fn look_key(&self, id: u64) -> Option<LookKey> {

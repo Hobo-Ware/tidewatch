@@ -17,7 +17,7 @@ use tidewatch_core::worktree::Worktree;
 
 use crate::screen_kit::cli_short_name;
 use crate::takeover_group::Ident;
-use crate::welcome::shown_path;
+use tidewatch_core::folder_repos::tilde;
 
 pub(crate) const SCAN_EVERY_S: f64 = 5.0;
 pub(crate) const RECENT_PER_FOLDER: usize = 1;
@@ -474,7 +474,7 @@ impl Takeover {
                     key,
                     cli_id: session.cli.id().to_owned(),
                     name: session.display_name(env.now_ms),
-                    folder: shown_path(&session.cwd, env.home),
+                    folder: tilde(&session.cwd, env.home),
                     host: session.running().map_or_else(
                         || ended_text(session, env.now_ms),
                         |running| running.host.label().to_owned(),
@@ -604,7 +604,7 @@ pub(crate) fn can_use_worktree(takeover: &Takeover, session: &Session) -> bool {
 
 pub(crate) fn dialog_lines(session: &Session, worktree: bool, home: Option<&Path>) -> [String; 3] {
     let cli = cli_short_name(session.cli.id());
-    let folder = shown_path(&session.cwd, home);
+    let folder = tilde(&session.cwd, home);
     let first = match session.running() {
         Some(running) => {
             format!("Ends {cli} in {}. The window stays open at a shell.", running.host.label())
@@ -710,7 +710,7 @@ impl Takeover {
                 );
                 DialogItem {
                     name: session.display_name(env.now_ms),
-                    folder: shown_path(&session.cwd, env.home),
+                    folder: tilde(&session.cwd, env.home),
                     command: preview_command(env, session, lower),
                 }
             })
