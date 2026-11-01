@@ -20,6 +20,7 @@ use crate::agents::{Agent, Level, Wiring};
 use crate::guard_shim::GuardCtx;
 use crate::listener::ASK_TIMEOUT;
 use crate::profiles::Profile;
+use crate::statusline_run::STATUSLINE_FLAG;
 
 /// Name of the MCP server Tidewatch attaches to every agent.
 pub const MCP_SERVER_NAME: &str = "tidewatch";
@@ -101,6 +102,15 @@ impl HookListener {
     }
 }
 
+/// The status line command of a Claude tab: `tidewatch --statusline <tab state>`, with the padding
+/// of the owner's own status line so the footer keeps its spacing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatusLineCtx {
+    pub bin: PathBuf,
+    pub tab_dir: PathBuf,
+    pub padding: Option<serde_json::Number>,
+}
+
 /// Everything about the tab a launch depends on.
 #[derive(Clone, Debug, Default)]
 pub struct LaunchCtx {
@@ -128,6 +138,8 @@ pub struct LaunchCtx {
     /// The owner's own comment-guard hook is in the Claude settings (see `own_hooks`): the settings
     /// file leaves out Tidewatch's comment hooks, so a comment is checked once.
     pub own_comment_guard: Option<String>,
+    /// Claude only: the status line command that saves the plan limits, see `statusline_run`.
+    pub status_line: Option<StatusLineCtx>,
     pub house_style: Option<PathBuf>,
     /// Directory holding `tidewatch.instructions.md` (Copilot), see `house_style::sync_copilot_instructions`.
     pub copilot_instructions_dir: Option<PathBuf>,
@@ -380,6 +392,7 @@ pub fn claude_settings_json(ctx: &LaunchCtx) -> Option<String> {
         no_attribution: ctx.trailers_guard,
         memory_dir: ctx.memory_dir.as_deref().filter(|_| ctx.worktree_tab),
         own_comment_guard: ctx.own_comment_guard.is_some(),
+        status_line: ctx.status_line.as_ref(),
     };
     claude_settings_with(ctx.hooks.as_ref(), guard_bin, &extras)
 }
@@ -413,6 +426,7 @@ struct Extras<'a> {
     no_attribution: bool,
     /// The owner's own comment guard runs, so Tidewatch's comment hooks stay out.
     own_comment_guard: bool,
+    status_line: Option<&'a StatusLineCtx>,
 }
 
 fn claude_settings_with(
@@ -455,6 +469,17 @@ fn claude_settings_with(
     }
     if !hooks.is_empty() {
         settings.insert("hooks".into(), Value::Object(hooks));
+    }
+    if let Some(line) = extras.status_line {
+        let quoted = |path: &Path| shell_quote(&path.display().to_string());
+        let mut entry = json!({
+            "type": "command",
+            "command": format!("{} {STATUSLINE_FLAG} {}", quoted(&line.bin), quoted(&line.tab_dir)),
+        });
+        if let Some(padding) = &line.padding {
+            entry["padding"] = Value::Number(padding.clone());
+        }
+        settings.insert("statusLine".into(), entry);
     }
     if let Some(dir) = extras.memory_dir {
         settings.insert("autoMemoryDirectory".into(), json!(dir.display().to_string()));
@@ -1364,6 +1389,43 @@ mod tests {
 
     fn settings_of(ctx: &LaunchCtx) -> Value {
         serde_json::from_str(&claude_settings_json(ctx).unwrap()).unwrap()
+    }
+
+    fn status_line_ctx(padding: Option<serde_json::Number>) -> StatusLineCtx {
+        StatusLineCtx {
+            bin: "/Applications/Tide watch.app/tidewatch".into(),
+            tab_dir: "/state/web-ab12cd/brave-otter".into(),
+            padding,
+        }
+    }
+
+    #[test]
+    fn a_claude_tab_gets_a_status_line_that_names_the_binary_and_the_tab_folder_quoted_for_sh() {
+        let ctx = LaunchCtx { status_line: Some(status_line_ctx(None)), ..full_ctx() };
+        let settings = settings_of(&ctx);
+        assert_eq!(
+            settings["statusLine"],
+            json!({
+                "type": "command",
+                "command": "'/Applications/Tide watch.app/tidewatch' --statusline /state/web-ab12cd/brave-otter",
+            })
+        );
+        assert_eq!(settings["hooks"]["Stop"][0]["hooks"][0]["type"], "http");
+    }
+
+    #[test]
+    fn the_owners_padding_is_kept_and_no_padding_adds_none() {
+        let padded =
+            LaunchCtx { status_line: Some(status_line_ctx(Some(2.into()))), ..worktree_ctx() };
+        assert_eq!(settings_of(&padded)["statusLine"]["padding"], json!(2));
+        let plain = LaunchCtx { status_line: Some(status_line_ctx(None)), ..worktree_ctx() };
+        assert_eq!(settings_of(&plain)["statusLine"].get("padding"), None);
+    }
+
+    #[test]
+    fn a_tab_without_a_status_line_ctx_has_no_status_line_in_its_settings() {
+        assert_eq!(settings_of(&full_ctx()).get("statusLine"), None);
+        assert_eq!(claude_settings_json(&worktree_ctx()), None);
     }
 
     #[test]

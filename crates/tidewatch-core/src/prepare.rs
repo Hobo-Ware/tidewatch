@@ -20,11 +20,11 @@ use crate::guards::Rule;
 use crate::house_style;
 use crate::launch::{
     GEMINI_SYSTEM_DEFAULTS_ENV, GEMINI_SYSTEM_SETTINGS_ENV, GeminiSettingsFiles, HookListener,
-    Launch, LaunchCtx, LaunchError, claude_settings_json, copilot_plugin_files,
+    Launch, LaunchCtx, LaunchError, StatusLineCtx, claude_settings_json, copilot_plugin_files,
     ensure_no_push_helper, gemini_system_settings, launch_command, mcp_config_json,
 };
 use crate::limited;
-use crate::own_hooks::own_comment_guard;
+use crate::own_hooks::{own_comment_guard, own_status_line};
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
 use crate::profiles::Profile;
@@ -317,6 +317,9 @@ fn context(
         own_comment_guard: (input.worktree_tab && input.agent.wiring == Wiring::Claude)
             .then(|| own_comment_guard(input.paths.claude_dir(), input.dir))
             .flatten(),
+        status_line: (input.agent.wiring == Wiring::Claude)
+            .then(|| status_line_ctx(input))
+            .flatten(),
         trailers_guard: input.worktree_tab
             && input.agent.wiring == Wiring::Claude
             && Prefs::load_file(&input.paths.prefs_file())
@@ -338,6 +341,14 @@ fn context(
             .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
             .unwrap_or_default(),
     }
+}
+
+fn status_line_ctx(input: &PrepareInput) -> Option<StatusLineCtx> {
+    Some(StatusLineCtx {
+        bin: std::env::current_exe().ok()?,
+        tab_dir: input.paths.tab_state_dir(input.repo, input.tab),
+        padding: own_status_line(input.paths.claude_dir(), input.dir).and_then(|own| own.padding),
+    })
 }
 
 /// The auto-memory folder of the repo's main checkout, named after the folder Claude Code resolves
@@ -1408,15 +1419,41 @@ mod tests {
         let fx = Fixture::new();
         let claude = profile("claude", Level::Edits);
         fx.run("claude", &claude, false, "", None).unwrap();
-        assert!(
-            !fx.paths
-                .tab_state_dir(Path::new("/work/web"), "brave-otter")
-                .join(CLAUDE_SETTINGS_FILE)
-                .exists()
-        );
+        let settings = saved_claude_settings(&fx);
+        assert_eq!(settings.as_object().unwrap().keys().collect::<Vec<_>>(), ["statusLine"]);
         let codex =
             fx.run("codex", &profile("codex", Level::Edits), true, "", Some(listener())).unwrap();
         assert!(!codex.launch.shell_line().contains("autoMemoryDirectory"));
+    }
+
+    #[test]
+    fn only_a_claude_tab_gets_the_status_line_and_it_names_the_tabs_state_folder() {
+        let fx = Fixture::new();
+        fx.run("claude", &profile("claude", Level::Edits), true, "", Some(listener())).unwrap();
+        let tab_dir = fx.paths.tab_state_dir(Path::new("/work/web"), "brave-otter");
+        let command =
+            saved_claude_settings(&fx)["statusLine"]["command"].as_str().unwrap().to_owned();
+        assert!(command.ends_with(&format!(" --statusline {}", tab_dir.display())), "{command}");
+        std::fs::remove_file(tab_dir.join(CLAUDE_SETTINGS_FILE)).unwrap();
+        for agent in ["codex", "gemini", "copilot"] {
+            fx.run(agent, &profile(agent, Level::Edits), true, "", Some(listener())).unwrap();
+            assert!(!tab_dir.join(CLAUDE_SETTINGS_FILE).exists(), "{agent}");
+        }
+    }
+
+    #[test]
+    fn the_owners_status_line_padding_rides_on_the_tabs_status_line() {
+        let fx = Fixture::new();
+        std::fs::create_dir_all(fx.paths.claude_dir()).unwrap();
+        std::fs::write(
+            fx.paths.claude_dir().join("settings.json"),
+            r#"{"statusLine":{"type":"command","command":"owner.sh","padding":3}}"#,
+        )
+        .unwrap();
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        let line = &saved_claude_settings(&fx)["statusLine"];
+        assert_eq!(line["padding"], 3);
+        assert!(!line["command"].as_str().unwrap().contains("owner.sh"));
     }
 
     #[test]

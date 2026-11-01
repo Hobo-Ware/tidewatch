@@ -143,6 +143,8 @@ pub mod setup_recipe;
 pub mod stages;
 pub mod start_base;
 pub mod status;
+pub mod statusline;
+pub mod statusline_run;
 pub mod subagents;
 pub mod tab_name;
 pub mod test_command;

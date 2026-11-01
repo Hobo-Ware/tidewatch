@@ -3,8 +3,10 @@
 //! owner's own messages and the agents already working are never touched.
 //!
 //! The limits are an input. Claude Code gives its 5-hour and weekly usage to its status line
-//! command only, not to any file Tidewatch can read, so nothing in the app fills a reading yet;
-//! a reading older than its own reset time is dropped here rather than trusted.
+//! command only; `statusline` saves what that command is given, and the app feeds the newest
+//! reading in. A reading older than its own reset time is dropped here rather than trusted.
+
+use serde::{Deserialize, Serialize};
 
 pub const THRESHOLD_PCT: f64 = 80.0;
 
@@ -24,7 +26,7 @@ impl Which {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Window {
     pub used_pct: f64,
     pub resets_at_ms: Option<i64>,
@@ -36,7 +38,7 @@ impl Window {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlanLimits {
     pub five_hour: Option<Window>,
     pub week: Option<Window>,

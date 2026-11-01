@@ -1379,6 +1379,7 @@ mod tests {
             memory_dir: None,
             trailers_guard: false,
             own_comment_guard: None,
+            status_line: None,
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),
