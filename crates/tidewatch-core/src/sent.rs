@@ -27,6 +27,7 @@ pub mod because {
     pub const ASK_PUSH_CLICK: &str = "you asked the agent to push its new commits";
     pub const LEDGER_STOP: &str = "the progress report was not updated this turn";
     pub const LEDGER_FINAL: &str = "the progress report still said working at the end of the turn";
+    pub const AVATAR_ASK: &str = "this tab has a goal now and no icon yet";
     pub const AVATAR_DRAW: &str = "you asked for an avatar";
     pub const AVATAR_REDRAW: &str = "you asked for a new avatar";
     pub const DUE_CLICK: &str = "you pressed Ask on the Due today card";
@@ -41,7 +42,7 @@ pub mod because {
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 21] = [
+    pub const ALL: [&str; 22] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
@@ -52,6 +53,7 @@ pub mod because {
         ASK_PUSH_CLICK,
         LEDGER_STOP,
         LEDGER_FINAL,
+        AVATAR_ASK,
         AVATAR_DRAW,
         AVATAR_REDRAW,
         DUE_CLICK,

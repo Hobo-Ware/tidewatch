@@ -13,7 +13,7 @@
 //! `tiny_http` out. Events leave through an `mpsc` channel plus a repaint callback, so the UI never
 //! waits on a socket.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -28,12 +28,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::avatar_ask::{self, Face};
+use crate::avatar_store;
 use crate::background;
 use crate::events::{Repaint, RepoMessage, TabEvent, TabMessage};
 use crate::github_hooks::{self, Answer, GithubHooks, RepoHook};
 use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, TabRole, ToolCtx, handle_post};
-use crate::paths::{TidewatchPaths, progress_file_beside};
+use crate::paths::{
+    TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
+    sent_file_beside,
+};
+use crate::sent::{self, Reason, Record, because};
 use crate::status::parse_hook;
 use crate::workflow_detect;
 use crate::{progress_store, prompt_answer};
@@ -110,6 +116,8 @@ struct Shared {
     repaint: Repaint,
     notes_lock: Mutex<()>,
     ask_timeout_ms: AtomicU64,
+    avatar_ask_lock: Mutex<()>,
+    avatar_ask_exempt: Mutex<HashSet<u64>>,
     service_lines: Mutex<HashMap<u64, String>>,
     service_told: Mutex<HashMap<u64, String>>,
     github: GithubHooks,
@@ -177,6 +185,15 @@ impl Listener {
         self.shared.ask_timeout_ms.store(millis, Ordering::SeqCst);
     }
 
+    /// The tabs whose prompts never carry the avatar ask: a Meeseeks wears a fixed face, and a
+    /// host that writes nothing must not leave a marker. Replaces the earlier list.
+    pub fn exempt_from_avatar_ask(&self, tabs: &[u64]) {
+        let mut exempt =
+            self.shared.avatar_ask_exempt.lock().unwrap_or_else(PoisonError::into_inner);
+        exempt.clear();
+        exempt.extend(tabs.iter().copied());
+    }
+
     /// What each tab's next prompt tells it about the repo's services, replacing the earlier
     /// lines. A tab hears a line once, and again only when its text changes.
     pub fn set_service_lines(&self, lines: HashMap<u64, String>) {
@@ -204,6 +221,8 @@ impl Listener {
             events,
             repaint,
             notes_lock: Mutex::new(()),
+            avatar_ask_lock: Mutex::new(()),
+            avatar_ask_exempt: Mutex::new(HashSet::new()),
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
             ask_timeout_ms: AtomicU64::new(
@@ -517,8 +536,10 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     Response::json(200, prompt_reply(shared, entry, agent, &payload).unwrap_or_else(|| "{}".into()))
 }
 
-/// The answer to a prompt: extra context that names what the tab's report still holds open, and
-/// the repo's services when they changed since the tab last heard.
+/// The answer to a prompt: extra context that asks a tab with a goal and no icon, never asked, to
+/// pick one, names what the tab's report still holds open, and gives the repo's services when they
+/// changed since the tab last heard. The avatar marker is written first, so a tab whose state
+/// folder cannot be written is not asked on every prompt.
 fn prompt_reply(
     shared: &Shared,
     entry: &Entry,
@@ -531,15 +552,48 @@ fn prompt_reply(
         return None;
     }
     let mut contexts = Vec::new();
-    if let Some(ledger) = progress_store::load(&progress_file_beside(&entry.notes_file))
-        && let Some(line) = prompt_answer::ledger_context(&ledger)
-    {
+    let ledger = progress_store::load(&progress_file_beside(&entry.notes_file));
+    let has_goal = ledger.as_ref().is_some_and(|ledger| !ledger.goal.trim().is_empty());
+    if avatar_due(shared, entry, has_goal) {
+        entry.avatar.store(true, Ordering::SeqCst);
+        contexts.push(avatar_ask::CONTEXT.to_owned());
+        tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
+    }
+    if let Some(line) = ledger.as_ref().and_then(prompt_answer::ledger_context) {
         contexts.push(line);
     }
     if let Some(line) = service_line_due(shared, entry.tab_id) {
         contexts.push(line);
     }
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+fn tell(entry: &Entry, reason: Reason, because: &str, text: &str) {
+    let record = Record::new(reason, because, text, None);
+    let _ = sent::append(&sent_file_beside(&entry.notes_file), &record);
+}
+
+fn avatar_due(shared: &Shared, entry: &Entry, has_goal: bool) -> bool {
+    let exempt = shared
+        .avatar_ask_exempt
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains(&entry.tab_id);
+    let _one_at_a_time = shared.avatar_ask_lock.lock().unwrap_or_else(PoisonError::into_inner);
+    let marker = avatar_asked_file_beside(&entry.notes_file);
+    let face = if exempt {
+        Face::Fixed
+    } else if avatar_store::load(&avatar_file_beside(&entry.notes_file)).is_some() {
+        Face::Picture
+    } else {
+        Face::Letter
+    };
+    let due = avatar_ask::due(&avatar_ask::Facts {
+        face,
+        asked: avatar_store::was_asked(&marker),
+        has_goal,
+    });
+    due && avatar_store::mark_asked(&marker).is_ok()
 }
 
 fn replace_service_lines(shared: &Shared, lines: HashMap<u64, String>) {
@@ -831,8 +885,6 @@ fn write_response(stream: &mut TcpStream, response: &Response, keep_alive: bool)
 mod tests {
     use super::*;
     use crate::notes::Notes;
-    use crate::paths::sent_file_beside;
-    use crate::sent;
     use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicUsize;
@@ -860,6 +912,8 @@ mod tests {
                 counter.fetch_add(1, Ordering::SeqCst);
             }),
             notes_lock: Mutex::new(()),
+            avatar_ask_lock: Mutex::new(()),
+            avatar_ask_exempt: Mutex::new(HashSet::new()),
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
             github: GithubHooks::new().0,
@@ -962,19 +1016,130 @@ mod tests {
 
     const QUESTION: &str = "# Goal\nShip\n\n## Status\nstate: waiting\n\n## Needs you\n- Yes or changes on the board?\n";
 
+    const NO_GOAL: &str = "# Goal\n\n## Status\nstate: working\n";
+
+    fn already_asked(f: &Fixture, token: &str) {
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(f, token))).unwrap();
+    }
+
+    fn asks_for_an_icon(response: &Response) -> bool {
+        response.status == 200
+            && context_of(response).contains(avatar_ask::CONTEXT)
+            && body_json(response)["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    }
+
     #[test]
-    fn a_prompt_is_never_answered_with_an_ask_to_draw_an_avatar() {
+    fn the_first_prompt_after_the_report_has_a_goal_is_answered_with_the_icon_ask_and_only_that_one()
+     {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let notes = notes_of(&f, &token);
+        let marker = avatar_asked_file_beside(&notes);
+        let before = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(before.body, "{}", "no report yet, so no goal to pick an icon for");
+        save_ledger(&f, &token, NO_GOAL);
+        assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}");
+        assert!(!marker.exists());
+        save_ledger(&f, &token, CALM);
+        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert!(asks_for_an_icon(&first), "{}", first.body);
+        assert!(marker.exists());
+        let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(second.body, "{}");
+        assert_eq!(f.events().len(), 4, "every prompt is still a status event");
+        let told = sent::load(&sent_file_beside(&notes));
+        assert_eq!(told.len(), 1);
+        assert_eq!(
+            (told[0].reason, told[0].because.as_str()),
+            (Reason::Avatar, because::AVATAR_ASK)
+        );
+        assert_eq!(told[0].text, avatar_ask::CONTEXT);
+    }
+
+    #[test]
+    fn the_icon_ask_arms_set_avatar_for_the_tab_and_for_no_other() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let other = f.register(2, "b");
+        save_ledger(&f, &token, CALM);
+        save_ledger(&f, &other, NO_GOAL);
+        let armed = |token: &str| f.shared.entry(token).unwrap().avatar.load(Ordering::SeqCst);
+        assert!(!armed(&token));
+        f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        f.send("POST", "/hook/claude", Some(&other), PROMPT);
+        assert!(armed(&token));
+        assert!(!armed(&other));
+    }
+
+    #[test]
+    fn a_tab_asked_before_a_tab_with_a_picture_and_a_tab_that_is_exempt_are_not_asked() {
+        let f = fixture();
+        let asked = f.register(1, "asked");
+        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &asked))).unwrap();
+        let drawn = f.register(2, "drawn");
+        let svg = "<svg><circle cx=\"1\" cy=\"1\" r=\"1\"/></svg>";
+        avatar_store::save(
+            &avatar_file_beside(&notes_of(&f, &drawn)),
+            &crate::avatar::clean(svg, "a dot").unwrap(),
+        )
+        .unwrap();
+        let fixed = f.register(3, "fixed");
+        let fixed_marker = avatar_asked_file_beside(&notes_of(&f, &fixed));
+        f.shared.avatar_ask_exempt.lock().unwrap().extend([3]);
+        for (what, token) in [("asked", &asked), ("drawn", &drawn), ("fixed", &fixed)] {
+            save_ledger(&f, token, CALM);
+            let response = f.send("POST", "/hook/claude", Some(token), PROMPT);
+            assert_eq!(response.body, "{}", "{what}");
+            assert!(!f.shared.entry(token).unwrap().avatar.load(Ordering::SeqCst), "{what}");
+        }
+        assert!(!fixed_marker.exists(), "an exempt tab leaves no marker");
+    }
+
+    #[test]
+    fn only_a_claude_prompt_carries_the_icon_ask() {
         let f = fixture();
         let token = f.register(1, "a");
         save_ledger(&f, &token, CALM);
-        let notes = notes_of(&f, &token);
-        for _ in 0..2 {
-            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-            assert_eq!(response.body, "{}");
+        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
+        let others = [
+            ("/hook/claude", STOP),
+            ("/hook/claude", r#"{"hook_event_name":"SessionStart"}"#),
+            ("/hook/copilot", PROMPT),
+            ("/hook/codex", PROMPT),
+            ("/hook/gemini", r#"{"hook_event_name":"BeforeAgent"}"#),
+        ];
+        for (path, body) in others {
+            let response = f.send("POST", path, Some(&token), body);
+            assert_eq!(response.body, "{}", "{path} {body}");
         }
-        assert_eq!(f.events().len(), 2, "the prompt is still a status event both times");
-        assert!(!notes.with_file_name("avatar-asked").exists(), "no marker is written");
-        assert_eq!(sent::load(&sent_file_beside(&notes)), []);
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn a_tab_whose_marker_cannot_be_written_is_not_asked() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
+        let state_dir = marker.parent().unwrap();
+        std::fs::create_dir_all(state_dir.parent().unwrap()).unwrap();
+        std::fs::write(state_dir, "not a folder").unwrap();
+        let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert!(!asks_for_an_icon(&response), "{}", response.body);
+        assert!(!f.shared.entry(&token).unwrap().avatar.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn the_icon_ask_rides_the_answer_beside_the_report_line() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        save_ledger(
+            &f,
+            &token,
+            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n",
+        );
+        let context = context_of(&f.send("POST", "/hook/claude", Some(&token), PROMPT));
+        assert!(context.contains(avatar_ask::CONTEXT), "{context}");
+        assert!(context.contains("\"Verified live\""), "{context}");
     }
 
     #[test]
@@ -989,6 +1154,7 @@ mod tests {
         for (what, text) in cases {
             let f = fixture();
             let token = f.register(1, "a");
+            already_asked(&f, &token);
             if let Some(text) = text {
                 save_ledger(&f, &token, text);
             }
@@ -1006,6 +1172,7 @@ mod tests {
             "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
         let f = fixture();
         let token = f.register(1, "a");
+        already_asked(&f, &token);
         save_ledger(&f, &token, open);
         for _ in 0..2 {
             let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
@@ -1051,6 +1218,7 @@ mod tests {
         let one = f.register(1, "a");
         let two = f.register(2, "b");
         for token in [&one, &two] {
+            already_asked(&f, token);
             save_ledger(&f, token, CALM);
         }
         let line = |text: &str| HashMap::from([(1, text.to_owned()), (2, text.to_owned())]);

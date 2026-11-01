@@ -131,7 +131,9 @@ impl Tidewatch {
             agent_avatar::Choice::Draw => {
                 let now = ctx.input(|i| i.time);
                 let send = Send::by_hand(DRAW_ASK, Said::Avatar, because::AVATAR_DRAW);
-                self.ask_agent(tab, &send, ctx, now);
+                if self.ask_agent(tab, &send, ctx, now) {
+                    self.remember_avatar_ask(tab, ctx);
+                }
             }
             agent_avatar::Choice::UseLetter => {
                 let notes = self
@@ -144,6 +146,16 @@ impl Tidewatch {
                     self.avatar_live.clear(tab, &notes, ctx);
                 }
             }
+        }
+    }
+
+    fn notes_of(&self, tab: u64) -> Option<std::path::PathBuf> {
+        self.tabs.items().iter().find(|t| t.id == tab)?.pane.agent.as_ref()?.run.notes_file.clone()
+    }
+
+    fn remember_avatar_ask(&mut self, tab: u64, ctx: &egui::Context) {
+        if let Some(notes) = self.notes_of(tab) {
+            self.avatar_live.mark_asked(&notes, ctx);
         }
     }
 
@@ -180,6 +192,9 @@ impl Tidewatch {
         self.avatar_live.fixed_faces(&meeseeks, ctx);
         self.avatar_live.tick(&facts, ctx);
         self.avatar_redraws.queue_unreadable(&mut self.avatar_live);
+        if let Some(listener) = self.hooks.listener() {
+            listener.exempt_from_avatar_ask(&self.avatar_live.exempt_from_ask(&facts));
+        }
         let agents: Vec<(u64, Agent)> =
             self.tabs.items().iter().map(|tab| (tab.id, self.job_agent(tab.id))).collect();
         let running: Vec<u64> = agents

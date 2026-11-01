@@ -272,3 +272,54 @@ fn every_fake_bundled_icon_is_drawn_in_its_own_color_and_reads_on_the_plate() {
         Some(FAKE_ICONS[0].2.to_owned())
     );
 }
+
+fn marker(fx: &Fx) -> PathBuf {
+    avatar_asked_file_beside(&fx.notes())
+}
+
+#[test]
+fn draw_avatar_leaves_the_marker_that_keeps_the_next_prompt_from_asking_again() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    host.mark_asked(&fx.notes(), &fx.ctx);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker(&fx).exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+        host.tick(&[], &fx.ctx);
+    }
+    assert!(marker(&fx).exists());
+}
+
+#[test]
+fn a_host_that_writes_nothing_leaves_no_marker() {
+    let fx = Fx::new();
+    let mut host = Host::new(false, false);
+    host.mark_asked(&fx.notes(), &fx.ctx);
+    std::thread::sleep(Duration::from_millis(100));
+    host.tick(&[], &fx.ctx);
+    assert!(!marker(&fx).exists());
+}
+
+#[test]
+fn a_meeseeks_is_exempt_from_the_ask_and_every_tab_is_in_a_host_that_writes_nothing() {
+    let fx = Fx::new();
+    let notes = fx.notes();
+    let facts = [Facts { id: 1, notes_file: &notes }, Facts { id: 2, notes_file: &notes }];
+    let mut host = Host::new(true, false);
+    host.fixed_faces(&[2], &fx.ctx);
+    assert_eq!(host.exempt_from_ask(&facts), [2]);
+    assert_eq!(Host::new(false, false).exempt_from_ask(&facts), [1, 2]);
+}
+
+#[test]
+fn an_unreadable_saved_avatar_leaves_the_marker_so_no_prompt_asks_on_top_of_the_redraw() {
+    let fx = Fx::new();
+    avatar_store::save(&fx.file(), &clean(DARK, "old").unwrap()).unwrap();
+    let mut host = Host::new(true, false);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while host.take_unreadable().is_empty() && Instant::now() < deadline {
+        fx.tick(&mut host, &[1]);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(marker(&fx).exists());
+}
