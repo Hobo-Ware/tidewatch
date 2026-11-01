@@ -129,6 +129,9 @@ pub struct ToolCtx<'a> {
     pub ask: AskWait<'a>,
     /// The repo's workflow profile, read only when an agent asks for it.
     pub workflow: &'a dyn Fn() -> Workflow,
+    /// Lines a saved report's answer carries once: the icon and name asks, due as soon as the
+    /// report has a goal, so the tab does not wait for the owner's next prompt.
+    pub after_save: &'a dyn Fn() -> Vec<String>,
 }
 
 impl ToolCtx<'_> {
@@ -333,7 +336,13 @@ fn call_tool(
         return Ok(tool_result(&Offer::refusal(name), true));
     }
     if name == progress_mcp::UPDATE_TOOL {
-        let (text, is_error) = progress_mcp::update(args, ctx.progress_file, emit);
+        let (mut text, is_error) = progress_mcp::update(args, ctx.progress_file, emit);
+        if !is_error {
+            for line in (ctx.after_save)() {
+                text.push('\n');
+                text.push_str(&line);
+            }
+        }
         return Ok(tool_result(&text, is_error));
     }
     if name == progress_mcp::GET_TOOL {
@@ -573,6 +582,7 @@ mod tests {
                 progress_file: &progress_file,
                 ask: test_wait(&alive),
                 workflow: &workflow,
+                after_save: &Vec::new,
             };
             handle_post(body.as_bytes(), &ctx, &|event| self.events.borrow_mut().push(event))
         }
@@ -1019,6 +1029,7 @@ mod tests {
             progress_file: &progress_file,
             ask: test_wait(&alive),
             workflow: &Workflow::default,
+            after_save: &Vec::new,
         };
         let asked = RefCell::new(Vec::new());
         let emit = |event: TabEvent| {
@@ -1171,6 +1182,7 @@ mod tests {
             progress_file: Path::new("/none/progress.md"),
             ask: test_wait(alive),
             workflow: &Workflow::default,
+            after_save: &Vec::new,
         };
         let shown = RefCell::new(Vec::new());
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -1280,6 +1292,7 @@ mod tests {
             progress_file: Path::new("/none/progress.md"),
             ask: test_wait(&alive),
             workflow: &Workflow::default,
+            after_save: &Vec::new,
         };
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": "ask_user", "arguments": questions_args()}});
@@ -1501,6 +1514,7 @@ mod tests {
                 progress_file: Path::new("/none/progress.md"),
                 ask: test_wait(&|| true),
                 workflow: &Workflow::default,
+                after_save: &Vec::new,
             },
             &|_| {},
         );
@@ -1544,6 +1558,7 @@ mod tests {
                         progress_file: Path::new("/none/progress.md"),
                         ask: test_wait(&alive),
                         workflow: &Workflow::default,
+                        after_save: &Vec::new,
                     };
                     let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                         "params": {"name": "reply_to_note", "arguments": {"id": id, "text": format!("reply {n}")}}});

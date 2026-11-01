@@ -1,8 +1,8 @@
 //! The asks for an avatar. One is pasted into an idle agent when the owner clicks Draw avatar. The
-//! other rides the answer to Claude's `UserPromptSubmit` hook as extra context (see
-//! `prompt_answer.rs`), once, on the first prompt after the tab's report has a goal, so it never
-//! touches the input box and the icon is picked for a task that is known. The decision is pure;
-//! the listener reads the facts.
+//! other is sent once, as soon as the tab's report has a goal: on the reply to the `update_progress`
+//! call that saved it, or on the answer to Claude's next `UserPromptSubmit` hook (see
+//! `prompt_answer.rs`), whichever comes first. It never touches the input box, and the icon is
+//! picked for a task that is known. The decision is pure; the listener reads the facts.
 
 use crate::agents::Wiring;
 

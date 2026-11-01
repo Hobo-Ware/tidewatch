@@ -39,6 +39,7 @@ use crate::paths::{
     TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
     sent_file_beside,
 };
+use crate::progress::Ledger;
 use crate::sent::{self, Reason, Record, because};
 use crate::status::parse_hook;
 use crate::workflow_detect;
@@ -539,23 +540,32 @@ fn prompt_reply(
     if !on_prompt || agent != PROMPT_ANSWERING_AGENT {
         return None;
     }
-    let mut contexts = Vec::new();
     let ledger = progress_store::load(&progress_file_beside(&entry.notes_file));
-    let has_goal = ledger.as_ref().is_some_and(|ledger| !ledger.goal.trim().is_empty());
-    if avatar_due(shared, entry, has_goal) {
-        contexts.push(avatar_ask::CONTEXT.to_owned());
-        tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
-    }
+    let (avatar, name) = asks_due(shared, entry, ledger.as_ref());
+    let mut contexts: Vec<String> = avatar.into_iter().collect();
     if let Some(line) = ledger.as_ref().and_then(prompt_answer::ledger_context) {
         contexts.push(line);
     }
-    if let Some(line) = name_ask::line_due(&entry.notes_file, ledger.as_ref()) {
-        contexts.push(line.to_owned());
-    }
+    contexts.extend(name);
     if let Some(line) = service_line_due(shared, entry.tab_id) {
         contexts.push(line);
     }
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// The icon ask and the name ask that are due now, each once per tab, for a report with a goal.
+fn asks_due(
+    shared: &Shared,
+    entry: &Entry,
+    ledger: Option<&Ledger>,
+) -> (Option<String>, Option<String>) {
+    let has_goal = ledger.is_some_and(|ledger| !ledger.goal.trim().is_empty());
+    let avatar = avatar_due(shared, entry, has_goal).then(|| {
+        tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
+        avatar_ask::CONTEXT.to_owned()
+    });
+    let name = name_ask::line_due(&entry.notes_file, ledger).map(str::to_owned);
+    (avatar, name)
 }
 
 fn tell(entry: &Entry, reason: Reason, because: &str, text: &str) {
@@ -625,6 +635,14 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
     let alive = || client_waits(stream);
     let progress_file = progress_file_beside(&entry.notes_file);
     let workflow = || workflow_detect::profile_for(&shared.paths, &entry.repo);
+    let after_save = || {
+        if entry.agent != PROMPT_ANSWERING_AGENT {
+            return Vec::new();
+        }
+        let ledger = progress_store::load(&progress_file);
+        let (avatar, name) = asks_due(shared, entry, ledger.as_ref());
+        avatar.into_iter().chain(name).collect()
+    };
     let ctx = ToolCtx {
         agent: &entry.agent,
         role: entry.role,
@@ -637,6 +655,7 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
             alive: &alive,
         },
         workflow: &workflow,
+        after_save: &after_save,
     };
     match handle_post(&request.body, &ctx, &|event| shared.emit(entry, event)) {
         McpReply::Json(body) => Response::json(200, body),
@@ -1573,6 +1592,39 @@ mod tests {
             matches!(&events[0].event, TabEvent::Progress { ledger } if ledger.goal == "For a")
         );
         assert_eq!(events[1].tab_id, 2);
+    }
+
+    #[test]
+    fn the_first_saved_report_with_a_goal_carries_the_icon_and_name_asks_once() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        let notes = notes_of(&f, &token);
+        let save = || {
+            let args = json!({
+                "goal": "Fix the email",
+                "state": "working",
+                "now": "Reading",
+                "stages": [
+                    { "name": "Build", "kind": "build", "status": "active" },
+                    { "name": "Ship", "kind": "ship", "status": "todo" }
+                ],
+            });
+            let reply =
+                body_json(&f.send("POST", "/mcp", Some(&token), &call("update_progress", &args)));
+            reply["result"]["content"][0]["text"].as_str().unwrap().to_owned()
+        };
+        let first = save();
+        assert!(first.starts_with("saved"), "{first}");
+        assert!(first.contains(avatar_ask::CONTEXT), "{first}");
+        assert!(first.contains(name_ask::ASK), "{first}");
+        assert!(avatar_store::was_asked(&avatar_asked_file_beside(&notes)));
+        assert!(name_ask::was_asked(&notes));
+        let second = save();
+        assert!(
+            !second.contains(avatar_ask::CONTEXT) && !second.contains(name_ask::ASK),
+            "{second}"
+        );
+        assert!(!f.send("POST", "/hook/claude", Some(&token), PROMPT).body.contains("set_avatar"));
     }
 
     #[test]
