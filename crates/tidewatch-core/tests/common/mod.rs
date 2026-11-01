@@ -31,6 +31,19 @@ pub fn ok(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+pub fn git_checked(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.email=test@example.com", "-c", "user.name=Test"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .expect("git runs");
+    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 pub fn commit_file(dir: &Path, name: &str, text: &str, message: &str) {
     std::fs::write(dir.join(name), text).unwrap();
     ok(dir, &["add", name]);

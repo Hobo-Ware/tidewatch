@@ -3,8 +3,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+mod common;
+
+use common::git_checked as git;
 use kelp_core::commit::ChangeKind;
 use kelp_core::diff::{Body, LineKind};
 use tempfile::TempDir;
@@ -16,19 +18,6 @@ struct Fixture {
     _dir: TempDir,
     repo: PathBuf,
     paths: TidewatchPaths,
-}
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=test@example.com", "-c", "user.name=Test"])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .expect("git runs");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 fn commit(dir: &Path, file: &str, text: &str, message: &str) {
