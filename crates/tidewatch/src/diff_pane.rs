@@ -3,7 +3,6 @@
 //! notes count. Notes written in the body go through `note_actions` into the tab's notes.
 
 use std::borrow::Cow;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::text::LayoutJob;
 use egui::{
@@ -275,7 +274,7 @@ fn header_text(view: &TabView) -> HeaderText {
 }
 
 fn now_secs() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    i64::try_from(tidewatch_core::clock::now_secs()).unwrap_or(0)
 }
 
 fn show_files(ui: &mut Ui, rect: Rect, view: &mut TabView) {

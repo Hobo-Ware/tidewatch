@@ -14,6 +14,7 @@ use egui::{
     Response, RichText, ScrollArea, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use jiff::tz::TimeZone;
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::question::Reply;
 use tidewatch_core::transcript::Source;
 
@@ -1198,12 +1199,6 @@ fn turn_guess(
         (&notes, notes_listing),
         width,
     )
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(0))
 }
 
 fn draw_compaction(ui: &mut Ui, time: Option<&str>) {

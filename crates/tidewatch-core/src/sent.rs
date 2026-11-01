@@ -212,7 +212,7 @@ impl Record {
     pub fn new(reason: Reason, because: &str, text: &str, cap: Option<Cap>) -> Self {
         Self {
             id: new_id(),
-            at_ms: now_ms(),
+            at_ms: crate::clock::now_ms(),
             reason,
             because: because.to_owned(),
             text: text.to_owned(),
@@ -272,13 +272,6 @@ impl Record {
     pub fn dropped(&self) -> bool {
         DROPPED.iter().any(|gone| self.because.contains(gone))
     }
-}
-
-#[must_use]
-pub fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn new_id() -> u64 {

@@ -495,7 +495,7 @@ pub fn recent_sessions(
     titles: &TitleCache,
     per_folder: usize,
 ) -> Vec<Session> {
-    let now = unix_ms(SystemTime::now());
+    let now = crate::clock::now_ms();
     let oldest = now - RECENT_DAYS * 86_400_000;
     let files = held.resolved();
     let mut found = Vec::new();

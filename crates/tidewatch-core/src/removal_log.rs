@@ -4,7 +4,6 @@
 
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +28,7 @@ pub struct Entry {
 impl Entry {
     #[must_use]
     pub fn now() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
+        crate::clock::now_secs()
     }
 
     /// The one command that brings the branch back.

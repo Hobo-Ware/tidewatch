@@ -199,9 +199,7 @@ fn before_of(entry: Option<Entry>) -> Option<Box<Report>> {
 }
 
 fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
+    i64::try_from(tidewatch_core::clock::now_secs()).unwrap_or(0)
 }
 
 /// Where Tidewatch's own test run stands for a tab whose Auto push waits for it.

@@ -1,7 +1,6 @@
 //! Tells a launch whether the last run ended without a clean quit, and whether crashes come in a loop.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
@@ -17,7 +16,7 @@ pub const CRASH_LOOP_SECS: u64 = 5 * 60;
 /// that followed a launch by less than [`CRASH_LOOP_SECS`].
 #[must_use]
 pub fn begin(paths: &TidewatchPaths) -> bool {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
+    let now = crate::clock::now_secs();
     begin_at(&paths.run_marker_file(), now)
 }
 

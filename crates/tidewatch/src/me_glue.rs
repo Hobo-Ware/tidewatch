@@ -3,8 +3,8 @@
 //! or `letter:X` and fetches nothing.
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use tidewatch_core::clock::now_secs;
 use tidewatch_core::me_face as core;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::tools::Tools;
@@ -48,10 +48,6 @@ pub(crate) struct Host {
     source: Source,
     paths: Option<TidewatchPaths>,
     tools: Tools,
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 fn letter(tools: &Tools) -> Me {

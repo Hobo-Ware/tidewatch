@@ -180,14 +180,6 @@ pub fn tool_definitions() -> [Value; 2] {
     ]
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|since| i64::try_from(since.as_millis()).ok())
-        .unwrap_or_default()
-}
-
 fn not_saved(problems: &[String]) -> (String, bool) {
     (
         format!(
@@ -232,7 +224,8 @@ pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -
     if let Err(e) = progress_store::save_report(file, &report) {
         return save_failed(&e);
     }
-    let links: Vec<Link> = links.into_iter().map(|link| link.into_link(now_ms())).collect();
+    let links: Vec<Link> =
+        links.into_iter().map(|link| link.into_link(crate::clock::now_ms())).collect();
     if !links.is_empty() {
         if let Err(e) = link_store::merge(&links_file_beside(file), &links) {
             return save_failed(&e);

@@ -9,7 +9,6 @@
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -155,8 +154,8 @@ pub fn digest(report: &str) -> String {
     })
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+fn at_ms() -> u64 {
+    u64::try_from(crate::clock::now_ms()).unwrap_or(0)
 }
 
 /// Runs one hook. Returns the exit code; the report, if any, is printed to stderr.
@@ -188,7 +187,7 @@ fn edit_report(call: &HookCall, files: Option<&TabFiles>) -> Option<String> {
         return None;
     }
     if let Some(files) = files {
-        let _ = files.append(&records(Origin::Edit, &path, &flags, now_ms()));
+        let _ = files.append(&records(Origin::Edit, &path, &flags, at_ms()));
     }
     Some(edit_message(&path, &flags))
 }
@@ -212,7 +211,7 @@ fn stop_report(call: &HookCall, files: Option<&TabFiles>, env: &GuardEnv) -> Opt
             return None;
         }
         let _ = files.set_swept(Some(&digest));
-        let at = now_ms();
+        let at = at_ms();
         let all: Vec<Record> = swept
             .iter()
             .flat_map(|file| records(Origin::Sweep, &file.path, &file.flags, at))
