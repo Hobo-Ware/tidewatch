@@ -309,6 +309,7 @@ fn stroke_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::painted_strings;
     use egui::{Event, PointerButton, RawInput};
 
     const LONG: &str = "a-repository-with-a-very-long-name-indeed";
@@ -435,7 +436,7 @@ mod tests {
             });
             self.texts.clear();
             for clipped in &output.shapes {
-                collect_texts(&clipped.shape, &mut self.texts);
+                painted_strings(&clipped.shape, &mut self.texts);
             }
         }
 
@@ -458,14 +459,6 @@ mod tests {
 
         fn action(&self, name: &str) -> Rect {
             self.placed().actions.iter().find(|(label, _)| *label == name).expect(name).1
-        }
-    }
-
-    fn collect_texts(shape: &egui::Shape, found: &mut Vec<String>) {
-        match shape {
-            egui::Shape::Text(text) => found.push(text.galley.text().to_owned()),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_texts(shape, found)),
-            _ => {}
         }
     }
 

@@ -264,6 +264,8 @@ mod takeover_view;
 mod terminal_font;
 #[cfg(all(test, unix))]
 mod test_exec;
+#[cfg(test)]
+mod test_support;
 mod tidewatch_view;
 mod toast;
 mod token_budget;

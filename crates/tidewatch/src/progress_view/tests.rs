@@ -1,6 +1,6 @@
 //! The panel: pure choices, and headless frames for the clicks and for text that never overlaps.
 
-use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, Shape, pos2, vec2};
+use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, pos2, vec2};
 use std::collections::HashSet;
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::done_check::{Kind, Line, Report, Status, Unverified};
@@ -19,6 +19,7 @@ use crate::done_check_view;
 use crate::link_filter::Filter;
 
 use super::*;
+use crate::test_support::painted_text_rects_nonblank;
 
 const PILL_H: f32 = 28.0;
 const PILL_GAP: f32 = 8.0;
@@ -129,7 +130,7 @@ impl Panel {
         ));
         self.texts.clear();
         for clipped in &output.shapes {
-            collect(&clipped.shape, &mut self.texts);
+            painted_text_rects_nonblank(&clipped.shape, &mut self.texts);
         }
         self.action.clone_from(&action);
         action
@@ -160,19 +161,6 @@ impl Panel {
 
     fn drawn(&self, text: &str) -> bool {
         self.texts.iter().any(|(drawn, _)| drawn == text)
-    }
-}
-
-fn collect(shape: &Shape, out: &mut Vec<(String, Rect)>) {
-    match shape {
-        Shape::Text(text) => {
-            let rect = text.galley.rect.translate(text.pos.to_vec2());
-            if !text.galley.text().trim().is_empty() {
-                out.push((text.galley.text().to_owned(), rect));
-            }
-        }
-        Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-        _ => {}
     }
 }
 

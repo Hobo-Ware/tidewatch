@@ -257,6 +257,7 @@ mod tests {
     use super::*;
     use crate::commands::{Command, Platform};
     use crate::palette::{Sources, items};
+    use crate::test_support::painted_text_rects;
     use egui::{Event, RawInput, pos2};
 
     struct Harness {
@@ -264,17 +265,6 @@ mod tests {
         palette: Palette,
         items: Vec<Item>,
         texts: Vec<(String, Rect)>,
-    }
-
-    fn collect_texts(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
-        match shape {
-            egui::Shape::Text(text) => found.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_texts(shape, found)),
-            _ => {}
-        }
     }
 
     fn key(key: Key) -> Event {
@@ -322,7 +312,7 @@ mod tests {
             let output = self.ctx.run_ui(raw, |ui| outcome = show(ui.ctx(), palette, items));
             self.texts.clear();
             for clipped in &output.shapes {
-                collect_texts(&clipped.shape, &mut self.texts);
+                painted_text_rects(&clipped.shape, &mut self.texts);
             }
             outcome
         }

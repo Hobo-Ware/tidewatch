@@ -1382,6 +1382,7 @@ pub(crate) fn reply_box(
 mod tests {
     use super::*;
     use crate::bubble_toolbar::{Placed, Tool, placed_id, tool_id};
+    use crate::test_support::{painted_strings, painted_text_rects};
     use egui::{Event, Key, Modifiers, RawInput, TextEdit};
 
     const INPUT_H: f32 = composer::BOX_H + 2.0 * composer::GAP_Y;
@@ -2028,17 +2029,6 @@ mod tests {
         use tidewatch_core::progress::Mark;
         use tidewatch_core::transcript::{Entry, Role};
 
-        fn texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
-            match shape {
-                egui::Shape::Text(text) => out.push((
-                    text.galley.text().to_owned(),
-                    text.galley.rect.translate(text.pos.to_vec2()),
-                )),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
-                _ => {}
-            }
-        }
-
         let due = Due {
             what: "Switch off the old webhook".into(),
             days: 0,
@@ -2070,7 +2060,7 @@ mod tests {
                 actions = show(ui, rect, &rows, &mut state, &facts);
             });
             let mut found = Vec::new();
-            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+            output.shapes.iter().for_each(|clipped| painted_text_rects(&clipped.shape, &mut found));
             (actions, found)
         };
         run(vec![]);
@@ -2097,14 +2087,6 @@ mod tests {
     fn a_reply_box_of_an_agent_that_is_not_at_its_prompt_says_why_and_takes_no_text() {
         use tidewatch_core::transcript::{Entry, Role};
 
-        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
-            match shape {
-                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
-                _ => {}
-            }
-        }
-
         let mut rows = Rows::default();
         rows.push(Entry {
             role: Role::User,
@@ -2128,7 +2110,7 @@ mod tests {
                 show(ui, rect, &rows, &mut state, &facts);
             });
             let mut found = Vec::new();
-            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+            output.shapes.iter().for_each(|clipped| painted_strings(&clipped.shape, &mut found));
             found
         };
         hint(None);
@@ -2143,17 +2125,6 @@ mod tests {
     fn a_stopped_agent_gets_a_line_above_the_box_also_while_it_holds_text_and_resume_reaches_the_caller()
      {
         use tidewatch_core::transcript::{Entry, Role};
-
-        fn texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
-            match shape {
-                egui::Shape::Text(text) => out.push((
-                    text.galley.text().to_owned(),
-                    text.galley.rect.translate(text.pos.to_vec2()),
-                )),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
-                _ => {}
-            }
-        }
 
         let mut rows = Rows::default();
         rows.push(Entry {
@@ -2180,7 +2151,7 @@ mod tests {
                 actions = show(ui, rect, &rows, &mut state, &facts);
             });
             let mut found = Vec::new();
-            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+            output.shapes.iter().for_each(|clipped| painted_text_rects(&clipped.shape, &mut found));
             (actions, found)
         };
         run(false, vec![]);
@@ -2403,17 +2374,6 @@ mod tests {
         assert!(state.quick.is_none(), "a used chip row does not come back");
     }
 
-    fn shape_texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
-        match shape {
-            egui::Shape::Text(text) => out.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| shape_texts(shape, out)),
-            _ => {}
-        }
-    }
-
     struct Frames {
         ctx: egui::Context,
         state: ViewState,
@@ -2465,7 +2425,10 @@ mod tests {
                 }
             }));
             self.shapes.clear();
-            output.shapes.iter().for_each(|clipped| shape_texts(&clipped.shape, &mut self.shapes));
+            output
+                .shapes
+                .iter()
+                .for_each(|clipped| painted_text_rects(&clipped.shape, &mut self.shapes));
         }
 
         fn at(&self, text: &str) -> Option<egui::Pos2> {
@@ -3188,13 +3151,6 @@ mod tests {
     }
 
     fn drawn_texts(rows: &Rows, width: f32) -> Vec<String> {
-        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
-            match shape {
-                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
-                _ => {}
-            }
-        }
         let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
         let mut found = Vec::new();
@@ -3209,7 +3165,7 @@ mod tests {
                 show(ui, rect, rows, &mut state, &facts(None, Turn::Running));
             });
             found.clear();
-            output.shapes.iter().for_each(|clipped| texts(&clipped.shape, &mut found));
+            output.shapes.iter().for_each(|clipped| painted_strings(&clipped.shape, &mut found));
         }
         found
     }
@@ -3408,7 +3364,7 @@ mod tests {
         let mut out = Vec::new();
         for clipped in &output.shapes {
             let mut found = Vec::new();
-            shape_texts(&clipped.shape, &mut found);
+            painted_text_rects(&clipped.shape, &mut found);
             for (text, rect) in found {
                 let seen = rect.intersect(clipped.clip_rect);
                 if seen.is_positive() {

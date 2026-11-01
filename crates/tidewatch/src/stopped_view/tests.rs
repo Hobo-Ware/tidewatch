@@ -1,17 +1,9 @@
 //! The bar says the agent is not running and Resume hands back one click.
 
-use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Shape};
+use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
 
 use super::*;
-
-fn collect(shape: &Shape, out: &mut Vec<(String, Rect)>) {
-    match shape {
-        Shape::Text(text) if !text.galley.text().trim().is_empty() => out
-            .push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()))),
-        Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-        _ => {}
-    }
-}
+use crate::test_support::painted_text_rects_nonblank;
 
 struct Bar {
     ctx: egui::Context,
@@ -39,7 +31,7 @@ impl Bar {
         let output = self.ctx.run_ui(raw, |ui| clicked = show(ui, band));
         self.texts.clear();
         for shape in &output.shapes {
-            collect(&shape.shape, &mut self.texts);
+            painted_text_rects_nonblank(&shape.shape, &mut self.texts);
         }
         clicked
     }

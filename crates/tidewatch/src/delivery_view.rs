@@ -51,6 +51,7 @@ pub(crate) fn show_card(ui: &mut Ui, rect: Rect, view: &CardView) -> Option<Card
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::painted_strings;
     use egui::RawInput;
 
     fn context() -> egui::Context {
@@ -60,13 +61,6 @@ mod tests {
     }
 
     fn card_texts(view: &CardView) -> Vec<String> {
-        fn collect(shape: &egui::Shape, out: &mut Vec<String>) {
-            match shape {
-                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-                _ => {}
-            }
-        }
         let ctx = context();
         let raw = RawInput {
             screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
@@ -82,7 +76,7 @@ mod tests {
         });
         let mut texts = Vec::new();
         for clipped in &output.shapes {
-            collect(&clipped.shape, &mut texts);
+            painted_strings(&clipped.shape, &mut texts);
         }
         texts
     }

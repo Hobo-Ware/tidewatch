@@ -438,6 +438,7 @@ fn copy_item(ui: &mut Ui, label: &str, text: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::painted_text_rects;
 
     fn compare(ahead: usize, behind: usize) -> BaseCompare {
         BaseCompare { base: "main".into(), ahead, behind }
@@ -490,17 +491,6 @@ mod tests {
         shapes: Vec<egui::epaint::ClippedShape>,
         texts: Vec<(String, egui::Rect)>,
         out: Out,
-    }
-
-    fn collect(shape: &Shape, out: &mut Vec<(String, egui::Rect)>) {
-        match shape {
-            Shape::Text(text) => out.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-            _ => {}
-        }
     }
 
     impl Card {
@@ -571,7 +561,7 @@ mod tests {
             self.shapes.clone_from(&output.shapes);
             self.texts.clear();
             for clipped in &output.shapes {
-                collect(&clipped.shape, &mut self.texts);
+                painted_text_rects(&clipped.shape, &mut self.texts);
             }
         }
 
