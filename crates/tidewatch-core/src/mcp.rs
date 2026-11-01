@@ -718,7 +718,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec!["name"],
-                vec!["svg", "reason"],
+                vec!["reason"],
                 vec!["summary"],
                 vec!["name"],
                 vec![],

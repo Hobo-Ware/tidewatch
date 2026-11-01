@@ -1,5 +1,6 @@
-//! The `set_avatar` tool of the Tidewatch MCP server: the agent draws a small icon for its task.
-//! The SVG is cleaned (see `avatar.rs`), saved beside the tab's notes and shown on the tab.
+//! The `set_avatar` tool of the Tidewatch MCP server: the agent gives its tab an icon, either one
+//! of the bundled Lucide icons in a color from a fixed list or an SVG it draws when none fits. The
+//! SVG is cleaned (see `avatar.rs`), saved beside the tab's notes and shown on the tab.
 
 use std::path::Path;
 
@@ -7,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use crate::avatar::{self, MAX_SVG_BYTES};
 use crate::avatar_check;
+use crate::avatar_icons;
 use crate::avatar_store;
 use crate::events::TabEvent;
 use crate::paths::avatar_file_beside;
@@ -15,16 +17,19 @@ pub const SET_TOOL: &str = "set_avatar";
 
 #[must_use]
 pub fn tool_definition() -> Value {
+    let colors = avatar_icons::color_names();
     json!({
         "name": SET_TOOL,
-        "description": "Once you understand the task, call this once to give the tab an icon: a round icon, a 64x64 flat SVG about the task, bright colors, nothing near the edge. Tidewatch draws the dark circular plate and its ring, so draw no ring, frame, border or background tile of your own: only the art itself, which is scaled to fill the plate. Keep the drawing inside the middle circle of the viewBox and use only colors that are at least 3:1 against #222937. 2 to 3 colors, simple shapes (rect, circle, ellipse, line, polyline, polygon, path). Anything else in the SVG is dropped. An icon that is too dark or runs past the circle is refused with what to fix. Call it again only when asked to redraw.",
+        "description": format!("Once you know the goal, call this once to give the tab an icon. Prefer a bundled icon: send `icon`, a Lucide name such as music, shield, refresh-cw, database, bug, rocket or book-open, and `color`, one of {}. Choose the one object the goal is about and name it in `reason`. An unknown name is refused with close names. Only when no icon fits, send `svg` instead: a round icon, a 64x64 flat SVG, bright colors, nothing near the edge. Tidewatch draws the dark circular plate and its ring, so draw no ring, frame, border or background tile of your own: only the art itself, which is scaled to fill the plate. Keep the drawing inside the middle circle of the viewBox and use only colors that are at least 3:1 against {}. 2 to 3 colors, simple shapes (rect, circle, ellipse, line, polyline, polygon, path). Anything else in the SVG is dropped. Send icon or svg, never both. An icon that is too dark or runs past the circle is refused with what to fix. Call it again only when asked to redraw.", colors.join(", "), avatar_check::hex(avatar_check::PLATE)),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "svg": { "type": "string", "description": format!("The SVG, viewBox 0 0 64 64, at most {} KB.", MAX_SVG_BYTES / 1024) },
+                "icon": { "type": "string", "description": "A Lucide icon name, such as music, shield or refresh-cw." },
+                "color": { "type": "string", "enum": colors, "description": "The icon's color. Required with icon." },
+                "svg": { "type": "string", "description": format!("Only when no icon fits: the SVG, viewBox 0 0 64 64, at most {} KB.", MAX_SVG_BYTES / 1024) },
                 "reason": { "type": "string", "description": "One line on why this icon fits the task. The user sees it on hover." },
             },
-            "required": ["svg", "reason"],
+            "required": ["reason"],
             "additionalProperties": false,
         },
     })
@@ -40,24 +45,86 @@ fn not_set(problems: &[String]) -> (String, bool) {
     )
 }
 
-/// Cleans the SVG, saves it next to `notes_file` and tells the tab. A bad call is a tool error
-/// with what to fix.
+fn text(args: &Map<String, Value>, key: &str, problems: &mut Vec<String>) -> Option<String> {
+    match args.get(key) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(found)) => Some(found.clone()),
+        Some(_) => {
+            problems.push(format!("{key} must be a string"));
+            None
+        }
+    }
+}
+
+fn icon_svg(icon: &str, color: Option<&str>, problems: &mut Vec<String>) -> Option<String> {
+    let names = avatar_icons::color_names().join(", ");
+    let ink = match color {
+        None => {
+            problems.push(format!("color is required with icon: one of {names}"));
+            None
+        }
+        Some(color) => {
+            let ink = avatar_icons::color_hex(color);
+            if ink.is_none() {
+                problems.push(format!("color \"{color}\" is not one of {names}"));
+            }
+            ink
+        }
+    };
+    let ink = ink?;
+    let drawn = avatar_icons::svg(icon, &ink);
+    if drawn.is_none() {
+        let close = avatar_icons::suggest(icon);
+        problems.push(if close.is_empty() {
+            format!("icon \"{icon}\" is not in the set and no name is close: try one plain word for the object, such as database or shield")
+        } else {
+            format!("icon \"{icon}\" is not in the set; close names: {}", close.join(", "))
+        });
+    }
+    drawn
+}
+
+/// Draws the icon or cleans the SVG, saves it next to `notes_file` and tells the tab. A bad call
+/// is a tool error with what to fix.
 pub fn set(
     args: &Map<String, Value>,
     notes_file: &Path,
     emit: &dyn Fn(TabEvent),
 ) -> (String, bool) {
     let mut problems = Vec::new();
-    let mut text = |key: &str| {
-        let found = args.get(key).and_then(Value::as_str).map(str::to_owned);
-        if found.is_none() {
-            problems.push(format!("{key} must be a string"));
+    let reason = text(args, "reason", &mut problems);
+    if reason.is_none() && problems.is_empty() {
+        problems.push("reason must be a string".to_owned());
+    }
+    let (svg, icon, color) = (
+        text(args, "svg", &mut problems),
+        text(args, "icon", &mut problems),
+        text(args, "color", &mut problems),
+    );
+    let drawn = match (svg, icon) {
+        (Some(_), Some(_)) => {
+            problems.push("send icon with color, or svg, not both".to_owned());
+            None
         }
-        found
+        (Some(svg), None) => {
+            if color.is_some() {
+                problems.push("color goes with icon: an svg carries its own colors".to_owned());
+            }
+            Some(svg)
+        }
+        (None, Some(icon)) => icon_svg(&icon, color.as_deref(), &mut problems),
+        (None, None) => {
+            if !args.contains_key("svg") && !args.contains_key("icon") {
+                problems.push("send icon with color, or svg".to_owned());
+            }
+            None
+        }
     };
-    let (svg, reason) = (text("svg"), text("reason"));
-    let (Some(svg), Some(reason)) = (svg, reason) else { return not_set(&problems) };
-    let avatar = match avatar::clean(&svg, &reason) {
+    let (Some(drawn), Some(reason)) = (drawn, reason) else { return not_set(&problems) };
+    if !problems.is_empty() {
+        return not_set(&problems);
+    }
+    let avatar = match avatar::clean(&drawn, &reason) {
         Ok(avatar) => avatar,
         Err(e) => return not_set(&[e.to_string()]),
     };
@@ -106,22 +173,114 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let notes = dir.path().join("notes.json");
         let cases = [
-            (json!({}), "svg must be a string"),
-            (json!({"svg": SVG}), "reason must be a string"),
-            (json!({"svg": 5, "reason": "x"}), "svg must be a string"),
-            (json!({"svg": "<svg/>", "reason": "x"}), "no allowed shape"),
-            (json!({"svg": "not svg", "reason": "x"}), "does not parse"),
-            (json!({"svg": SVG, "reason": "  "}), "reason must say"),
+            (json!({}), vec!["reason must be a string", "send icon with color, or svg"]),
+            (json!({"svg": SVG}), vec!["reason must be a string"]),
+            (json!({"svg": 5, "reason": "x"}), vec!["svg must be a string"]),
+            (json!({"icon": 5, "color": "teal", "reason": "x"}), vec!["icon must be a string"]),
+            (json!({"svg": "<svg/>", "reason": "x"}), vec!["no allowed shape"]),
+            (json!({"svg": "not svg", "reason": "x"}), vec!["does not parse"]),
+            (json!({"svg": SVG, "reason": "  "}), vec!["reason must say"]),
+            (json!({"icon": "music", "color": "teal", "reason": "  "}), vec!["reason must say"]),
         ];
-        for (call, want) in cases {
+        for (call, wants) in cases {
             let seen = RefCell::new(0);
             let (text, is_error) = set(&args(&call), &notes, &|_| *seen.borrow_mut() += 1);
             assert!(is_error, "{call}");
-            assert!(
-                text.contains(want) && text.contains("call set_avatar again"),
-                "{call}: {text}"
-            );
+            assert!(text.contains("call set_avatar again"), "{call}: {text}");
+            for want in wants {
+                assert!(text.contains(want), "{call}: {text}");
+            }
             assert_eq!(*seen.borrow(), 0);
+        }
+        assert!(!dir.path().join("avatar.json").exists());
+    }
+
+    #[test]
+    fn an_icon_and_a_color_save_a_picture_that_passes_the_check_and_emit_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.json");
+        let seen = RefCell::new(Vec::new());
+        let call =
+            json!({"icon": "music", "color": "purple", "reason": "Syncing the playlists: a note"});
+        let (text, is_error) = set(&args(&call), &notes, &|event| seen.borrow_mut().push(event));
+        assert!(!is_error, "{text}");
+        let events = seen.borrow();
+        let [TabEvent::Avatar { avatar }] = events.as_slice() else { panic!("{events:?}") };
+        assert!(avatar.svg.contains("stroke=\"#c4b5fd\"") && avatar.svg.contains("<path"));
+        assert_eq!(avatar_check::check(&avatar.svg), Ok(()));
+        assert_eq!(avatar.reason, "Syncing the playlists: a note");
+        assert_eq!(avatar_store::load(&dir.path().join("avatar.json")), Some(avatar.clone()));
+    }
+
+    #[test]
+    fn every_listed_color_saves_an_icon() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.json");
+        for color in avatar_icons::color_names() {
+            let call = json!({"icon": "shield", "color": color, "reason": "x"});
+            let (text, is_error) = set(&args(&call), &notes, &|_| {});
+            assert!(!is_error, "{color}: {text}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_icon_is_refused_with_up_to_eight_close_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.json");
+        let call = json!({"icon": "music-note", "color": "teal", "reason": "x"});
+        let (text, is_error) = set(&args(&call), &notes, &|_| panic!("nothing is emitted"));
+        assert!(is_error);
+        assert!(
+            text.contains("icon \"music-note\" is not in the set; close names: music"),
+            "{text}"
+        );
+        let names = text.split("close names: ").nth(1).unwrap();
+        assert_eq!(names.split(", ").count(), 8, "{text}");
+        assert!(!dir.path().join("avatar.json").exists());
+
+        let call = json!({"icon": "zzzzzz", "color": "teal", "reason": "x"});
+        let (text, is_error) = set(&args(&call), &notes, &|_| {});
+        assert!(is_error && text.contains("no name is close"), "{text}");
+    }
+
+    #[test]
+    fn an_icon_needs_a_listed_color() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.json");
+        let list = avatar_icons::color_names().join(", ");
+        let cases = [
+            (
+                json!({"icon": "music", "reason": "x"}),
+                format!("color is required with icon: one of {list}"),
+            ),
+            (
+                json!({"icon": "music", "color": "chartreuse", "reason": "x"}),
+                format!("color \"chartreuse\" is not one of {list}"),
+            ),
+        ];
+        for (call, want) in cases {
+            let (text, is_error) = set(&args(&call), &notes, &|_| panic!("nothing is emitted"));
+            assert!(is_error && text.contains(&want), "{call}: {text}");
+        }
+    }
+
+    #[test]
+    fn an_icon_and_an_svg_together_are_refused_and_so_is_a_color_with_an_svg() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes.json");
+        let cases = [
+            (
+                json!({"icon": "music", "color": "teal", "svg": SVG, "reason": "x"}),
+                "send icon with color, or svg, not both",
+            ),
+            (
+                json!({"color": "teal", "svg": SVG, "reason": "x"}),
+                "color goes with icon: an svg carries its own colors",
+            ),
+        ];
+        for (call, want) in cases {
+            let (text, is_error) = set(&args(&call), &notes, &|_| panic!("nothing is emitted"));
+            assert!(is_error && text.contains(want), "{call}: {text}");
         }
         assert!(!dir.path().join("avatar.json").exists());
     }
@@ -156,9 +315,15 @@ mod tests {
     }
 
     #[test]
-    fn the_tool_text_asks_for_a_round_bright_icon_with_nothing_near_the_edge() {
+    fn the_tool_text_prefers_an_icon_and_keeps_the_rules_for_a_drawn_one() {
         let text = tool_definition()["description"].as_str().unwrap().to_owned();
         for want in [
+            "Prefer a bundled icon",
+            "Lucide",
+            "the one object the goal is about",
+            "name it in `reason`",
+            "Only when no icon fits",
+            "never both",
             "round icon",
             "bright colors",
             "nothing near the edge",
@@ -167,12 +332,20 @@ mod tests {
         ] {
             assert!(text.contains(want), "{want}");
         }
+        for color in avatar_icons::color_names() {
+            assert!(text.contains(color), "{color}");
+        }
         assert!(text.contains(&crate::avatar_check::hex(crate::avatar_check::PLATE)));
     }
 
     #[test]
-    fn the_schema_requires_both_arguments() {
+    fn the_schema_requires_the_reason_and_lists_the_colors() {
         let definition = tool_definition();
-        assert_eq!(definition["inputSchema"]["required"], json!(["svg", "reason"]));
+        let schema = &definition["inputSchema"];
+        assert_eq!(schema["required"], json!(["reason"]));
+        assert_eq!(schema["properties"]["color"]["enum"], json!(avatar_icons::color_names()));
+        for key in ["icon", "color", "svg", "reason"] {
+            assert_eq!(schema["properties"][key]["type"], "string", "{key}");
+        }
     }
 }
