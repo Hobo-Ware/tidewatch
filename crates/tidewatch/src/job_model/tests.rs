@@ -462,7 +462,7 @@ fn the_tab_and_the_lane_do_not_sound_the_alarm_for_an_agent_that_is_not_working(
 
 #[test]
 fn only_a_working_tone_is_a_working_agent() {
-    use crate::status_view::Tone;
+    use tidewatch_core::panel_view::Tone;
     let cases = [
         (Tone::Working, Agent::Working),
         (Tone::Done, Agent::Done),

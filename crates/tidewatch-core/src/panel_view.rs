@@ -37,7 +37,8 @@ impl Tone {
     }
 
     /// The tone a tab shows: what the report stands for while the agent works or is idle, and the
-    /// facts Tidewatch owns when they say more (setting up, a prompt, failed, stopped).
+    /// facts Tidewatch owns when they say more (setting up, a prompt, failed, stopped). A report
+    /// older than the turn that now runs no longer holds, so the caller passes `Working` then.
     #[must_use]
     pub fn shown(status: &AgentStatus, reported: Option<State>) -> Self {
         let owned = Self::of(status);
@@ -188,6 +189,8 @@ mod tests {
             (AgentStatus::NeedsYou(Reason::Quiet), Tone::Done),
             (AgentStatus::NeedsYou(Reason::Permission), Tone::Needs),
             (AgentStatus::NeedsYou(Reason::Question), Tone::Needs),
+            (AgentStatus::NeedsYou(Reason::Input), Tone::Needs),
+            (AgentStatus::NeedsYou(Reason::Attention), Tone::Needs),
             (AgentStatus::Failed("x".into()), Tone::Failed),
             (AgentStatus::Stopped, Tone::Stopped),
             (AgentStatus::Shell, Tone::Shell),
@@ -200,18 +203,33 @@ mod tests {
     #[test]
     fn the_report_speaks_for_a_working_or_idle_agent_and_facts_speak_for_the_rest() {
         let cases = [
+            (AgentStatus::Working, Some(State::Working), Tone::Working),
+            (AgentStatus::Working, Some(State::NeedsYou), Tone::Needs),
+            (AgentStatus::Working, Some(State::Waiting), Tone::Waiting),
+            (AgentStatus::Working, Some(State::Blocked), Tone::Blocked),
             (AgentStatus::Working, Some(State::Done), Tone::Done),
             (AgentStatus::Done, Some(State::Working), Tone::Working),
             (AgentStatus::Done, Some(State::Waiting), Tone::Waiting),
+            (AgentStatus::Done, Some(State::Blocked), Tone::Blocked),
+            (AgentStatus::Done, Some(State::Done), Tone::Done),
+            (AgentStatus::Done, None, Tone::Done),
             (AgentStatus::NeedsYou(Reason::Quiet), Some(State::Blocked), Tone::Blocked),
             (AgentStatus::Working, None, Tone::Working),
             (AgentStatus::NeedsYou(Reason::Permission), Some(State::Done), Tone::Needs),
             (AgentStatus::Failed("x".into()), Some(State::Working), Tone::Failed),
             (AgentStatus::Stopped, Some(State::Working), Tone::Stopped),
             (AgentStatus::SettingUp, Some(State::Done), Tone::Setup),
+            (AgentStatus::Shell, Some(State::Working), Tone::Shell),
         ];
         for (status, reported, want) in cases {
             assert_eq!(Tone::shown(&status, reported), want, "{status:?} {reported:?}");
+        }
+        for reason in [Reason::Permission, Reason::Question, Reason::Input, Reason::Attention] {
+            assert_eq!(
+                Tone::shown(&AgentStatus::NeedsYou(reason), Some(State::Done)),
+                Tone::Needs,
+                "a prompt that asks for you wins over a report: {reason:?}"
+            );
         }
     }
 

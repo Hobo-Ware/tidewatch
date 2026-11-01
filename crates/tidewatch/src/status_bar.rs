@@ -15,8 +15,8 @@ use crate::pr_strip::tone_ink;
 use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, button_width, quiet_button};
 use crate::screen_kit::{body, mono};
-use crate::status_view::Tone;
 use crate::token_budget::Mark;
+use tidewatch_core::panel_view::Tone;
 
 pub(crate) const HEIGHT: f32 = 30.0;
 const PAD: f32 = crate::layout::EDGE;

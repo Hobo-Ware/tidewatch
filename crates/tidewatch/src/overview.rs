@@ -10,7 +10,7 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::meeseeks::elapsed_text;
 use tidewatch_core::meeseeks_log::Poofed;
-use tidewatch_core::panel_view::Why;
+use tidewatch_core::panel_view::{Tone, Why};
 use tidewatch_core::progress_report::StageKind;
 use tidewatch_core::status::{AgentStatus, Reason};
 
@@ -18,7 +18,7 @@ use crate::coming_up::{Group, Row as Scheduled, Source};
 use crate::pane::{AgentTab, Pane};
 use crate::progress_model::{CardTag, Look, Tone as ProgressTone};
 use crate::progress_ring::tone_color;
-use crate::status_view::{Tone, color, label, reason_label};
+use crate::status_view::{color, label, reason_label};
 use crate::tabs::Tabs;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -625,7 +625,7 @@ mod tests {
             profile: "Builder".into(),
             agent_id: "claude".into(),
             branch: format!("agent/{title}"),
-            tone: crate::status_view::tone(&status),
+            tone: Tone::of(&status),
             status,
             detail: None,
             end_block: None,
@@ -704,7 +704,7 @@ mod tests {
                 .to_ledger();
         let mut row = row(id, title, AgentStatus::Done);
         let reported = ledger.shown_state();
-        row.tone = crate::status_view::shown(&row.status, Some(reported));
+        row.tone = Tone::shown(&row.status, Some(reported));
         row.look = Some(crate::progress_model::look_as(&ledger, false, reported));
         row
     }
@@ -848,10 +848,7 @@ mod tests {
     fn a_process_fact_beats_the_report_on_the_card() {
         let mut failed = reported(1, "a", "working", &serde_json::json!({}), "build");
         failed.status = AgentStatus::Failed("exited".into());
-        failed.tone = crate::status_view::shown(
-            &failed.status,
-            Some(tidewatch_core::progress::State::Working),
-        );
+        failed.tone = Tone::shown(&failed.status, Some(tidewatch_core::progress::State::Working));
         assert_eq!(card_view(&failed).tag, "Failed");
         assert_eq!(build(vec![place("web", vec![failed])]).counts.failed, 1);
     }
@@ -1192,7 +1189,7 @@ mod tests {
         let ledger = tidewatch_core::progress::Ledger::parse(markdown);
         let reported = standing(&ledger, None, Live::default(), (false, false));
         let mut row = row(1, title, status);
-        row.tone = crate::status_view::shown(&row.status, Some(reported));
+        row.tone = Tone::shown(&row.status, Some(reported));
         row.look = Some(crate::progress_model::look_as(&ledger, false, reported));
         row.next = next;
         row

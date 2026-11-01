@@ -12,6 +12,7 @@ use super::repos::RepoCommand;
 use std::sync::Arc;
 
 use tidewatch_core::avatar::Avatar;
+use tidewatch_core::panel_view::Tone;
 
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar::{self, Face};
@@ -746,9 +747,9 @@ fn drag_step(slots: &[Slot], from: usize, pointer_x: f32) -> Option<Step> {
 }
 
 pub(super) fn needs_you<T>(pane: &Pane<T>) -> bool {
-    pane.agent.as_ref().is_some_and(|agent| {
-        matches!(agent.run.shown_tone(), status_view::Tone::Needs | status_view::Tone::Blocked)
-    })
+    pane.agent
+        .as_ref()
+        .is_some_and(|agent| matches!(agent.run.shown_tone(), Tone::Needs | Tone::Blocked))
 }
 
 fn tab_signals(pane: &Pane<PtyTerm>) -> (Progress, CmdState) {

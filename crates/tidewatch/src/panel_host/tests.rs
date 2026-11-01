@@ -5,7 +5,7 @@ use stdusk_core::progress::Progress;
 use tidewatch_core::panel_counter::{Counter, Counts, Outcome};
 use tidewatch_core::panel_event::{AskKind, ChecksWord, PrFacts, PrWord};
 use tidewatch_core::panel_rules::ReportDigest;
-use tidewatch_core::panel_view::{ReportMark, Tone as StoreTone, Why};
+use tidewatch_core::panel_view::{ReportMark, Tone, Why};
 use tidewatch_core::progress::{Ledger, State};
 use tidewatch_core::question::{AskReply, Question, Select};
 use tidewatch_core::status::{HookEvent, HookKind};
@@ -16,7 +16,6 @@ use crate::agent_frame::{self, route};
 use crate::agent_run::AgentRun;
 use crate::notify::Notifier;
 use crate::pane::{AgentTab, Body};
-use crate::status_view::Tone;
 
 const MESSAGE: &str =
     "Added it.\n\n**Done**\n- the helper\n\n**Needs you**\n- nothing\n\n**Next**\n- review";
@@ -115,7 +114,7 @@ fn a_turn_whose_stop_hook_was_lost_settles_when_the_transcript_shows_it_ended() 
         agent.run.end_block().map(|block| block.done.clone()),
         Some(vec!["the helper".to_owned()])
     );
-    assert_eq!(host.view(id, 5_000).map(|view| view.tone), Some(StoreTone::Done));
+    assert_eq!(host.view(id, 5_000).map(|view| view.tone), Some(Tone::Done));
 }
 
 #[test]
@@ -652,7 +651,7 @@ fn working_ten_minutes_after_the_turn_ended_reads_done_and_out_of_date_not_worki
     assert_eq!(reported, Some(State::Done));
     let view = host.view(id, ten_minutes).unwrap();
     assert_eq!(view.report, Some(ReportMark::OutOfDate(Why::WorkingButTurnEnded)));
-    assert_eq!(view.tone, StoreTone::Done);
+    assert_eq!(view.tone, Tone::Done);
 }
 
 #[test]

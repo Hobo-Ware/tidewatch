@@ -31,7 +31,8 @@ use crate::screen_kit::{
     Size, TEXT_PAGE, TEXT_SECONDARY, TEXT_TITLE, TagFill, body, button_width, heading, paint_tag,
     primary_button, tag_width,
 };
-use crate::status_view::{self, Tone};
+use crate::status_view;
+use tidewatch_core::panel_view::Tone;
 
 const BUTTON_H: f32 = ICON_BOX;
 const SIDE: f32 = crate::layout::EDGE;
@@ -1141,7 +1142,7 @@ mod tests {
             profile: "Builder".into(),
             agent_id: "claude".into(),
             branch: format!("agent/{title}"),
-            tone: crate::status_view::tone(&status),
+            tone: Tone::of(&status),
             status,
             detail: Some("Bash: touch hello.txt".into()),
             end_block: None,
@@ -1312,7 +1313,7 @@ mod tests {
                 .to_ledger();
         let mut row = row(id, title, "acme-web", AgentStatus::Done);
         let reported = ledger.shown_state();
-        row.tone = crate::status_view::shown(&row.status, Some(reported));
+        row.tone = Tone::shown(&row.status, Some(reported));
         row.look = Some(crate::progress_model::look_as(&ledger, false, reported));
         row
     }

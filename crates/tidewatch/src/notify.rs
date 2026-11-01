@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use crate::agent_run::Change;
-use crate::status_view::{Tone, reason_label};
+use crate::status_view::reason_label;
+use tidewatch_core::panel_view::Tone;
 use tidewatch_core::status::{AgentStatus, Reason};
 
 const APP_NAME: &str = "Tidewatch";
@@ -67,8 +68,8 @@ pub(crate) fn for_change(
     change: &Change,
     detail: Option<&str>,
 ) -> Option<(Tone, Notification)> {
-    let tone = crate::status_view::tone(&change.to);
-    if tone == crate::status_view::tone(&change.from) {
+    let tone = Tone::of(&change.to);
+    if tone == Tone::of(&change.from) {
         return None;
     }
     let what = match &change.to {
