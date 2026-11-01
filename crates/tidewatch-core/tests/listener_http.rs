@@ -432,7 +432,9 @@ fn a_report_is_saved_in_the_tab_folder_reaches_the_app_and_is_read_back_by_a_new
     let reply = client.request("POST", "/mcp", token, &call(1, "update_progress", &report));
     assert_eq!(reply.status, 200);
     let text = reply.json()["result"]["content"][0]["text"].as_str().unwrap().to_owned();
-    assert_eq!(text, "saved: phase 1 Plan, 0/2 done");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "saved: phase 1 Plan, 0/2 done");
+    assert!(lines[1..].iter().all(|line| line.starts_with("Also call set_")), "{text}");
     let message = h.next_event();
     assert_eq!((message.tab_id, message.generation), (5, 0));
     let TabEvent::Progress { ledger: sent } = message.event else { panic!("not a ledger") };
