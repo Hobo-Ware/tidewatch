@@ -390,6 +390,10 @@ fn tool_result(text: &str, is_error: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
 }
 
+pub(crate) fn problems_error(lead: &str, problems: &[String]) -> (String, bool) {
+    (format!("{lead}\n- {}", problems.join("\n- ")), true)
+}
+
 /// Shows the questions in the tab and holds the call until they are answered. Questions that fail
 /// the rules are a tool error with the problems listed, so the agent fixes them and asks again.
 fn ask_user(
@@ -400,13 +404,12 @@ fn ask_user(
     let questions = match question::from_tool_args(args) {
         Ok(questions) => questions,
         Err(found) => {
-            return (
-                format!(
-                    "The questions were not shown. Fix these and call {} again:\n- {}",
-                    question::TOOL_NAME,
-                    found.join("\n- ")
+            return problems_error(
+                &format!(
+                    "The questions were not shown. Fix these and call {} again:",
+                    question::TOOL_NAME
                 ),
-                true,
+                &found,
             );
         }
     };
@@ -525,6 +528,16 @@ mod tests {
     use crate::progress_store;
     use kelp_core::review::{Anchor, Side};
     use std::cell::RefCell;
+
+    #[test]
+    fn a_problems_error_lists_each_problem_on_its_own_line() {
+        let cases: [(&[&str], &str); 2] =
+            [(&["a"], "Lead:\n- a"), (&["a", "b c"], "Lead:\n- a\n- b c")];
+        for (problems, want) in cases {
+            let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            assert_eq!(problems_error("Lead:", &problems), (want.to_string(), true));
+        }
+    }
 
     fn test_wait(alive: &dyn Fn() -> bool) -> AskWait<'_> {
         AskWait { timeout: Duration::from_millis(400), poll: Duration::from_millis(10), alive }
