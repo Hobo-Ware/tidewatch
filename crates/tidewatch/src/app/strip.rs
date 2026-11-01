@@ -55,16 +55,22 @@ const PILL_DROP_SLACK: f32 = 6.0;
 const POOFED_VEIL: f32 = 0.6;
 const STATUS_DOT_TRAILING: f32 = TAB_PAD_X + TAB_SLOT_W / 2.0;
 
-/// What an agent tab keeps besides its title: the ledger's and the leading job's words for its tooltip.
+/// The ledger's, the leading job's and the tokens' words for a tab's tooltip.
 #[derive(Default)]
-pub(crate) struct TabExtras {
+pub(crate) struct TabTip {
     pub(crate) ring: Option<TabRing>,
     pub(crate) job: Option<TabJob>,
+    /// The tab's tokens and what Tidewatch cost, as the lines of its tooltip.
+    pub(crate) tokens: Option<String>,
+}
+
+/// What an agent tab keeps besides its title. `tip` is only called while the tab is hovered.
+#[derive(Default)]
+pub(crate) struct TabExtras<'a> {
+    pub(crate) tip: Option<Box<dyn Fn() -> TabTip + 'a>>,
     pub(crate) avatar: Option<Arc<Avatar>>,
     pub(crate) can_draw: bool,
     pub(crate) mood: Mood,
-    /// The tab's tokens and what Tidewatch cost, as the lines of its tooltip.
-    pub(crate) tokens: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -332,18 +338,20 @@ impl Tidewatch {
             Mood { struggling: meeseeks.is_some_and(|m| m.struggle(now_ms).is_some()) }
         };
         let extras = |id| TabExtras {
-            ring: self
-                .progress
-                .ledger(id)
-                .map(|known| tab_ring(&known.ledger, self.ledger_stale(id))),
-            job: self
-                .job_live
-                .board(id)
-                .and_then(|board| tab_job(board, now_ms, self.job_agent(id))),
+            tip: Some(Box::new(move || TabTip {
+                ring: self
+                    .progress
+                    .ledger(id)
+                    .map(|known| tab_ring(&known.ledger, self.ledger_stale(id))),
+                job: self
+                    .job_live
+                    .board(id)
+                    .and_then(|board| tab_job(board, now_ms, self.job_agent(id))),
+                tokens: self.tokens_of(id).map(|tokens| tokens.tip),
+            })),
             avatar: self.avatar_live.get(id).cloned(),
             can_draw: can_draw(id),
             mood: mood(id),
-            tokens: self.tokens_of(id).map(|tokens| tokens.tip),
         };
         tab_row(ui, &self.tabs, width, now, actions, (tab_signals, extras));
     }
@@ -419,13 +427,13 @@ enum ParkMenu {
     Offered { parkable: bool, keep: bool },
 }
 
-fn tab_row<T>(
+fn tab_row<'a, T>(
     ui: &mut egui::Ui,
     tabs: &Tabs<Pane<T>>,
     width: f32,
     now: f64,
     actions: &mut Vec<Action>,
-    (signals, extras): (impl Fn(&Pane<T>) -> (Progress, CmdState), impl Fn(u64) -> TabExtras),
+    (signals, extras): (impl Fn(&Pane<T>) -> (Progress, CmdState), impl Fn(u64) -> TabExtras<'a>),
 ) -> Vec<egui::Rect> {
     let mut slots = Vec::new();
     let mut drag = None;
@@ -442,7 +450,7 @@ fn tab_row<T>(
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
         let poofed = matches!(tab.pane.body, Body::Poofed(_));
-        let TabExtras { ring, job, avatar, can_draw, mood, tokens } =
+        let TabExtras { tip, avatar, can_draw, mood } =
             agent.map(|_| extras(tab.id)).unwrap_or_default();
         let face = agent
             .map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar))
@@ -500,15 +508,19 @@ fn tab_row<T>(
         };
         tab_menu(&resp, i, tab.id, &menu, actions);
         let resp = if agent.is_some() {
-            let second = crate::tab_title::subtitle(agent, &tab.title);
-            let mut tip = tab_tip(&label, &second, position + 1, job.as_ref());
-            if let Some(ring) = &ring {
-                tip = format!("{tip}\n{}", ring.tip);
-            }
-            if let Some(tokens) = &tokens {
-                tip = format!("{tip}\n{tokens}");
-            }
-            resp.on_hover_text(tip)
+            resp.on_hover_ui(|ui| {
+                let second = crate::tab_title::subtitle(agent, &tab.title);
+                let TabTip { ring, job, tokens } = tip.map_or_else(TabTip::default, |tip| tip());
+                let mut tip = tab_tip(&label, &second, position + 1, job.as_ref());
+                if let Some(ring) = &ring {
+                    tip = format!("{tip}\n{}", ring.tip);
+                }
+                if let Some(tokens) = &tokens {
+                    tip = format!("{tip}\n{tokens}");
+                }
+                ui.set_max_width(ui.spacing().tooltip_width);
+                ui.add(egui::Label::new(tip));
+            })
         } else if let Body::Poofed(record) = &tab.pane.body {
             let second =
                 crate::tab_title::task_line(&record.task).unwrap_or_else(|| tab.title.clone());
