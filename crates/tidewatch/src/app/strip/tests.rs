@@ -425,20 +425,22 @@ fn agent_strip(
                         (
                             |_: &Pane<u32>| (Progress::default(), CmdState::default()),
                             |_| TabExtras {
-                                ring: with_ring.then(|| tab_ring(&ledger, false)),
+                                tip: Some(Box::new(|| TabTip {
+                                    ring: with_ring.then(|| tab_ring(&ledger, false)),
+                                    job: with_job.then(|| TabJob {
+                                        fraction: 0.21,
+                                        label: "21%".into(),
+                                        stalled: false,
+                                        tip: "orders".into(),
+                                    }),
+                                    tokens: None,
+                                })),
                                 avatar: with_avatar.then(|| {
                                     let (svg, reason) = crate::avatar_glue::FAKE[0];
                                     Arc::new(tidewatch_core::avatar::clean(svg, reason).unwrap())
                                 }),
-                                job: with_job.then(|| TabJob {
-                                    fraction: 0.21,
-                                    label: "21%".into(),
-                                    stalled: false,
-                                    tip: "orders".into(),
-                                }),
                                 can_draw: false,
                                 mood: Mood::default(),
-                                tokens: None,
                             },
                         ),
                     );
