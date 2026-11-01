@@ -10,6 +10,7 @@ use tidewatch_core::note_paste;
 use tidewatch_core::question::{AskReply, Question};
 use tidewatch_core::transcript::{AskPart, Entry, Role, ToolPhase};
 use tidewatch_core::transcript_image::Picture;
+use tidewatch_core::user_markup;
 
 use tidewatch_core::sent::{Reason, Record};
 
@@ -157,6 +158,10 @@ pub(crate) struct Rows {
     auto_picked: HashSet<u64>,
 }
 
+fn is_shell_command(row: &Row) -> bool {
+    row.kind == Kind::SlashCommand && row.text.starts_with(user_markup::BASH_PREFIX)
+}
+
 impl Rows {
     pub(crate) fn push_all(&mut self, entries: Vec<Entry>) {
         for entry in entries {
@@ -187,7 +192,11 @@ impl Rows {
                 self.add(Kind::Notice, entry.text);
             }
             Role::Command => {
+                let shell = entry.text.starts_with(user_markup::BASH_PREFIX);
                 self.add(Kind::SlashCommand, entry.text);
+                if shell {
+                    self.settle_sent();
+                }
             }
             Role::CommandOutput => {
                 self.add(Kind::CommandOutput, entry.text);
@@ -285,7 +294,9 @@ impl Rows {
             .list
             .iter()
             .zip(self.stamps.iter())
-            .filter(|(row, _)| matches!(row.kind, Kind::User | Kind::Tidewatch(_)))
+            .filter(|(row, _)| {
+                matches!(row.kind, Kind::User | Kind::Tidewatch(_)) || is_shell_command(row)
+            })
             .map(|(row, at)| (row.seq, row.text.as_str(), *at))
             .collect();
         self.sent.settle(&lines);
@@ -600,6 +611,22 @@ mod tests {
             [Kind::User, Kind::Assistant, Kind::Notice, Kind::SlashCommand, Kind::CommandOutput]
         );
         assert_eq!(rows.iter().nth(1).unwrap().text, "# Done");
+    }
+
+    #[test]
+    fn a_queued_shell_command_leaves_the_queue_when_its_bash_input_line_arrives() {
+        let mut rows = Rows::default();
+        rows.queue_user("! pscale branch create db media", 1_000);
+        rows.queue_user("! pscale shell db", 2_000);
+        assert_eq!(rows.queued_len(), 2);
+        rows.push_all(vec![
+            text(Role::Command, "! pscale branch create db  media"),
+            text(Role::CommandOutput, "created"),
+        ]);
+        let waiting: Vec<&str> = rows.queued().map(|queued| queued.text.as_str()).collect();
+        assert_eq!(waiting, ["! pscale shell db"]);
+        let kinds: Vec<_> = rows.iter().map(|row| row.kind.clone()).collect();
+        assert_eq!(kinds, [Kind::SlashCommand, Kind::CommandOutput]);
     }
 
     #[test]
