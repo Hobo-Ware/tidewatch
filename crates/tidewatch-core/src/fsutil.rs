@@ -34,6 +34,13 @@ pub(crate) fn save_toml_pretty<T: Serialize>(file: &Path, value: &T) -> std::io:
     write_text(file, toml::to_string_pretty(value))
 }
 
+pub(crate) fn remove_file_if_present(file: impl AsRef<Path>) -> std::io::Result<()> {
+    match std::fs::remove_file(file) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn read_json<T: DeserializeOwned>(file: &Path) -> Option<T> {
     serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()
 }
@@ -156,6 +163,22 @@ mod tests {
             "{\n  \"name\": \"orders\",\n  \"count\": 3\n}"
         );
         assert_eq!(read_json::<Sample>(&file), Some(sample()));
+    }
+
+    #[test]
+    fn removing_a_missing_file_is_fine_and_removing_a_present_one_deletes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("gone");
+        remove_file_if_present(&file).unwrap();
+        std::fs::write(&file, "x").unwrap();
+        remove_file_if_present(&file).unwrap();
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn removing_something_that_is_not_a_file_still_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(remove_file_if_present(dir.path()).is_err());
     }
 
     #[test]

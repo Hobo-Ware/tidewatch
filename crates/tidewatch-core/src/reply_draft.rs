@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::{read_json, save_json};
+use crate::fsutil::{read_json, remove_file_if_present, save_json};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
@@ -36,10 +36,7 @@ pub fn load(file: &Path) -> Option<Draft> {
 /// When the file cannot be written or removed.
 pub fn save(file: &Path, draft: &Draft) -> std::io::Result<()> {
     if draft.is_blank() {
-        return match std::fs::remove_file(file) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        };
+        return remove_file_if_present(file);
     }
     save_json(file, draft)
 }

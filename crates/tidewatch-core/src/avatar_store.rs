@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::avatar::{Avatar, clean};
-use crate::fsutil::{read_json, save_json, write_atomic};
+use crate::fsutil::{read_json, remove_file_if_present, save_json, write_atomic};
 
 #[must_use]
 pub fn load(file: &Path) -> Option<Avatar> {
@@ -16,10 +16,7 @@ pub fn save(file: &Path, avatar: &Avatar) -> std::io::Result<()> {
 }
 
 pub fn clear(file: &Path) -> std::io::Result<()> {
-    match std::fs::remove_file(file) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
+    remove_file_if_present(file)
 }
 
 #[must_use]
