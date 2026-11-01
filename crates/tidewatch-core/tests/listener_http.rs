@@ -326,7 +326,7 @@ fn mcp_over_http_runs_the_handshake_and_the_event_tools() {
     assert_eq!((note.status, note.body.as_str()), (202, ""));
 
     let list = client.request("POST", "/mcp", token, &rpc(2, "tools/list", &json!({})));
-    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 13);
+    assert_eq!(list.json()["result"]["tools"].as_array().unwrap().len(), 14);
 
     let finding = client.request(
         "POST",
@@ -922,7 +922,7 @@ fn each_roles_token_lists_its_own_tools_and_a_hidden_call_says_where_it_works() 
     assert!(has(&plain_tools, "report_finding") && has(&plain_tools, "update_progress"));
     assert!(has(&meeseeks_tools, "meeseeks_done") && !has(&meeseeks_tools, "report_finding"));
     assert!(has(&meeseeks_tools, "set_name"));
-    assert!(!has(&plain_tools, "set_name"));
+    assert!(has(&plain_tools, "set_name"));
 
     let refused = client.request(
         "POST",

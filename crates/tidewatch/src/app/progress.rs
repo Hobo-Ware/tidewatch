@@ -95,6 +95,11 @@ impl Tidewatch {
                 agent.run.set_goal(goal);
             }
         }
+        if crate::fake_tab_names::enabled() {
+            crate::fake_tab_names::apply(
+                self.tabs.items_mut().iter_mut().filter_map(|tab| tab.pane.agent.as_mut()),
+            );
+        }
         let tabs: std::collections::HashSet<u64> =
             self.tabs.items().iter().map(|tab| tab.id).collect();
         self.progress_ui.forget_except(|id| tabs.contains(&id));

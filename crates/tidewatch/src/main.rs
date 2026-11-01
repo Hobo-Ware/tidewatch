@@ -73,6 +73,7 @@ mod emoji_paint;
 mod emoji_pick;
 mod emoji_text;
 mod emoji_view;
+mod fake_tab_names;
 mod file_drop;
 mod file_nav;
 mod file_view;

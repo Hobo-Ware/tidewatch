@@ -84,6 +84,8 @@ pub(crate) struct AgentTab {
     pub(crate) remote: Option<RemoteSession>,
     pub(crate) meeseeks: Option<Meeseeks>,
     pub(crate) folder_pick: Option<PathBuf>,
+    /// What the agent called its tab with `set_name`: the label until the owner renames the session.
+    pub(crate) chosen_name: Option<String>,
 }
 
 impl AgentTab {
@@ -102,6 +104,7 @@ impl AgentTab {
             remote: None,
             meeseeks: None,
             folder_pick: None,
+            chosen_name: None,
         }
     }
 
@@ -269,6 +272,7 @@ pub(crate) fn finish_open<T>(
             let shell = spawn(&opened.dir, opened.started.as_ref().map(|s| &s.prepared));
             let previous = tab.pane.agent.take();
             let folder_pick = previous.as_ref().and_then(|agent| agent.folder_pick.clone());
+            let chosen_name = previous.as_ref().and_then(|agent| agent.chosen_name.clone());
             tab.pane = Pane {
                 body: Body::Shell(shell),
                 worktree: opened.worktree,
@@ -305,6 +309,7 @@ pub(crate) fn finish_open<T>(
                         remote,
                         meeseeks: started.meeseeks,
                         folder_pick,
+                        chosen_name,
                     }
                 }),
             };
@@ -480,6 +485,23 @@ mod tests {
         finish_open(&mut tabs, id, Ok(in_folder), 0.0, |_, _| 7);
         let agent = tabs.get_mut(id).unwrap().pane.agent.take().unwrap();
         assert_eq!(agent.folder_pick, Some(PathBuf::from("/ws/api")));
+    }
+
+    #[test]
+    fn a_tab_keeps_the_name_its_agent_chose_when_it_finishes_opening() {
+        let mut tabs = Tabs::new(Pane::shell(0));
+        let mut creating = Pane::creating_agent("Builder".into(), "claude".into(), 0.0);
+        creating.agent.as_mut().unwrap().chosen_name = Some("fix-login-redirect".into());
+        let id = tabs.push(CREATING_TITLE.into(), creating);
+        let in_folder = Opened {
+            worktree: None,
+            dir: PathBuf::from("/ws"),
+            started: Some(started(&[])),
+            base_note: None,
+        };
+        finish_open(&mut tabs, id, Ok(in_folder), 0.0, |_, _| 7);
+        let agent = tabs.get_mut(id).unwrap().pane.agent.take().unwrap();
+        assert_eq!(agent.chosen_name.as_deref(), Some("fix-login-redirect"));
     }
 
     #[test]

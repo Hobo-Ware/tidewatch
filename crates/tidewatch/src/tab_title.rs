@@ -13,17 +13,19 @@ const GENERIC_TERMINAL_TITLES: [&str; 1] = ["claude code"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Source {
+    Own,
     Chosen,
     TaskSlug,
+    GoalSlug,
     Session,
     Terminal,
-    Goal,
     FirstMessage,
     Name,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Sources<'a> {
+    pub(crate) own: Option<&'a str>,
     pub(crate) chosen: Option<&'a str>,
     pub(crate) task: Option<&'a str>,
     pub(crate) session: Option<&'a str>,
@@ -34,19 +36,23 @@ pub(crate) struct Sources<'a> {
 
 pub(crate) fn pick(sources: Sources<'_>, name: &str) -> (Source, String) {
     let task_slug = sources.task.map(branch_name::slug);
+    let goal_slug = sources.goal.map(branch_name::slug);
     [
+        (Source::Own, sources.own.map(str::trim)),
         (Source::Chosen, sources.chosen.map(str::trim)),
         (Source::TaskSlug, task_slug.as_deref()),
+        (Source::GoalSlug, goal_slug.as_deref()),
         (Source::Session, sources.session),
         (Source::Terminal, sources.terminal),
-        (Source::Goal, sources.goal),
         (Source::FirstMessage, sources.first_message),
     ]
     .into_iter()
     .find_map(|(source, text)| {
         let text = text?;
         let shown = match source {
-            Source::Chosen | Source::TaskSlug => (!text.is_empty()).then(|| text.to_owned()),
+            Source::Own | Source::Chosen | Source::TaskSlug | Source::GoalSlug => {
+                (!text.is_empty()).then(|| text.to_owned())
+            }
             _ => tidy(text),
         };
         Some((source, shown?))
@@ -59,7 +65,11 @@ pub(crate) fn of_agent(agent: &AgentTab, name: &str) -> (Source, String) {
     let meeseeks = agent.meeseeks.as_ref();
     pick(
         Sources {
-            chosen: meeseeks.and_then(|meeseeks| meeseeks.name.as_deref()),
+            own: agent.reader.own_title(),
+            chosen: agent
+                .chosen_name
+                .as_deref()
+                .or_else(|| meeseeks.and_then(|meeseeks| meeseeks.name.as_deref())),
             task: meeseeks.map(|meeseeks| meeseeks.task.as_str()),
             session: agent.reader.session_title(),
             terminal: terminal.as_deref(),
@@ -127,19 +137,43 @@ mod tests {
     #[test]
     fn the_first_source_with_something_wins() {
         let all = Sources {
-            chosen: None,
-            task: None,
+            own: Some("Login work"),
+            chosen: Some("fix-login"),
+            task: Some("Fix the login redirect on signup"),
             session: Some("Fix login redirect"),
             terminal: Some("Terminal title"),
-            goal: Some("Ledger goal"),
+            goal: Some("Soundtrack backfill blind spots"),
             first_message: Some("First message"),
         };
         let cases = [
-            (all, (Source::Session, "Fix login redirect")),
-            (Sources { session: None, ..all }, (Source::Terminal, "Terminal title")),
-            (Sources { session: None, terminal: None, ..all }, (Source::Goal, "Ledger goal")),
+            (all, (Source::Own, "Login work")),
+            (Sources { own: None, ..all }, (Source::Chosen, "fix-login")),
             (
-                Sources { session: None, terminal: None, goal: None, ..all },
+                Sources { own: None, chosen: None, ..all },
+                (Source::TaskSlug, "fix-login-redirect-signup"),
+            ),
+            (
+                Sources { own: None, chosen: None, task: None, ..all },
+                (Source::GoalSlug, "soundtrack-backfill-blind"),
+            ),
+            (
+                Sources { own: None, chosen: None, task: None, goal: None, ..all },
+                (Source::Session, "Fix login redirect"),
+            ),
+            (
+                Sources { own: None, chosen: None, task: None, goal: None, session: None, ..all },
+                (Source::Terminal, "Terminal title"),
+            ),
+            (
+                Sources {
+                    own: None,
+                    chosen: None,
+                    task: None,
+                    goal: None,
+                    session: None,
+                    terminal: None,
+                    ..all
+                },
                 (Source::FirstMessage, "First message"),
             ),
             (Sources::default(), (Source::Name, NAME)),
@@ -147,6 +181,73 @@ mod tests {
         for (sources, (source, text)) in cases {
             assert_eq!(picked(sources), (source, text.to_owned()), "{sources:?}");
         }
+    }
+
+    #[test]
+    fn the_owners_rename_stays_as_written_and_beats_a_name_the_agent_chose() {
+        let cases = [
+            ("Sync retries", "Sync retries"),
+            ("  Sync   Retries  ", "Sync   Retries"),
+            ("MixedCase_name v2", "MixedCase_name v2"),
+        ];
+        for (own, want) in cases {
+            let sources = Sources {
+                own: Some(own),
+                chosen: Some("retry-sync"),
+                goal: Some("Add retry to the sync job"),
+                ..Sources::default()
+            };
+            assert_eq!(picked(sources), (Source::Own, want.to_owned()), "{own:?}");
+        }
+        let blank = Sources { own: Some("   "), chosen: Some("retry-sync"), ..Sources::default() };
+        assert_eq!(picked(blank), (Source::Chosen, "retry-sync".to_owned()));
+    }
+
+    #[test]
+    fn a_chosen_name_beats_a_slug_of_the_goal_and_the_goal_is_a_kebab_slug() {
+        let cases = [
+            (Some("retry-sync"), "Soundtrack backfill blind spots", Source::Chosen, "retry-sync"),
+            (
+                None,
+                "Soundtrack backfill blind spots",
+                Source::GoalSlug,
+                "soundtrack-backfill-blind",
+            ),
+            (None, "Fix the login redirect", Source::GoalSlug, "fix-login-redirect"),
+            (
+                None,
+                "Open a PR to fix https validation for issue 2333",
+                Source::GoalSlug,
+                "fix-https-validation-issue",
+            ),
+        ];
+        for (chosen, goal, source, want) in cases {
+            let sources = Sources {
+                chosen,
+                goal: Some(goal),
+                session: Some("Session title"),
+                ..Sources::default()
+            };
+            assert_eq!(picked(sources), (source, want.to_owned()), "{goal:?}");
+        }
+    }
+
+    #[test]
+    fn a_goal_with_no_slug_falls_through_to_the_next_source() {
+        let sources = Sources {
+            goal: Some("?!"),
+            session: Some("Session title"),
+            first_message: Some("First message"),
+            ..Sources::default()
+        };
+        assert_eq!(picked(sources), (Source::Session, "Session title".to_owned()));
+        let nothing_else = Sources { session: None, ..sources };
+        assert_eq!(picked(nothing_else), (Source::FirstMessage, "First message".to_owned()));
+        let wordless = Sources {
+            goal: Some("\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}"),
+            ..Sources::default()
+        };
+        assert_eq!(picked(wordless), (Source::Name, NAME.to_owned()));
     }
 
     #[test]
@@ -178,13 +279,34 @@ mod tests {
             ),
             (
                 Sources { chosen: None, task: Some("?!"), ..titles },
-                (Source::Session, "Fix the https validation on signup"),
+                (Source::GoalSlug, "ledger-goal"),
             ),
-            (Sources { chosen: None, task: None, ..titles }, (Source::Session, task)),
+            (Sources { chosen: None, task: None, goal: None, ..titles }, (Source::Session, task)),
         ];
         for (sources, (source, text)) in cases {
             assert_eq!(picked(sources), (source, text.to_owned()), "{sources:?}");
         }
+    }
+
+    #[test]
+    fn an_agent_tab_reads_the_owners_rename_then_the_agents_name_then_a_slug_of_its_goal() {
+        use crate::agent_run::AgentRun;
+        use tidewatch_core::meeseeks::{Criteria, Meeseeks};
+        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        agent.run.set_goal(Some("Soundtrack backfill blind spots"));
+        let label = |agent: &AgentTab| of_agent(agent, NAME);
+        assert_eq!(label(&agent), (Source::GoalSlug, "soundtrack-backfill-blind".to_owned()));
+        agent.chosen_name = Some("backfill-soundtrack".into());
+        assert_eq!(label(&agent), (Source::Chosen, "backfill-soundtrack".to_owned()));
+        agent.reader.fake_own_title(Some("Soundtrack work"));
+        assert_eq!(label(&agent), (Source::Own, "Soundtrack work".to_owned()));
+        agent.reader.fake_own_title(None);
+        agent.chosen_name = None;
+        agent.meeseeks = Some(Meeseeks {
+            name: Some("older-saved-name".into()),
+            ..Meeseeks::summon("Fix the login", Criteria::default(), 0)
+        });
+        assert_eq!(label(&agent), (Source::Chosen, "older-saved-name".to_owned()));
     }
 
     #[test]
@@ -301,7 +423,7 @@ mod tests {
             first_message: Some("[Image #1]"),
             ..Sources::default()
         };
-        assert_eq!(picked(with_goal), (Source::Goal, "Ledger goal".to_owned()));
+        assert_eq!(picked(with_goal), (Source::GoalSlug, "ledger-goal".to_owned()));
         let after = Sources { first_message: Some("[Image #1]"), ..Sources::default() };
         assert_eq!(picked(after).0, Source::Name);
     }

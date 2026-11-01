@@ -52,6 +52,8 @@ pub(crate) enum Message {
     Entries(Vec<Entry>),
     Facts(Vec<Timed>),
     Title(String),
+    /// The name the owner gave the session with `/rename`; `None` once it is blank.
+    OwnTitle(Option<String>),
     Tokens(Tally),
 }
 
@@ -136,6 +138,7 @@ fn run(
     let mut empty_reads = 0_u32;
     let mut said_missing = false;
     let mut sent_title: Option<String> = None;
+    let mut sent_own: Option<String> = None;
     let mut sent_stamp = (0_u32, 0_u32);
     let mut delay = Duration::ZERO;
     let mut copy_looked = Instant::now();
@@ -198,6 +201,13 @@ fn run(
         if let Some(title) = title {
             sent_title = Some(title.clone());
             if !send(Message::Title(title)) {
+                return;
+            }
+        }
+        let own = tail.as_ref().and_then(Tail::custom_title).map(str::to_owned);
+        if own != sent_own {
+            sent_own.clone_from(&own);
+            if !send(Message::OwnTitle(own)) {
                 return;
             }
         }
@@ -381,6 +391,41 @@ mod tests {
         feed.poke();
         let seen = wait_for(&feed, |m| matches!(m, Message::Title(_)));
         assert_eq!(titles(&seen), ["Send people back after login"]);
+    }
+
+    #[test]
+    fn a_rename_is_sent_as_the_owners_own_title_and_a_generated_title_never_is() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = home.path().join("work");
+        fs::create_dir_all(&cwd).unwrap();
+        let dir = home
+            .path()
+            .join(".claude")
+            .join("projects")
+            .join(tidewatch_core::transcript_locate::claude_project_dir_name(&cwd));
+        fs::create_dir_all(&dir).unwrap();
+        let id = "33333333-aaaa-bbbb-cccc-000000000004";
+        let file = dir.join(format!("{id}.jsonl"));
+        fs::write(&file, "{\"type\":\"ai-title\",\"aiTitle\":\"Fix login redirect\"}\n").unwrap();
+        let mut locator = Locator::new(home.path(), &cwd);
+        locator.session_id = Some(id.into());
+        let feed = Feed::start(Source::Claude, locator, || {});
+        let own = |seen: &[Message]| -> Vec<Option<String>> {
+            seen.iter()
+                .filter_map(|m| match m {
+                    Message::OwnTitle(title) => Some(title.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let seen = wait_for(&feed, |m| matches!(m, Message::Title(_)));
+        assert_eq!(own(&seen), Vec::<Option<String>>::new());
+        let mut text = fs::read_to_string(&file).unwrap();
+        text.push_str("{\"type\":\"custom-title\",\"customTitle\":\"Login work\"}\n");
+        fs::write(&file, text).unwrap();
+        feed.poke();
+        let seen = wait_for(&feed, |m| matches!(m, Message::OwnTitle(_)));
+        assert_eq!(own(&seen), [Some("Login work".to_owned())]);
     }
 
     #[test]

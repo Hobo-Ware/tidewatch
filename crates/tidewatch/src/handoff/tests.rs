@@ -945,6 +945,28 @@ fn a_meeseeks_crosses_the_handover_with_its_counts_and_comes_back_as_one() {
 }
 
 #[test]
+fn the_name_an_agent_chose_crosses_the_handover() {
+    let mut w = window();
+    w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().chosen_name =
+        Some("fix-login-redirect".into());
+    let (handover, _) = handover_of(&w);
+    let text = serde_json::to_string(&handover).unwrap();
+    let handover: Handover = serde_json::from_str(&text).unwrap();
+    let mut adopt = |term: u32, _: &Path| Ok(term);
+    let rebuilt = rebuild(
+        &handover,
+        vec![100, 101, 102, 200, 201],
+        0.0,
+        Ptys { adopt: &mut adopt, fresh: &fresh },
+    )
+    .unwrap()
+    .tabs;
+    let otter = rebuilt.items().iter().find(|tab| tab.title == "otter").unwrap();
+    let chosen = otter.pane.agent.as_ref().and_then(|agent| agent.chosen_name.as_deref());
+    assert_eq!(chosen, Some("fix-login-redirect"));
+}
+
+#[test]
 fn a_meeseeks_that_is_being_checked_blocks_a_handover_and_one_that_works_does_not() {
     let mut w = window();
     let mut meeseeks = a_meeseeks();

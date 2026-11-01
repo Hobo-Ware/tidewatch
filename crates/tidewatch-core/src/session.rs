@@ -104,6 +104,9 @@ pub struct SavedAgentTab {
     /// The repo the owner picked in the panel of a tab that runs in a folder holding several.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder_repo: Option<PathBuf>,
+    /// What the agent called its tab with `set_name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen_name: Option<String>,
 }
 
 impl SavedTab {
@@ -248,6 +251,7 @@ mod tests {
             remote: false,
             meeseeks: None,
             folder_repo: None,
+            chosen_name: None,
         })
     }
 
@@ -379,6 +383,7 @@ mod tests {
                     remote: false,
                     meeseeks: None,
                     folder_repo: None,
+                    chosen_name: None,
                 }),
             ],
             parked: Vec::new(),
@@ -448,6 +453,28 @@ mod tests {
         let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
         assert_eq!(tab.folder_repo, None);
         assert!(!toml::to_string(&loaded).unwrap().contains("folder_repo"));
+    }
+
+    #[test]
+    fn the_name_an_agent_chose_is_remembered_and_an_old_file_loads_without_one() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let mut named = window();
+        if let SavedTab::Agent(tab) = &mut named.tabs[2] {
+            tab.chosen_name = Some("fix-login-redirect".into());
+        }
+        let session = Session { windows: vec![named] };
+        session.save(&paths).unwrap();
+        let text = std::fs::read_to_string(paths.session_file()).unwrap();
+        assert_eq!(text.matches("chosen_name = \"fix-login-redirect\"").count(), 1, "{text}");
+        assert_eq!(Session::load(&paths), session);
+
+        let old = "[[window]]\ndir = \"/a\"\n[[window.tab]]\nkind = \"agent\"\ndir = \"/a\"\n\
+                   agent = \"claude\"\nprofile = \"builder\"\nlevel = \"edits\"\n";
+        let loaded: Session = toml::from_str(old).unwrap();
+        let SavedTab::Agent(tab) = &loaded.windows[0].tabs[0] else { panic!("an agent tab") };
+        assert_eq!(tab.chosen_name, None);
+        assert!(!toml::to_string(&loaded).unwrap().contains("chosen_name"));
     }
 
     #[test]

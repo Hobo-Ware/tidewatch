@@ -176,6 +176,7 @@ fn agent(worktree: &Worktree, session: &str, level: Level) -> SavedTab {
         remote: false,
         meeseeks: None,
         folder_repo: None,
+        chosen_name: None,
     })
 }
 
@@ -309,6 +310,26 @@ fn saved_tabs_come_back_in_order_a_shell_in_its_worktree_an_agent_resumed_the_ac
     assert_eq!(resumed.launched.as_ref().map(|l| l.session_id.as_deref()), Some(Some(SESSION_A)));
     assert_eq!(resumed.launched.as_ref().map(|l| l.profile_id.as_str()), Some("builder"));
     assert_eq!(resumed.run.agent_id, "claude");
+}
+
+#[test]
+fn a_resumed_agent_keeps_the_name_it_chose_and_one_that_chose_none_has_none() {
+    let mut f = Fixture::new(false);
+    let named = f.worktree_with_transcript(SESSION_A);
+    let unnamed = f.worktree_with_transcript(SESSION_B);
+    let mut saved = agent(&named, SESSION_A, Level::Edits);
+    if let SavedTab::Agent(tab) = &mut saved {
+        tab.chosen_name = Some("fix-login-redirect".into());
+    }
+    f.save(0, false, vec![SavedTab::Main, saved, agent(&unnamed, SESSION_B, Level::Edits)]);
+    f.begin();
+    f.until_settled();
+    let chosen = |index: usize| {
+        let agent = f.tabs.items()[index].pane.agent.as_ref().expect("an agent tab");
+        agent.chosen_name.clone()
+    };
+    assert_eq!(chosen(1).as_deref(), Some("fix-login-redirect"));
+    assert_eq!(chosen(2), None);
 }
 
 #[test]

@@ -61,6 +61,7 @@ struct AgentRef<'a> {
     remote: bool,
     meeseeks: Option<&'a Meeseeks>,
     folder_repo: Option<&'a Path>,
+    chosen_name: Option<&'a str>,
 }
 
 impl TabRef<'_> {
@@ -83,6 +84,7 @@ impl TabRef<'_> {
                 remote: a.remote,
                 meeseeks: a.meeseeks.cloned().map(Box::new),
                 folder_repo: a.folder_repo.map(Path::to_path_buf),
+                chosen_name: a.chosen_name.map(str::to_owned),
             }),
         }
     }
@@ -111,6 +113,7 @@ fn agent_ref<'a>(
         remote,
         meeseeks: agent.meeseeks.as_ref(),
         folder_repo: agent.folder_pick.as_deref(),
+        chosen_name: agent.chosen_name.as_deref(),
     }))
 }
 
@@ -332,6 +335,7 @@ mod tests {
                     remote: false,
                     meeseeks: None,
                     folder_repo: None,
+                    chosen_name: None,
                 }),
             ]
         );
@@ -691,5 +695,22 @@ mod tests {
         };
         assert!(plain_tab.meeseeks.is_none());
         assert_ne!(before, signature(&view(false), &plain));
+    }
+
+    #[test]
+    fn the_name_an_agent_chose_is_saved_and_moves_the_signature() {
+        let mut named = with_agent(None);
+        let before = signature(&view(false), &named);
+        let SavedTab::Agent(unnamed) = &saved_window(&view(false), &named).tabs[1] else {
+            panic!("an agent tab")
+        };
+        assert_eq!(unnamed.chosen_name, None);
+        named.items_mut()[1].pane.agent.as_mut().unwrap().chosen_name =
+            Some("fix-login-redirect".into());
+        let SavedTab::Agent(tab) = &saved_window(&view(false), &named).tabs[1] else {
+            panic!("an agent tab")
+        };
+        assert_eq!(tab.chosen_name.as_deref(), Some("fix-login-redirect"));
+        assert_ne!(before, signature(&view(false), &named));
     }
 }

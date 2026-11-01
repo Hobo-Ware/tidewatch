@@ -395,7 +395,7 @@ impl AgentRun {
             | TabEvent::Background(_)
             | TabEvent::Avatar { .. }
             | TabEvent::MeeseeksDone { .. }
-            | TabEvent::MeeseeksName { .. }
+            | TabEvent::TabName { .. }
             | TabEvent::Ask { .. }
             | TabEvent::Services(_) => {}
         }

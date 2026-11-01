@@ -50,8 +50,8 @@ pub enum TabEvent {
     MeeseeksDone {
         summary: String,
     },
-    /// The Meeseeks called `set_name`; the name is already checked.
-    MeeseeksName {
+    /// The agent called `set_name`; the name is already checked.
+    TabName {
         name: String,
     },
     /// The agent called `ask_user` and its call is held until `reply` is used.

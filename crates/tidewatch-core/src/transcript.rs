@@ -204,6 +204,13 @@ impl Parser {
         self.titles.best()
     }
 
+    /// The name the owner gave the session with `/rename`, as of the lines fed so far; never the
+    /// title Claude generated.
+    #[must_use]
+    pub fn custom_title(&self) -> Option<&str> {
+        self.titles.custom.as_deref()
+    }
+
     /// The tokens the lines fed so far spent.
     #[must_use]
     pub fn tokens(&self) -> Tally {
@@ -744,6 +751,12 @@ impl Tail {
     #[must_use]
     pub fn session_title(&self) -> Option<&str> {
         self.parser.session_title()
+    }
+
+    /// The name the owner gave the session with `/rename`, as of the last poll.
+    #[must_use]
+    pub fn custom_title(&self) -> Option<&str> {
+        self.parser.custom_title()
     }
 
     /// Entries added since the last poll. A missing or unreadable file adds none and is tried again
@@ -1588,6 +1601,28 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_is_told_apart_from_a_generated_title() {
+        let cases: [(&[&str], Option<&str>); 6] = [
+            (&[], None),
+            (&[GENERATED], None),
+            (&[SUMMARY], None),
+            (&[GENERATED, RENAMED], Some("Sync retries")),
+            (&[RENAMED, GENERATED], Some("Sync retries")),
+            (&[RENAMED, r#"{"type":"custom-title","customTitle":"  ","sessionId":"s"}"#], None),
+        ];
+        for (lines, want) in cases {
+            let mut parser = Parser::new(Source::Claude);
+            for line in lines {
+                parser.feed_line(line);
+            }
+            assert_eq!(parser.custom_title(), want, "{lines:?}");
+        }
+        let mut other = Parser::new(Source::Codex);
+        other.feed_line(RENAMED);
+        assert_eq!(other.custom_title(), None);
+    }
+
+    #[test]
     fn only_claude_records_name_a_session() {
         for source in [Source::Gemini, Source::Copilot, Source::Codex] {
             assert_eq!(title_after(source, &[GENERATED, RENAMED, SUMMARY]), None, "{source:?}");
@@ -1627,10 +1662,12 @@ mod tests {
         assert_eq!(tail.session_title(), None);
         tail.poll();
         assert_eq!(tail.session_title(), Some("Add retry to the sync job"));
+        assert_eq!(tail.custom_title(), None);
         let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
         writeln!(file, "{RENAMED}").unwrap();
         tail.poll();
         assert_eq!(tail.session_title(), Some("Sync retries"));
+        assert_eq!(tail.custom_title(), Some("Sync retries"));
     }
 
     #[test]

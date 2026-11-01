@@ -136,10 +136,11 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
             .meeseeks
             .is_some()
             .then(|| Follow::MeeseeksDone { tab: message.tab_id, summary: summary.clone() }),
-        TabEvent::MeeseeksName { name } => {
+        TabEvent::TabName { name } => {
             if let Some(meeseeks) = agent.meeseeks.as_mut() {
                 meeseeks.name = Some(name.clone());
             }
+            agent.chosen_name = Some(name.clone());
             None
         }
         TabEvent::Services(call) => {
@@ -685,25 +686,38 @@ mod tests {
         }
     }
 
+    fn agent_of(tabs: &Tabs<Pane<u32>>, id: u64) -> Option<&crate::pane::AgentTab> {
+        tabs.items().iter().find(|tab| tab.id == id).and_then(|tab| tab.pane.agent.as_ref())
+    }
+
     #[test]
-    fn a_chosen_name_is_kept_on_a_meeseeks_and_ignored_by_any_other_tab() {
+    fn a_chosen_name_is_kept_on_any_agent_tab_and_a_meeseeks_keeps_it_in_its_own_record_too() {
         let named = |tab| TabMessage {
             tab_id: tab,
             generation: 0,
-            event: TabEvent::MeeseeksName { name: "fix-https-validation".into() },
+            event: TabEvent::TabName { name: "fix-https-validation".into() },
         };
         let (mut tabs, id) = meeseeks_tab();
         assert_eq!(route(&mut tabs, named(id), 1.0), None);
-        let chosen = |tabs: &Tabs<Pane<u32>>, id| {
-            tabs.items()
-                .iter()
-                .find(|tab| tab.id == id)
-                .and_then(|tab| tab.pane.agent.as_ref()?.meeseeks.as_ref()?.name.clone())
-        };
-        assert_eq!(chosen(&tabs, id).as_deref(), Some("fix-https-validation"));
+        let agent = agent_of(&tabs, id).unwrap();
+        assert_eq!(agent.chosen_name.as_deref(), Some("fix-https-validation"));
+        assert_eq!(
+            agent.meeseeks.as_ref().and_then(|meeseeks| meeseeks.name.as_deref()),
+            Some("fix-https-validation")
+        );
         let (mut plain, plain_id) = tabs_with_agent();
         assert_eq!(route(&mut plain, named(plain_id), 1.0), None);
-        assert_eq!(chosen(&plain, plain_id), None);
+        let agent = agent_of(&plain, plain_id).unwrap();
+        assert_eq!(agent.chosen_name.as_deref(), Some("fix-https-validation"));
+        assert!(agent.meeseeks.is_none());
+        let later = TabMessage {
+            tab_id: plain_id,
+            generation: 0,
+            event: TabEvent::TabName { name: "retry-sync".into() },
+        };
+        assert_eq!(route(&mut plain, later, 2.0), None);
+        assert_eq!(agent_of(&plain, plain_id).unwrap().chosen_name.as_deref(), Some("retry-sync"));
+        assert_eq!(route(&mut plain, named(99), 3.0), None, "a closed tab is ignored");
     }
 
     #[test]
