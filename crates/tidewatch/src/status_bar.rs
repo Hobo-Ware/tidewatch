@@ -12,10 +12,10 @@ use tidewatch_core::pr_status::Tone as PrTone;
 use crate::commands::{Command, Platform};
 use crate::new_tab::Kind;
 use crate::pr_strip::tone_ink;
-use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{Size, button_width, quiet_button};
+use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 use crate::screen_kit::{body, mono};
-use crate::token_budget::Mark;
+use crate::token_budget::{Mark, Meter};
 use tidewatch_core::panel_view::Tone;
 
 pub(crate) const HEIGHT: f32 = 30.0;
@@ -29,6 +29,11 @@ const AWAKE_R: f32 = 5.0;
 const FETCH_FAILED: &str = "Fetch failed";
 const CHIP_PAD: f32 = Size::Tag.pad();
 const SWITCHING_TITLE_CHARS: usize = 36;
+const METER_GAP: f32 = 14.0;
+const METER_PART_GAP: f32 = 6.0;
+const TRACK_W: f32 = 56.0;
+const TRACK_H: f32 = 5.0;
+const TRACK_RADIUS: u8 = 3;
 
 pub(crate) mod slow;
 
@@ -239,8 +244,10 @@ pub(crate) struct Bar {
     pub(crate) switching: Option<String>,
     /// The oldest git or gh call that has run longer than 10 s, with a Cancel.
     pub(crate) slow: Option<slow::Line>,
-    /// The plan limits, or the active tab's tokens when no limit is known.
+    /// The active tab's tokens.
     pub(crate) budget: Option<Mark>,
+    /// The plan limits with a current reading, five-hour first.
+    pub(crate) meters: Vec<Meter>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -254,6 +261,82 @@ pub(crate) struct Clicks {
 enum Cancelling {
     Switch,
     Slow(u64),
+}
+
+struct MeterLayout<'a> {
+    meter: &'a Meter,
+    label: std::sync::Arc<egui::Galley>,
+    percent: std::sync::Arc<egui::Galley>,
+}
+
+impl MeterLayout<'_> {
+    fn width(&self) -> f32 {
+        self.label.size().x + METER_PART_GAP + TRACK_W + METER_PART_GAP + self.percent.size().x
+    }
+}
+
+/// Draws the meters with their right edge at `right`, the way the board's option A shows them, and
+/// returns where the room left of them ends. They give way to the left side of the bar: when all do
+/// not fit between `left` and `right` the fullest one is drawn alone, and when that does not fit
+/// none is.
+fn draw_meters(ui: &Ui, meters: &[Meter], y: f32, left: f32, right: f32) -> f32 {
+    let laid: Vec<MeterLayout<'_>> = meters
+        .iter()
+        .map(|meter| MeterLayout {
+            meter,
+            label: ui.painter().layout_no_wrap(
+                meter.label.to_owned(),
+                mono(TEXT_TAG),
+                brand::MUTED,
+            ),
+            percent: ui.painter().layout_no_wrap(
+                meter.percent_text(),
+                mono(TEXT_TAG),
+                brand::MUTED,
+            ),
+        })
+        .collect();
+    let total = |parts: &[&MeterLayout<'_>]| {
+        parts.iter().map(|part| part.width()).sum::<f32>()
+            + METER_GAP * parts.len().saturating_sub(1) as f32
+    };
+    let all: Vec<&MeterLayout<'_>> = laid.iter().collect();
+    let fullest = laid.iter().max_by_key(|part| part.meter.percent);
+    let shown: Vec<&MeterLayout<'_>> = if left + total(&all) <= right {
+        all
+    } else {
+        fullest.into_iter().filter(|part| left + part.width() <= right).collect()
+    };
+    if shown.is_empty() {
+        return right;
+    }
+    let mut x = right - total(&shown);
+    let start = x;
+    for part in shown {
+        let meter = part.meter;
+        let hit = Rect::from_min_size(pos2(x, y - HEIGHT / 2.0), vec2(part.width(), HEIGHT));
+        ui.painter().galley(
+            pos2(x, y - part.label.size().y / 2.0),
+            part.label.clone(),
+            brand::MUTED,
+        );
+        x += part.label.size().x + METER_PART_GAP;
+        let track = Rect::from_min_size(pos2(x, y - TRACK_H / 2.0), vec2(TRACK_W, TRACK_H));
+        ui.painter().rect_filled(track, CornerRadius::same(TRACK_RADIUS), brand::FIELD_LINE);
+        let fill = Rect::from_min_size(track.min, vec2(TRACK_W * meter.fraction(), TRACK_H));
+        let ink = if meter.hot { brand::ORANGE } else { brand::TEAL };
+        ui.painter().rect_filled(fill, CornerRadius::same(TRACK_RADIUS), ink);
+        x += TRACK_W + METER_PART_GAP;
+        ui.painter().galley(
+            pos2(x, y - part.percent.size().y / 2.0),
+            part.percent.clone(),
+            brand::MUTED,
+        );
+        x += part.percent.size().x + METER_GAP;
+        ui.interact(hit, Id::new(("status-bar-meter", meter.label)), Sense::hover())
+            .on_hover_text(meter.tip.as_str());
+    }
+    start - GAP
 }
 
 /// Draws the bar and says what was clicked.
@@ -323,13 +406,13 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
             put(pos2(hints_left, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
         hints_left -= GAP;
     }
+    hints_left = draw_meters(ui, &bar.meters, y, x, hints_left);
     if let Some(mark) = &bar.budget {
-        let ink = if mark.hot { brand::ORANGE } else { brand::MUTED };
-        let galley = ui.painter().layout_no_wrap(mark.text.clone(), body(FONT), ink);
+        let galley = ui.painter().layout_no_wrap(mark.text.clone(), body(FONT), brand::MUTED);
         if x + galley.size().x + GAP <= hints_left {
             let area =
                 Rect::from_min_size(pos2(x, y - HEIGHT / 2.0), vec2(galley.size().x, HEIGHT));
-            ui.painter().galley(pos2(x, y - galley.size().y / 2.0), galley, ink);
+            ui.painter().galley(pos2(x, y - galley.size().y / 2.0), galley, brand::MUTED);
             ui.interact(area, Id::new("status-bar-budget"), Sense::hover())
                 .on_hover_text(mark.tip.as_str());
             x += area.width() + GAP;
@@ -562,6 +645,7 @@ mod tests {
             switching: switching.map(switching_text),
             slow,
             budget: None,
+            meters: Vec::new(),
         }
     }
 
@@ -639,48 +723,199 @@ mod tests {
         assert_eq!(clicks, Clicks { cancel_switch: true, ..Clicks::default() });
     }
 
-    fn budget_bar(text: &str, hot: bool) -> Bar {
-        Bar { budget: Some(Mark { text: text.into(), tip: "tip".into(), hot }), ..bar(None) }
+    fn budget_bar(text: &str) -> Bar {
+        Bar { budget: Some(Mark { text: text.into(), tip: "tip".into() }), ..bar(None) }
+    }
+
+    fn drawn(ctx: &egui::Context, bar: &Bar, width: f32) -> Vec<egui::epaint::ClippedShape> {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 120.0))),
+                focused: true,
+                ..egui::RawInput::default()
+            },
+            |ui| {
+                show(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(width, HEIGHT)), bar);
+            },
+        )
+        .shapes
     }
 
     #[test]
-    fn the_budget_mark_shows_on_the_left_in_the_warning_ink_when_hot_and_muted_otherwise() {
+    fn the_tokens_mark_shows_on_the_left_in_the_muted_ink() {
         let ctx = context();
-        let text = "5h 62% \u{b7} resets 16:40  \u{b7}  week 81% \u{b7} resets Mon";
-        for (hot, ink) in [(false, brand::MUTED), (true, brand::ORANGE)] {
-            let out = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 120.0))),
-                    focused: true,
-                    ..egui::RawInput::default()
-                },
-                |ui| {
-                    show(
-                        ui,
-                        Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, HEIGHT)),
-                        &budget_bar(text, hot),
-                    );
-                },
-            );
-            let drawn: Vec<_> = out
-                .shapes
-                .iter()
-                .filter_map(|clipped| match &clipped.shape {
-                    egui::Shape::Text(t) if t.galley.text() == text => Some(t.fallback_color),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(drawn, [ink], "hot {hot}");
+        let text = "1.2M tokens";
+        let ink: Vec<_> = drawn(&ctx, &budget_bar(text), 1200.0)
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(t.fallback_color),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ink, [brand::MUTED]);
+    }
+
+    #[test]
+    fn a_bar_without_a_tokens_mark_draws_none_and_a_narrow_one_leaves_it_out_instead_of_crowding() {
+        let ctx = context();
+        let text = "1.2M tokens";
+        assert_eq!(count(&galley_texts(&ctx, &bar(None)), text), 0);
+        assert_eq!(count(&galley_texts(&ctx, &budget_bar(text)), text), 1);
+        assert_eq!(count(&galley_texts_in(&ctx, &budget_bar(text), 300.0), text), 0);
+    }
+
+    fn meter(label: &'static str, percent: u8, hot: bool) -> Meter {
+        Meter { label, percent, hot, tip: format!("{label} tip") }
+    }
+
+    fn meter_bar(meters: Vec<Meter>) -> Bar {
+        Bar { meters, ..bar(None) }
+    }
+
+    fn two() -> Bar {
+        meter_bar(vec![meter("5h", 31, false), meter("week", 84, true)])
+    }
+
+    fn track_fills(shapes: &[egui::epaint::ClippedShape]) -> Vec<(Color32, f32)> {
+        shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect) if rect.rect.height() == TRACK_H => {
+                    Some((rect.fill, rect.rect.width()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn two_meters_draw_a_label_a_track_and_a_percent_with_the_fill_hot_at_the_threshold() {
+        let ctx = context();
+        let shapes = drawn(&ctx, &two(), 1200.0);
+        let want = [
+            (brand::FIELD_LINE, TRACK_W),
+            (brand::TEAL, TRACK_W * 0.31),
+            (brand::FIELD_LINE, TRACK_W),
+            (brand::ORANGE, TRACK_W * 0.84),
+        ];
+        let got = track_fills(&shapes);
+        assert_eq!(got.len(), want.len());
+        for ((got_ink, got_w), (want_ink, want_w)) in got.into_iter().zip(want) {
+            assert_eq!(got_ink, want_ink);
+            assert!((got_w - want_w).abs() < 0.1, "{got_w} {want_w}");
+        }
+        let texts = galley_texts(&ctx, &two());
+        for want in ["5h", "31%", "week", "84%"] {
+            assert_eq!(count(&texts, want), 1, "{want}: {texts:?}");
         }
     }
 
     #[test]
-    fn a_bar_without_a_budget_mark_draws_none_and_a_narrow_one_leaves_it_out_instead_of_crowding() {
+    fn the_meters_sit_left_of_the_hints_in_mono_text_and_keep_14_px_between_them() {
         let ctx = context();
-        let text = "5h 62% \u{b7} resets 16:40  \u{b7}  week 81% \u{b7} resets Mon";
-        assert_eq!(count(&galley_texts(&ctx, &bar(None)), text), 0);
-        assert_eq!(count(&galley_texts(&ctx, &budget_bar(text, false)), text), 1);
-        assert_eq!(count(&galley_texts_in(&ctx, &budget_bar(text, false), 520.0), text), 0);
+        let bar = Bar { hints: hints(Screen::Welcome, Platform::Mac), ..two() };
+        let shapes = drawn(&ctx, &bar, 1200.0);
+        let spot = |text: &str| {
+            shapes.iter().find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(t) if t.galley.text() == text => {
+                    Some((t.pos.x, t.pos.x + t.galley.size().x))
+                }
+                _ => None,
+            })
+        };
+        let (week_label, _) = spot("week").unwrap();
+        let (_, five_right) = spot("31%").unwrap();
+        assert!((week_label - five_right - METER_GAP).abs() < 0.01, "{week_label} {five_right}");
+        let (_, week_right) = spot("84%").unwrap();
+        let first_hint = bar.hints.first().map(|hint| hint.keys.as_str()).unwrap();
+        let (hint_left, _) = spot(first_hint).unwrap();
+        assert!(week_right <= hint_left, "{week_right} {hint_left}");
+        for clipped in &shapes {
+            if let egui::Shape::Text(t) = &clipped.shape
+                && ["5h", "31%", "week", "84%"].contains(&t.galley.text())
+            {
+                assert_eq!(
+                    t.galley.job.sections[0].format.font_id.family,
+                    egui::FontFamily::Monospace
+                );
+                assert_eq!(t.galley.job.sections[0].format.font_id.size, TEXT_TAG);
+            }
+        }
+    }
+
+    #[test]
+    fn a_meter_shows_its_tooltip_on_hover() {
+        let ctx = context();
+        let bar = two();
+        let at = drawn(&ctx, &bar, 1200.0)
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(t) if t.galley.text() == "week" => Some(t.pos + vec2(4.0, 6.0)),
+                _ => None,
+            })
+            .unwrap();
+        let texts = galley_texts_after_hover(&ctx, &bar, at);
+        assert_eq!(count(&texts, "week tip"), 1, "{texts:?}");
+        let away = galley_texts_after_hover(&context(), &bar, pos2(5.0, 5.0));
+        assert_eq!(count(&away, "week tip"), 0, "{away:?}");
+    }
+
+    fn galley_texts_after_hover(ctx: &egui::Context, bar: &Bar, at: egui::Pos2) -> Vec<String> {
+        let frame = |events: Vec<egui::Event>, time: f64| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 120.0))),
+                    events,
+                    focused: true,
+                    time: Some(time),
+                    ..egui::RawInput::default()
+                },
+                |ui| {
+                    show(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, HEIGHT)), bar);
+                },
+            )
+        };
+        let _ = frame(vec![egui::Event::PointerMoved(at)], 0.0);
+        let mut out = frame(Vec::new(), 0.1);
+        for step in 2..14 {
+            out = frame(Vec::new(), 0.1 * f64::from(step));
+        }
+        out.shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_bar_with_no_meters_draws_no_track() {
+        let ctx = context();
+        assert_eq!(track_fills(&drawn(&ctx, &bar(None), 1200.0)), Vec::new());
+    }
+
+    #[test]
+    fn a_narrow_bar_keeps_the_fullest_meter_and_a_narrower_one_none() {
+        let ctx = context();
+
+        let widths = [1200.0, 560.0, 460.0, 360.0];
+        let counted: Vec<usize> = widths
+            .iter()
+            .map(|width| track_fills(&drawn(&ctx, &two(), *width)).len() / 2)
+            .collect();
+        assert_eq!(counted, [2, 2, 1, 0], "meters by width {widths:?}");
+        let narrow = galley_texts_in(&ctx, &two(), 460.0);
+        assert_eq!((count(&narrow, "week"), count(&narrow, "5h")), (1, 0));
+    }
+
+    #[test]
+    fn the_meters_leave_the_slow_and_switch_lines_their_room() {
+        let ctx = context();
+        let busy = Bar { switching: Some(switching_text("fix-ci")), ..two() };
+        let texts = galley_texts(&ctx, &busy);
+        assert_eq!(count(&texts, "Switching fix-ci when its turn ends"), 1, "{texts:?}");
+        assert_eq!(count(&texts, "31%"), 1);
     }
 
     fn count(texts: &[String], want: &str) -> usize {

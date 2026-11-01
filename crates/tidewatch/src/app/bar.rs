@@ -83,6 +83,7 @@ impl Tidewatch {
             switching: self.switching_line().map(|(_, text)| text),
             slow: slow::line(ctx),
             budget: self.budget_mark(active_id),
+            meters: self.budget_meters(),
         }
     }
 }
