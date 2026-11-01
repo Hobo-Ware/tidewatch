@@ -6,12 +6,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread::JoinHandle;
 
 use kelp_core::review::{Anchor, Comment, Thread};
 use serde::{Deserialize, Serialize};
 
+use crate::coalescing_writer::CoalescingWriter;
 use crate::fsutil::save_json_pretty;
 
 /// When a thread was sent to the agent, and how many comments it had then.
@@ -231,55 +230,22 @@ impl Notes {
 
 /// Saves notes on one background thread. A burst of edits collapses into the last snapshot per
 /// file, and dropping the writer waits for the pending writes, so quitting never loses a note.
-pub struct NotesWriter {
-    sender: Option<Sender<(PathBuf, Notes)>>,
-    worker: Option<JoinHandle<()>>,
-}
+pub struct NotesWriter(CoalescingWriter<Notes>);
 
 impl NotesWriter {
     #[must_use]
     pub fn new() -> Self {
-        let (sender, receiver) = channel();
-        let worker = std::thread::spawn(move || write_loop(&receiver));
-        Self { sender: Some(sender), worker: Some(worker) }
+        Self(CoalescingWriter::new(Notes::save))
     }
 
     pub fn save(&self, file: PathBuf, notes: Notes) {
-        if let Some(sender) = &self.sender {
-            let _ = sender.send((file, notes));
-        }
+        self.0.save(file, notes);
     }
 }
 
 impl Default for NotesWriter {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl Drop for NotesWriter {
-    fn drop(&mut self) {
-        self.sender = None;
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-
-fn write_loop(receiver: &Receiver<(PathBuf, Notes)>) {
-    while let Ok(first) = receiver.recv() {
-        let mut latest: Vec<(PathBuf, Notes)> = vec![first];
-        for (file, notes) in receiver.try_iter() {
-            match latest.iter_mut().find(|(f, _)| *f == file) {
-                Some(slot) => slot.1 = notes,
-                None => latest.push((file, notes)),
-            }
-        }
-        for (file, notes) in latest {
-            if let Err(e) = notes.save(&file) {
-                eprintln!("tidewatch: cannot save {}: {e}", file.display());
-            }
-        }
     }
 }
 

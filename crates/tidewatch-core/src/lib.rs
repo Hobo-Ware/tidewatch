@@ -21,6 +21,7 @@ pub mod civil_date;
 pub mod claude_memory;
 pub mod clock;
 pub mod closed_tabs;
+pub mod coalescing_writer;
 pub mod comment_flags;
 pub mod comment_sweep;
 pub mod comments;
