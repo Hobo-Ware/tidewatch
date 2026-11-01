@@ -281,9 +281,11 @@ impl Tidewatch {
         ctx: &egui::Context,
         active_id: u64,
     ) {
-        let Some(summary) = self.pr.watch(active_id).and_then(Watch::summary) else {
+        let Some(watch) = self.pr.watch(active_id) else { return };
+        let Some(summary) = watch.summary() else { return };
+        if !pr_strip::shows(summary.state, watch.cards.ended_at_ms(), now_ms()) {
             return;
-        };
+        }
         let strip = pr_strip::Strip {
             summary,
             policy: self.pr.policy(active_id),

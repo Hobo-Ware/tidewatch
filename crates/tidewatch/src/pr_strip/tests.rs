@@ -90,6 +90,28 @@ fn the_tones_read_apart() {
     }
 }
 
+#[test]
+fn a_merged_or_closed_strip_goes_an_hour_after_github_ended_it_and_an_open_one_stays() {
+    const MINUTE: i64 = 60 * 1000;
+    let now = 1_793_563_198_000;
+    let cases = [
+        ("open with no end time", State::Open, None, true),
+        ("reopened after a close two hours ago", State::Open, Some(now - 120 * MINUTE), true),
+        ("merged 10 minutes ago", State::Merged, Some(now - 10 * MINUTE), true),
+        ("merged 59 minutes ago", State::Merged, Some(now - 59 * MINUTE), true),
+        ("merged an hour ago", State::Merged, Some(now - 60 * MINUTE), false),
+        ("merged 61 minutes ago", State::Merged, Some(now - 61 * MINUTE), false),
+        ("closed 10 minutes ago", State::Closed, Some(now - 10 * MINUTE), true),
+        ("closed 2 hours ago", State::Closed, Some(now - 120 * MINUTE), false),
+        ("merged with no known time", State::Merged, None, false),
+        ("closed with no known time", State::Closed, None, false),
+        ("merged a few seconds ahead of this clock", State::Merged, Some(now + 5_000), true),
+    ];
+    for (name, state, ended_at, want) in cases {
+        assert_eq!(shows(state, ended_at, now), want, "{name}");
+    }
+}
+
 /// Runs the strip over a few frames of pointer events and returns the last action it reported.
 fn frames(events: Vec<Vec<Event>>, strip: &Strip<'_>) -> (Vec<Option<Action>>, Rect) {
     let ctx = Context::default();
