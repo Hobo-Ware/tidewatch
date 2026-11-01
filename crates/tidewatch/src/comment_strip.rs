@@ -14,7 +14,7 @@ use egui::{
 use crate::brand;
 use crate::comment_model::{self, Line, PathRoots, Tone, chip_text, kind_label, kind_tone};
 use crate::middle_cut::{keeps_name, middle_cut};
-use crate::reader_view::INSET;
+use crate::reader_view::{INSET, ellipsized};
 use crate::screen_kit::{
     ChipPart, Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TagFill, body, button_width, heading,
     mono, paint_status_chip, paint_tag, popover_frame, quiet_button, status_chip_width, tag_width,
@@ -236,15 +236,13 @@ fn header(ui: &mut Ui, total: usize, off: bool) -> Option<Action> {
     let label = if off { "Turn on for this tab" } else { "Turn off for this tab" };
     let button_w = button_width(ui, label, Size::Compact);
     let room = rect.width() - button_w - GAP - ROW_INSET;
-    let galley = ui.painter().layout_job({
-        let mut job = LayoutJob::simple_singleline(
-            comment_model::popover_heading(total),
-            heading(TEXT_BODY),
-            brand::TEXT,
-        );
-        job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
-        job
-    });
+    let galley = ellipsized(
+        ui.painter(),
+        &comment_model::popover_heading(total),
+        heading(TEXT_BODY),
+        brand::TEXT,
+        room,
+    );
     ui.painter().galley(
         pos2(rect.left() + ROW_INSET, rect.center().y - galley.size().y / 2.0),
         galley,
