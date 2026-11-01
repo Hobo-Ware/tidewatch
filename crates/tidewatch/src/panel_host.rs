@@ -10,7 +10,7 @@
 //! prints every append.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::reports_by_hooks;
 use tidewatch_core::elsewhere_scan::RealSystem;
@@ -34,7 +34,7 @@ use crate::jobs::Jobs;
 use crate::pane::Pane;
 use crate::panel_blocks::OnTime;
 use crate::panel_fake::{self, Fake};
-use crate::tabs::Tabs;
+use crate::tabs::{Tab, Tabs};
 
 const OUTPUT_EVERY_MS: i64 = 1_000;
 const TALLY_SAVE_EVERY_MS: i64 = 10_000;
@@ -150,6 +150,10 @@ struct TabPanel {
     hook_opened_ms: Option<i64>,
     started: bool,
     pr: Option<PrFacts>,
+}
+
+fn notes_file_of<T>(tab: &Tab<Pane<T>>) -> Option<&Path> {
+    tab.pane.agent.as_ref()?.run.notes_file.as_deref()
 }
 
 struct Loaded {
@@ -310,19 +314,28 @@ impl Host {
     }
 
     pub(crate) fn sync<T>(&mut self, tabs: &Tabs<Pane<T>>, ctx: &egui::Context) {
-        let live: Vec<(u64, PathBuf)> = tabs
-            .items()
-            .iter()
-            .filter_map(|tab| {
-                let notes = tab.pane.agent.as_ref()?.run.notes_file.as_deref()?;
-                Some((tab.id, panel_log_file_beside(notes)))
-            })
-            .collect();
-        self.tabs.retain(|id, _| live.iter().any(|(tab, _)| tab == id));
-        for (id, file) in live {
+        let logged = tabs.items().iter().filter(|tab| notes_file_of(tab).is_some());
+        let (live, unknown) = logged.fold((0, false), |(live, unknown), tab| {
+            (live + 1, unknown || !self.tabs.contains_key(&tab.id))
+        });
+        if unknown || live != self.tabs.len() {
+            self.sync_tabs(tabs, ctx);
+        }
+        self.drain_loaded();
+        self.drive_tally(ctx);
+    }
+
+    fn sync_tabs<T>(&mut self, tabs: &Tabs<Pane<T>>, ctx: &egui::Context) {
+        self.tabs.retain(|id, _| {
+            tabs.items().iter().any(|tab| tab.id == *id && notes_file_of(tab).is_some())
+        });
+        for tab in tabs.items() {
+            let id = tab.id;
+            let Some(notes) = notes_file_of(tab) else { continue };
             if self.tabs.contains_key(&id) {
                 continue;
             }
+            let file = panel_log_file_beside(notes);
             let mut panel = TabPanel {
                 file: file.clone(),
                 ready: None,
@@ -341,8 +354,6 @@ impl Host {
             }
             self.tabs.insert(id, panel);
         }
-        self.drain_loaded();
-        self.drive_tally(ctx);
     }
 
     fn drive_tally(&mut self, ctx: &egui::Context) {

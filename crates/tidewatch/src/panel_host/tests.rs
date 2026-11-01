@@ -358,6 +358,39 @@ fn a_pull_request_is_logged_when_it_changes_and_not_when_it_repeats() {
 }
 
 #[test]
+fn the_panels_follow_the_tabs_that_have_a_notes_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut tabs, first) = tabs_with_agent(&dir.path().join("a").join("notes.json"));
+    let mut host = memory_host();
+    let ctx = egui::Context::default();
+    host.sync(&tabs, &ctx);
+    let ids = |host: &Host| {
+        let mut ids: Vec<u64> = host.tabs.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(ids(&host), [first]);
+    let mut run = AgentRun::setting_up("claude".into(), 0.0);
+    run.started(Some(dir.path().join("b").join("notes.json")), 0.0);
+    let pane = Pane {
+        body: Body::Shell(2),
+        worktree: None,
+        agent: Some(AgentTab::new("Builder".into(), run)),
+    };
+    let second = tabs.push("calm-heron".into(), pane);
+    host.sync(&tabs, &ctx);
+    assert_eq!(ids(&host), [first, second]);
+    host.sync(&tabs, &ctx);
+    assert_eq!(ids(&host), [first, second]);
+    tabs.remove_id(first);
+    host.sync(&tabs, &ctx);
+    assert_eq!(ids(&host), [second]);
+    tabs.remove_id(second);
+    host.sync(&tabs, &ctx);
+    assert_eq!(ids(&host), Vec::<u64>::new());
+}
+
+#[test]
 fn a_hook_for_a_closed_tab_leaves_no_log_and_no_panic() {
     let mut host = memory_host();
     host.heard(&message(77, HookKind::TurnDone), 1_000);
