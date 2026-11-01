@@ -26,6 +26,7 @@ use tidewatch_core::worktree::{self, Leftover, Worktree};
 
 use crate::jobs::Jobs;
 use crate::pane::{OpenFailure, Opened, Started};
+use crate::prefs_save::update_in_background;
 use crate::session_save;
 
 pub(crate) enum Done {
@@ -111,19 +112,11 @@ fn run_startup(spec: &StartupSpec) -> Startup {
 /// Writes the restore switch to the settings file off the UI thread, leaving the rest of the file
 /// as it is on disk; a failure goes to stderr.
 pub(crate) fn save_restore_switch(paths: TidewatchPaths, on: bool) {
-    std::thread::spawn(move || {
-        if let Err(e) = Prefs::update(&paths, |prefs| prefs.restore_session = on) {
-            eprintln!("tidewatch: cannot save settings.toml: {e}");
-        }
-    });
+    update_in_background(paths, move |prefs| prefs.restore_session = on);
 }
 
 pub(crate) fn save_resume_agents(paths: TidewatchPaths, mode: ResumeAgents) {
-    std::thread::spawn(move || {
-        if let Err(e) = Prefs::update(&paths, |prefs| prefs.resume_agents = mode) {
-            eprintln!("tidewatch: cannot save settings.toml: {e}");
-        }
-    });
+    update_in_background(paths, move |prefs| prefs.resume_agents = mode);
 }
 
 pub(crate) struct ReopenSpec {

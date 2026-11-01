@@ -317,11 +317,7 @@ impl<O: Os> Shell<O> {
 
 /// Writes the window settings off the UI thread; a failure goes to stderr.
 pub(crate) fn save(paths: tidewatch_core::paths::TidewatchPaths, prefs: WindowPrefs) {
-    std::thread::spawn(move || {
-        if let Err(e) = tidewatch_core::prefs::Prefs::update(&paths, |p| p.window = prefs) {
-            eprintln!("tidewatch: cannot save settings.toml: {e}");
-        }
-    });
+    crate::prefs_save::update_in_background(paths, move |p| p.window = prefs);
 }
 
 /// Everything `main` settled before the window existed.

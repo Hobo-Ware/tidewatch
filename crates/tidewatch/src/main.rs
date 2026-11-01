@@ -176,6 +176,7 @@ mod pr_state;
 mod pr_strip;
 mod pr_timeline;
 mod pr_watch;
+mod prefs_save;
 mod profile_editor;
 mod profiles_view;
 mod progress_blocks;

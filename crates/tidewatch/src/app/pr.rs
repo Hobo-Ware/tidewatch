@@ -8,7 +8,7 @@ use tidewatch_core::job::JobBoard;
 use tidewatch_core::pr_ask;
 use tidewatch_core::pr_prompt::Trigger;
 use tidewatch_core::pr_status::{Body, Tone as PrTone};
-use tidewatch_core::prefs::{GithubPrefs, Prefs};
+use tidewatch_core::prefs::GithubPrefs;
 use tidewatch_core::sent::{Cap, Reason, Switch, because};
 
 use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
@@ -20,6 +20,7 @@ use crate::pane::Body as PaneBody;
 use crate::pr_card_model::{CardAction, is_web_url};
 use crate::pr_glue::Applied;
 use crate::pr_watch::{Facts, Out, STAYS, Watch};
+use crate::prefs_save::update_in_background;
 use crate::tidewatch_view::Click;
 use crate::worktree_jobs;
 use crate::{flow_glue, layout, pr_strip};
@@ -308,11 +309,7 @@ impl Tidewatch {
     pub(super) fn set_github_default(&mut self, prefs: GithubPrefs) {
         self.pr.set_default(prefs);
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.github = prefs) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.github = prefs);
         }
     }
 

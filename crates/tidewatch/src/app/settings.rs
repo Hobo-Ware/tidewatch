@@ -15,6 +15,7 @@ use crate::guards_view;
 use crate::login_item;
 use crate::macos;
 use crate::new_tab_prefs_view::ProfileOption;
+use crate::prefs_save::update_in_background;
 use crate::profiles_view::Probes;
 use crate::repo::Workspace;
 use crate::settings::{Section, Settings};
@@ -183,33 +184,21 @@ impl Tidewatch {
         self.parking.set_after(prefs.park_after);
         self.close_enter = prefs.close_enter;
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.tabs = prefs) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.tabs = prefs);
         }
     }
 
     pub(super) fn set_done_check(&mut self, enabled: bool) {
         self.done_check.set_enabled(enabled);
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.done_check.enabled = enabled) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.done_check.enabled = enabled);
         }
     }
 
     fn set_animate_emoji(&mut self, enabled: bool) {
         self.chat_prefs.animate_emoji = enabled;
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.chat.animate_emoji = enabled) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.chat.animate_emoji = enabled);
         }
     }
 
@@ -217,33 +206,21 @@ impl Tidewatch {
         self.terminal_prefs.copy_on_select = enabled;
         self.terminal_config.copy_on_select = enabled;
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.terminal.copy_on_select = enabled) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.terminal.copy_on_select = enabled);
         }
     }
 
     fn set_keep_awake(&mut self, enabled: bool) {
         self.keep_awake.set_enabled(enabled);
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.keep_awake.enabled = enabled) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.keep_awake.enabled = enabled);
         }
     }
 
     fn set_save_mode(&mut self, enabled: bool) {
         self.budget.set_enabled(enabled);
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.budget.save_mode = enabled) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.budget.save_mode = enabled);
         }
     }
 
@@ -251,22 +228,14 @@ impl Tidewatch {
         change.apply(&mut self.guards);
         if let Some(paths) = self.paths.clone() {
             let change = change.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| change.apply(&mut p.guards)) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| change.apply(&mut p.guards));
         }
     }
 
     fn set_new_tab_prefs(&mut self, prefs: NewTabPrefs) {
         self.new_tab_prefs = prefs.clone();
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.new_tab = prefs) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.new_tab = prefs);
         }
     }
 
