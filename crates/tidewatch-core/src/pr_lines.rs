@@ -10,6 +10,7 @@ use std::path::Path;
 
 use kelp_core::review::Side;
 
+use crate::branch_name::is_usable_ref;
 use crate::delivery::{compare_ref, detect_base};
 use crate::tools::Tools;
 
@@ -37,7 +38,7 @@ impl PrDiffLines {
 
     /// Reads the diff of `head` (a commit or branch) against the repository's base branch.
     pub fn load(tools: &Tools, dir: &Path, head: &str) -> Result<Self, String> {
-        if head.is_empty() || head.starts_with('-') {
+        if !is_usable_ref(head) {
             return Err(format!("{head:?} is not a usable commit"));
         }
         let base =

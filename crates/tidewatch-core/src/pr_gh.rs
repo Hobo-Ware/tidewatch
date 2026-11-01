@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::branch_name::is_usable_ref;
 use crate::pr::{self, PullRequest};
 use crate::pr_log;
 use crate::pr_status::{
@@ -134,7 +135,7 @@ pub fn rerun_failed(tools: &Tools, dir: &Path, run: u64) -> Result<(), GhError> 
 
 #[must_use]
 pub fn unpushed(tools: &Tools, dir: &Path, remote_head: &str) -> Option<(String, usize)> {
-    if remote_head.is_empty() || remote_head.starts_with('-') {
+    if !is_usable_ref(remote_head) {
         return None;
     }
     let git = |args: &[&str]| {

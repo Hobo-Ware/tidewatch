@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::branch_name::is_usable_ref;
 use crate::civil_date::Date;
 use crate::delivery::{compare_ref, detect_base};
 use crate::done_proof::{self, Findings, TestsRun, Verified};
@@ -502,7 +503,7 @@ fn look(input: &Input<'_>) -> Look {
     let target = match &input.pr {
         PrFact::None => return Look::Skipped,
         PrFact::Number(number) => number.to_string(),
-        PrFact::Unknown if input.branch.is_empty() || input.branch.starts_with('-') => {
+        PrFact::Unknown if !is_usable_ref(input.branch) => {
             return Look::Failed(GhError::Failed(format!(
                 "{:?} is not a usable branch name",
                 input.branch

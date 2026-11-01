@@ -140,6 +140,12 @@ impl Problem {
     }
 }
 
+/// Whether `name` is safe to hand to git as a branch or commit argument: not empty and not read as
+/// an option.
+pub(crate) fn is_usable_ref(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('-')
+}
+
 pub fn check(name: &str) -> Result<(), Problem> {
     if name.is_empty() {
         return Err(Problem::Empty);
@@ -187,6 +193,21 @@ pub fn next_free(name: &str, is_taken: impl Fn(&str) -> bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_usable_ref_is_not_empty_and_not_an_option() {
+        let cases = [
+            ("main", true),
+            ("feat/x", true),
+            ("a-b", true),
+            ("", false),
+            ("-x", false),
+            ("--force", false),
+        ];
+        for (name, want) in cases {
+            assert_eq!(is_usable_ref(name), want, "{name:?}");
+        }
+    }
 
     #[test]
     fn a_slug_keeps_the_first_words_that_say_something() {
