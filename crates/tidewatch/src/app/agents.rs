@@ -8,7 +8,7 @@ use tidewatch_core::panel_event::{ChecksWord, Fact, PrFacts, PrWord, Source};
 use tidewatch_core::pr_status::{State, Summary, SummaryChecks};
 use tidewatch_core::trust::TrustCli;
 
-use super::{ANIMATION_FRAME_MS, Tidewatch, WAKE_SLACK_S, wall_ms};
+use super::{ANIMATION_FRAME_MS, Tidewatch, wall_ms};
 use crate::agent_frame::{self, Follow, Rows, Wake};
 use crate::agent_jobs;
 use crate::agent_run::TermSnapshot;
@@ -18,6 +18,7 @@ use crate::pane_jobs;
 use crate::panel_host;
 use crate::prompt_ghost;
 use crate::tabs::Tabs;
+use crate::wake::{WAKE_SLACK_S, request_wake};
 
 impl Tidewatch {
     pub(super) fn apply_agent_done(&mut self, done: agent_jobs::Done, ctx: &egui::Context) {
@@ -215,11 +216,11 @@ impl Tidewatch {
         };
         let output = |term: &PtyTerm| term.output_gen();
         if let Some(at) = agent_frame::watch_links(&mut self.tabs, output, rows, now) {
-            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+            request_wake(ctx, (at - now).max(0.0));
         }
         let screen = |term: &PtyTerm| prompt_ghost::screen_of(&term.grid_snapshot());
         if let Some(at) = agent_frame::settle_restarts(&mut self.tabs, screen, now) {
-            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+            request_wake(ctx, (at - now).max(0.0));
         }
         schedule(ctx, polled.wake, now, minimized == Some(true));
     }
@@ -267,6 +268,6 @@ fn schedule(ctx: &egui::Context, wake: Wake, now: f64, minimized: bool) {
         ctx.request_repaint_after(Duration::from_millis(ANIMATION_FRAME_MS));
     }
     if let Some(at) = wake.next_change {
-        ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+        request_wake(ctx, (at - now).max(0.0));
     }
 }

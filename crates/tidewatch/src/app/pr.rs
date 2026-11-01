@@ -1,8 +1,6 @@
 //! The app's side of the PR cards: polling GitHub for each agent tab, card actions, the PR strip and
 //! the Overview and status bar pills.
 
-use std::time::Duration;
-
 use egui::{Rect, Ui};
 use tidewatch_core::job::JobBoard;
 use tidewatch_core::pr_ask;
@@ -11,7 +9,7 @@ use tidewatch_core::pr_status::{Body, Tone as PrTone};
 use tidewatch_core::prefs::GithubPrefs;
 use tidewatch_core::sent::{Cap, Reason, Switch, because};
 
-use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
+use super::{Tidewatch, wall_ms};
 use crate::merge_cleanup::Busy;
 use crate::notify::{self, Notification};
 use crate::outbox::{Offer, Origin, Send};
@@ -22,6 +20,7 @@ use crate::pr_glue::Applied;
 use crate::pr_watch::{Facts, Out, STAYS, Watch};
 use crate::prefs_save::update_in_background;
 use crate::tidewatch_view::Click;
+use crate::wake::request_wake;
 use crate::worktree_jobs;
 use crate::{flow_glue, layout, pr_strip};
 use tidewatch_core::worktree::{BranchChoice, RemoveMode, Terms, Why};
@@ -87,7 +86,7 @@ impl Tidewatch {
             self.push_left_over_commits(tab, ctx, now);
         }
         if let Some(at) = wake {
-            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+            request_wake(ctx, (at - now).max(0.0));
         }
     }
 

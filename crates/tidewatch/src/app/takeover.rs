@@ -8,7 +8,7 @@ use std::time::Duration;
 use tidewatch_core::agents::AgentTable;
 use tidewatch_core::prepare::Prepared;
 
-use super::{Tidewatch, WAKE_SLACK_S};
+use super::Tidewatch;
 use crate::catalog::Availability;
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
 use crate::restore_glue::Env as RunEnv;
@@ -20,6 +20,7 @@ use crate::takeover::{
 use crate::takeover_group::{Ident, group_roots};
 use crate::takeover_jobs::{self, Done, Landed, MoveJob, ScanSpec};
 use crate::takeover_view::{self, Card, DialogOutcome};
+use crate::wake::request_wake;
 
 const STDUSK_HINT: &str = "That session runs in stdusk. Use stdusk's Move tabs to Tidewatch: it moves the live terminal, nothing restarts.";
 
@@ -68,7 +69,7 @@ impl Tidewatch {
             self.start_takeover_scan(ctx);
         }
         if let Some(after) = self.takeover.next_scan_in(shown, now) {
-            ctx.request_repaint_after(Duration::from_secs_f64(after + WAKE_SLACK_S));
+            request_wake(ctx, after);
         }
     }
 

@@ -28,6 +28,7 @@ use crate::pr_glue;
 use crate::prompt_ghost;
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
+use crate::wake::request_wake;
 use tidewatch_core::status::AgentStatus;
 
 pub(crate) fn unix_now() -> i64 {
@@ -87,8 +88,6 @@ pub(crate) fn facts<T>(
         .collect()
 }
 
-const WAKE_SLACK_S: f64 = 0.02;
-
 /// Whether the agent's input box is free, read off Claude Code's screen. Other CLIs, a tab that is
 /// not at its prompt (a working one too, unless the send goes mid-turn) and a hand send are never
 /// held by the screen.
@@ -136,7 +135,7 @@ pub(crate) fn deliver(
     }
     flow.outbox.sent(tab, send, now);
     flow.queue_enter(tab, now);
-    ctx.request_repaint_after(Duration::from_secs_f64(ENTER_DELAY_SECS + WAKE_SLACK_S));
+    request_wake(ctx, ENTER_DELAY_SECS);
     true
 }
 
