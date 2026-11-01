@@ -20,13 +20,8 @@ use crate::worktree::{self, BranchChoice, RemoveMode, Terms, Why, Worktree};
 use crate::worktree_safety::Owner;
 
 fn changed_files(tools: &Tools, dir: &Path) -> Result<usize, String> {
-    let mut command = tools.git(dir);
-    command.args(["status", "--porcelain"]);
-    let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
-    if !out.success {
-        return Err(out.stderr.trim().to_owned());
-    }
-    Ok(out.stdout.lines().filter(|line| !line.trim().is_empty()).count())
+    let status = tools.git_stdout(dir, &["status", "--porcelain"])?;
+    Ok(status.lines().filter(|line| !line.trim().is_empty()).count())
 }
 
 fn clean(tools: &Tools, dir: &Path) -> Result<(), String> {
@@ -241,13 +236,8 @@ fn fetch_head(tools: &Tools, dir: &Path, head: &str) -> Result<(), String> {
 }
 
 fn lines_of(tools: &Tools, dir: &Path, args: &[&str]) -> Result<Vec<String>, String> {
-    let mut command = tools.git(dir);
-    command.args(args);
-    let out = tools.finish(command).map_err(|e| limited::failure("git", &e))?;
-    if !out.success {
-        return Err(out.stderr.trim().to_owned());
-    }
-    Ok(out.stdout.lines().map(str::to_owned).collect())
+    let out = tools.git_stdout(dir, args)?;
+    Ok(out.lines().map(str::to_owned).collect())
 }
 
 fn base_ref(tools: &Tools, dir: &Path) -> Option<String> {
