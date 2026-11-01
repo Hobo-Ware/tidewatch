@@ -12,6 +12,8 @@ use std::thread::JoinHandle;
 use kelp_core::review::{Anchor, Comment, Thread};
 use serde::{Deserialize, Serialize};
 
+use crate::fsutil::save_json_pretty;
+
 /// When a thread was sent to the agent, and how many comments it had then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sent {
@@ -98,15 +100,9 @@ impl Notes {
         }
     }
 
-    /// Writes a sibling temp file and renames it over the real one, so a crash never leaves half a
-    /// file.
+    /// Atomic, so a crash never leaves half a file.
     pub fn save(&self, file: &Path) -> std::io::Result<()> {
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = file.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?)?;
-        std::fs::rename(&tmp, file)
+        save_json_pretty(file, self)
     }
 
     pub fn add(
