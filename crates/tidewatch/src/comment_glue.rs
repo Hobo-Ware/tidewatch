@@ -16,7 +16,7 @@ use tidewatch_core::comment_sweep::{self, FileFlags};
 use tidewatch_core::guard_comments::{digest, records};
 use tidewatch_core::guard_ledger::{Ask, Reminders, ledger_says_working, modified_ms};
 use tidewatch_core::guards::{GuardPrefs, Rule};
-use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::paths::{TidewatchPaths, home_dir};
 use tidewatch_core::sent::{Reason, because};
 use tidewatch_core::status::AgentStatus;
 
@@ -114,7 +114,7 @@ impl Host {
         let fake = !fake_var.is_empty() && fake_var != "0" && !fake_yours;
         let popover =
             std::env::var("TIDEWATCH_DEV_COMMENT_POPOVER").is_ok_and(|v| !v.is_empty() && v != "0");
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let home = home_dir();
         Self { tabs: HashMap::new(), jobs: Jobs::new(), fake, fake_yours, popover, home, wall_ms }
     }
 

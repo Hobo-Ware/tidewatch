@@ -303,7 +303,7 @@ use tidewatch_core::claude_memory;
 use tidewatch_core::instance::Command;
 use tidewatch_core::last_workspace;
 use tidewatch_core::path_env;
-use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::paths::{TidewatchPaths, home_dir};
 use tidewatch_core::prefs::Prefs;
 use tidewatch_core::session::Session;
 use window_chrome::Desktop;
@@ -321,7 +321,7 @@ fn main() -> eframe::Result<()> {
         std::process::exit(guard::run(&std::env::args_os().skip(2).collect::<Vec<_>>()));
     }
     let args = cli::parse(std::env::args_os().skip(1));
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = home_dir();
     let isolated = std::env::var_os("TIDEWATCH_HOME").is_some();
     let data_home = std::env::var_os("TIDEWATCH_HOME").map(PathBuf::from).or_else(|| home.clone());
     let claude_dir = home

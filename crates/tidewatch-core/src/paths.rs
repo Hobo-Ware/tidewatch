@@ -21,6 +21,12 @@ const PANEL_LOG_FILE: &str = "panel-log.jsonl";
 const REPLY_HISTORY_FILE: &str = "reply-history.json";
 const REPLY_DRAFT_FILE: &str = "reply-draft.json";
 
+/// The `HOME` folder; `None` when unset, an empty `HOME` stays `Some("")`.
+#[must_use]
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 /// The ledger file that sits next to a tab's `notes.json`.
 #[must_use]
 pub fn progress_file_beside(notes_file: &Path) -> PathBuf {
@@ -628,6 +634,11 @@ mod tests {
         assert_eq!(socket.parent(), Some(paths.instance_dir().as_path()));
         assert!(paths.instance_dir().starts_with(paths.state_dir()));
         assert!(socket.extension().is_some_and(|ext| ext == "sock"));
+    }
+
+    #[test]
+    fn home_dir_is_the_home_variable_as_it_stands() {
+        assert_eq!(home_dir(), std::env::var_os("HOME").map(PathBuf::from));
     }
 
     #[test]

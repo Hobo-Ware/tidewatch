@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use egui::{Align2, CornerRadius, Rect, ScrollArea, Sense, Ui, UiBuilder, pos2, vec2};
 use tidewatch_core::folder_repos::{self, FolderRepo, MAX_RECENT, Scan};
+use tidewatch_core::paths::home_dir;
 
 use crate::brand;
 use crate::changes_view::{self, ROW_H};
@@ -136,8 +137,7 @@ pub(crate) fn folder_name(folder: &Path) -> String {
 
 /// The folder's path with the home folder as `~`.
 pub(crate) fn folder_title(folder: &Path) -> String {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    folder_repos::tilde(folder, home.as_deref())
+    folder_repos::tilde(folder, home_dir().as_deref())
 }
 
 /// The plain folder view under the header.

@@ -243,7 +243,7 @@ const LONG: &str = "/Users/dev/.config/tidewatch/projects/acme-web/worktrees/hou
 
 #[test]
 fn a_path_stays_on_one_line_with_its_file_name_and_the_home_folder_as_a_tilde() {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let home = tidewatch_core::paths::home_dir();
     let under_home = home.as_ref().map(|home| home.join(".config/tidewatch/house-style.md"));
     if let Some(path) = under_home {
         assert_eq!(shown_path(&path.display().to_string()), "~/.config/tidewatch/house-style.md");
