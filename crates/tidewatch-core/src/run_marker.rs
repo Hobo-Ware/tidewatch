@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{remove_file_if_present, write_atomic};
 use crate::paths::TidewatchPaths;
 
 /// A run that crashed this soon after it started, found by a launch this soon after that start, is
@@ -40,9 +40,7 @@ fn started_at(marker: &str) -> Option<u64> {
 }
 
 fn end_at(file: &Path) {
-    if let Err(e) = std::fs::remove_file(file)
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
+    if let Err(e) = remove_file_if_present(file) {
         eprintln!("tidewatch: cannot remove {} ({e})", file.display());
     }
 }

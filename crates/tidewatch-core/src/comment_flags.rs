@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::fsutil::remove_file_if_present;
+
 const FLAGS_FILE: &str = "comment-flags.jsonl";
 const SWEPT_FILE: &str = "comment-guard-swept";
 const OFF_FILE: &str = "comment-guard-off";
@@ -62,10 +64,7 @@ impl TabFiles {
             std::fs::create_dir_all(&self.dir)?;
             std::fs::write(file, "")
         } else {
-            match std::fs::remove_file(file) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-                _ => Ok(()),
-            }
+            remove_file_if_present(file)
         }
     }
 
@@ -85,10 +84,7 @@ impl TabFiles {
                 std::fs::create_dir_all(&self.dir)?;
                 std::fs::write(file, name)
             }
-            None => match std::fs::remove_file(file) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-                _ => Ok(()),
-            },
+            None => remove_file_if_present(file),
         }
     }
 
@@ -148,10 +144,7 @@ impl TabFiles {
                 std::fs::create_dir_all(&self.dir)?;
                 std::fs::write(file, digest)
             }
-            None => match std::fs::remove_file(file) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-                _ => Ok(()),
-            },
+            None => remove_file_if_present(file),
         }
     }
 }
