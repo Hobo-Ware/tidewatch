@@ -1,6 +1,8 @@
 //! RFC 3339 timestamps to unix milliseconds, for the timestamps GitHub and the agent CLIs write.
 //! Pure arithmetic, no time zone database and no calendar crate.
 
+use crate::civil_date::days_from_civil;
+
 /// `2026-10-12T23:03:55.696Z` or `2024-02-29T12:00:00+02:00` as milliseconds since 1970-01-01 UTC.
 /// `None` for anything else.
 pub(crate) fn unix_millis(text: &str) -> Option<i64> {
@@ -47,16 +49,6 @@ fn split_offset(rest: &str) -> Option<(&str, i64)> {
     let sign = if offset.starts_with('-') { -1 } else { 1 };
     let (hours, minutes) = offset[1..].split_once(':')?;
     Some((clock, sign * (number(hours)? * 3600 + number(minutes)? * 60)))
-}
-
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let month_from_march = if month > 2 { month - 3 } else { month + 9 };
-    let day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
 }
 
 #[cfg(test)]
