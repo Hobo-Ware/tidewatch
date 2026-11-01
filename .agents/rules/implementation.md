@@ -65,6 +65,19 @@ toml::from_str(&s).unwrap_or_else(|e| {
 mid-lock), and a poisoned terminal state is unrecoverable here. Leave a one-line
 `// poisoned => reader thread died; nothing to recover` at the first such site.
 
+## Shared helpers - reach for these before writing a new copy
+
+- Time and text (core): `clock::now_ms` / `now_secs`, `text::squash` / `plural` / `clip`,
+  `civil_date::days_from_civil`.
+- Files (core `fsutil`): `write_atomic`, `write_private_atomic` (0600), `load_toml_or_default`,
+  `save_toml[_pretty]`, `read_json`, `save_json[_pretty]`, `remove_file_if_present`;
+  `coalescing_writer::CoalescingWriter` for a save that runs off the UI thread.
+- Paths and git (core): `paths::home_dir`, `folder_repos::tilde`, `branch_name::is_usable_ref`,
+  `Tools::git_stdout`, `mcp::problems_error` for an MCP tool error.
+- App: `Tabs::get` / `agent` / `agent_mut`, `prefs_save::update_in_background`,
+  `wake::request_wake`, `reader_view::ellipsized`, core `panel_view::Tone` for a status tone.
+- Tests: app `test_support` (painted-text walkers, `git`), core `tests/common` (`git_checked`).
+
 ## Ground work in real behavior, not assumptions
 
 **Before implementing against an external tool / library / OS API, VERIFY its real behavior.**
