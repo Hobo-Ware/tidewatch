@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use crate::branch_name::is_usable_ref;
 use crate::delivery::{self, Ahead};
 use crate::github_link::GithubRepo;
 use crate::history;
@@ -222,7 +223,7 @@ fn view(tools: &Tools, dir: &Path, pr: &PullRequest) -> Result<Option<Seen>, Str
 }
 
 fn fetch_head(tools: &Tools, dir: &Path, head: &str) -> Result<(), String> {
-    if head.is_empty() || head.starts_with('-') {
+    if !is_usable_ref(head) {
         return Err(format!("the pull request has no usable branch ({head:?})"));
     }
     let mut command = tools.git(dir);

@@ -17,6 +17,7 @@ use std::path::Path;
 use kelp_core::review::{Anchor, Comment, Side};
 use serde_json::Value;
 
+use crate::branch_name::is_usable_ref;
 use crate::notes::Notes;
 use crate::rfc3339;
 use crate::tools::{GhError, Tools, run_gh};
@@ -91,7 +92,7 @@ pub struct MergeReport {
 /// The open pull request whose head is `branch`, or `None` when there is none (a merged or closed
 /// one does not count). Blocks on the network.
 pub fn find_open(tools: &Tools, dir: &Path, branch: &str) -> Result<Option<PullRequest>, GhError> {
-    if branch.is_empty() || branch.starts_with('-') {
+    if !is_usable_ref(branch) {
         return Err(GhError::Failed(format!("{branch:?} is not a usable branch name")));
     }
     let args = ["pr", "view", branch, "--json", "number,url,state,headRefOid"];
