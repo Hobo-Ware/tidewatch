@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::agents::AgentTable;
 use crate::elsewhere_flags::{Flags, basename, parse_command_line};
+use crate::text::squash;
 use crate::transcript::Source;
 
 const ANCESTOR_LIMIT: usize = 64;
@@ -70,7 +71,7 @@ impl ProcessRow {
 /// `Thu Oct  8 21:57:15 2026` and `Thu Oct 8 21:57:15 2026` are the same time.
 #[must_use]
 pub fn normalize_start(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    squash(text)
 }
 
 #[must_use]

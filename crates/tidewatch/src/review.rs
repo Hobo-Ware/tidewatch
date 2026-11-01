@@ -4,6 +4,7 @@
 //! derived from the notes file, so nothing here is stored.
 
 use tidewatch_core::notes::{NoteState, Notes, line_suffix};
+use tidewatch_core::text::squash;
 
 use crate::note_send::ReviewGate;
 
@@ -126,7 +127,7 @@ pub(crate) fn plural(count: usize, word: &str) -> String {
 }
 
 fn cut(body: &str) -> String {
-    let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = squash(body);
     if text.chars().count() <= TEXT_MAX {
         return text;
     }

@@ -1,6 +1,7 @@
 //! A long job of one tab: what a script, the agent or the terminal reported about it, and what
 //! follows (rate, ETA, stalled). Reports from every source merge by job name. Pure.
 
+use crate::text::squash;
 use serde::{Deserialize, Serialize};
 
 pub const STALL_AFTER_MS: i64 = 5 * 60 * 1000;
@@ -120,7 +121,7 @@ impl Report {
 }
 
 fn one_line(text: &str, max: usize) -> String {
-    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let joined = squash(text);
     joined.chars().take(max).collect()
 }
 

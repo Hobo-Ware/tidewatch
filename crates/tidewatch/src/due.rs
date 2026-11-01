@@ -8,6 +8,7 @@ use tidewatch_core::civil_date::Date;
 use tidewatch_core::due_asked;
 use tidewatch_core::progress::{Ledger, Mark};
 use tidewatch_core::status::AgentStatus;
+use tidewatch_core::text::squash;
 
 use crate::coming_up::{Group, Row};
 use crate::note_send::{ReviewGate, review_gate};
@@ -86,7 +87,7 @@ pub(crate) fn due_items(
 
 fn one_line(text: &str) -> String {
     let line: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
-    let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = squash(&line);
     if line.chars().count() <= STEP_CHARS {
         line
     } else {

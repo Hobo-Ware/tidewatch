@@ -2,6 +2,7 @@
 
 use stdusk_egui::ui::ellipsize;
 use tidewatch_core::branch_name;
+use tidewatch_core::text::squash;
 use tidewatch_core::user_markup::without_image_markers;
 
 use crate::pane::AgentTab;
@@ -95,7 +96,7 @@ pub(crate) fn subtitle(agent: Option<&AgentTab>, name: &str) -> String {
 
 /// A task as one line of at most 300 characters. `None` for an empty one.
 pub(crate) fn task_line(task: &str) -> Option<String> {
-    let line = task.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = squash(task);
     (!line.is_empty()).then(|| ellipsize(&line, MAX_TASK_CHARS).0)
 }
 
@@ -107,7 +108,7 @@ pub(crate) fn tidy(text: &str) -> Option<String> {
     let line = line.replace("**", "");
     let line =
         line.trim_start_matches(|c: char| matches!(c, '#' | '>' | '-' | '*') || c.is_whitespace());
-    let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = squash(line);
     (line.chars().filter(|c| c.is_alphanumeric()).count() >= MIN_LETTERS)
         .then(|| ellipsize(&line, MAX_CHARS).0)
 }

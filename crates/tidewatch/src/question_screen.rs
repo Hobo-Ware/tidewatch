@@ -40,7 +40,7 @@ fn squash(text: &str) -> String {
         .filter(|c| !NOISE.contains(c))
         .map(|c| if SIDES.contains(&c) { ' ' } else { c })
         .collect();
-    plain.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    tidewatch_core::text::squash(&plain).to_lowercase()
 }
 
 fn label_prefix(label: &str) -> String {

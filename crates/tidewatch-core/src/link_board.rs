@@ -1,6 +1,7 @@
 //! The links of one tab as plain data (pure, table-tested): what an agent reports, what Tidewatch
 //! finds in the chat or the tab's pull request, merged by URL into one board that only ever grows.
 
+use crate::text::squash;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_TITLE_CHARS: usize = 120;
@@ -335,7 +336,7 @@ pub fn kind_of(url: &str) -> Kind {
 /// `text` as one line cut to `max` characters, or `None` when nothing is left.
 #[must_use]
 pub fn one_line(text: &str, max: usize) -> Option<String> {
-    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = squash(text);
     if line.is_empty() {
         return None;
     }

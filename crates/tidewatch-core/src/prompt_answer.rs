@@ -3,6 +3,7 @@
 
 use crate::progress::{Ledger, Mark, real};
 use crate::progress_mcp::UPDATE_TOOL;
+use crate::text::squash;
 
 const NAMED_ITEMS: usize = 3;
 const NAME_CHARS: usize = 60;
@@ -20,7 +21,7 @@ fn open_items(ledger: &Ledger) -> Vec<String> {
 }
 
 fn short_name(text: &str) -> String {
-    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let one_line = squash(text);
     if one_line.chars().count() <= NAME_CHARS {
         return one_line;
     }
