@@ -207,6 +207,11 @@ impl EnterQueue {
     pub(crate) fn forget(&mut self, tab: u64) {
         self.waiting.retain(|waiting| waiting.tab != tab);
     }
+
+    /// Whether a paste in this tab still waits for its Enter.
+    pub(crate) fn pending(&self, tab: u64) -> bool {
+        self.waiting.iter().any(|waiting| waiting.tab == tab)
+    }
 }
 
 #[cfg(test)]
