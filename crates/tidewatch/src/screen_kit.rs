@@ -126,13 +126,9 @@ pub(crate) fn paint_face_line(painter: &Painter, rect: Rect, line: &FaceLine) ->
     let detail = painter.layout_no_wrap(line.detail.to_owned(), body(TEXT_TAG), line.detail_ink);
     let (name_room, detail_room) =
         face_line_room((right - left).max(0.0), name.size().x, detail.size().x, line.detail_share);
-    let cut = |text: &str, font: FontId, ink: Color32, room: f32| {
-        let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, ink);
-        job.wrap = egui::text::TextWrapping::truncate_at_width(room.max(1.0));
-        painter.layout_job(job)
-    };
-    let name = cut(line.name, body(TEXT_BODY), line.name_ink, name_room);
-    let detail = cut(
+    let name = ellipsized(painter, line.name, body(TEXT_BODY), line.name_ink, name_room);
+    let detail = ellipsized(
+        painter,
         if detail_room > 0.0 { line.detail } else { "" },
         body(TEXT_TAG),
         line.detail_ink,
