@@ -8,6 +8,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::transcript_locate::claude_project_dir_name;
+
 const MAX_NAME_UTF16: usize = 200;
 
 /// Claude Code's config folder: `CLAUDE_CONFIG_DIR` when set, else `~/.claude`.
@@ -20,14 +22,7 @@ pub fn config_dir(home: &Path, var: Option<OsString>) -> PathBuf {
 /// Claude Code counts UTF-16 units, so one character outside the BMP is two dashes.
 #[must_use]
 pub fn project_dir_name(path: &Path) -> Option<String> {
-    let name: String = path
-        .to_string_lossy()
-        .encode_utf16()
-        .map(|unit| match u8::try_from(unit) {
-            Ok(byte) if byte.is_ascii_alphanumeric() => char::from(byte),
-            _ => '-',
-        })
-        .collect();
+    let name = claude_project_dir_name(path);
     (name.len() <= MAX_NAME_UTF16).then_some(name)
 }
 
