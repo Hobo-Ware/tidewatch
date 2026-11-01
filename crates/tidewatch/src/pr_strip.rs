@@ -25,6 +25,8 @@ const TITLE_MAX_W: f32 = 300.0;
 const GAP: f32 = 8.0;
 const CHEVRON_ROOM: f32 = 12.0;
 const POPOVER_W: f32 = 420.0;
+/// A merged or closed pull request's strip goes this long after GitHub's merge or close time.
+const ENDED_STRIP_MS: i64 = 60 * 60 * 1000;
 
 pub(crate) struct Strip<'a> {
     pub(crate) summary: &'a Summary,
@@ -95,6 +97,17 @@ pub(crate) fn pills(summary: &Summary) -> Vec<Pill> {
         add(&format!("{} {noun}", summary.comments), Tone::Quiet);
     }
     pills
+}
+
+/// Open pull requests always have a strip. A merged or closed one keeps it for an hour after GitHub's
+/// merge or close time, and loses it when that time is unknown.
+pub(crate) fn shows(state: State, ended_at_ms: Option<i64>, now_ms: i64) -> bool {
+    match state {
+        State::Open => true,
+        State::Merged | State::Closed => {
+            ended_at_ms.is_some_and(|ended| now_ms - ended < ENDED_STRIP_MS)
+        }
+    }
 }
 
 pub(crate) fn mode_label(mode: PrMode) -> &'static str {

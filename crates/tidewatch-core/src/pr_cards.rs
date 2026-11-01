@@ -111,6 +111,16 @@ impl Cards {
             .is_some_and(|card| matches!(card.body, Body::Merged { .. }))
     }
 
+    /// GitHub's merge or close time: the latest card that ended the pull request keeps it.
+    #[must_use]
+    pub fn ended_at_ms(&self) -> Option<i64> {
+        self.items
+            .iter()
+            .rev()
+            .find(|card| matches!(card.body, Body::Merged { .. } | Body::Closed { .. }))
+            .map(|card| card.at_ms)
+    }
+
     pub fn add(&mut self, at_ms: i64, body: Body) -> u64 {
         match &body {
             Body::ChecksRunning { .. } => {
@@ -316,6 +326,17 @@ mod tests {
         cards.add(11, Body::PushFix { commits: 1, head: "x".into() });
         cards.add(20, Body::Merged { number: 1, base: "main".into() });
         assert_eq!(kinds(&cards), ["merged"]);
+    }
+
+    #[test]
+    fn the_end_time_is_the_latest_merge_or_close_card_and_none_before_one() {
+        let mut cards = Cards::default();
+        cards.add(10, opened());
+        assert_eq!(cards.ended_at_ms(), None);
+        cards.add(20, Body::Closed { number: 1 });
+        assert_eq!(cards.ended_at_ms(), Some(20));
+        cards.add(30, Body::Merged { number: 1, base: "main".into() });
+        assert_eq!(cards.ended_at_ms(), Some(30));
     }
 
     #[test]
