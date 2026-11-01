@@ -10,7 +10,7 @@ use crate::job::{self, JobBoard};
 use crate::link_board::LinkBoard;
 use crate::panel_event::{AskKind, Event, Fact, GitFacts, PrFacts, PrWord, Source, StepBy};
 use crate::panel_limits::limit;
-use crate::panel_rules::{Live, ReportDigest, ago};
+use crate::panel_rules::{Live, ReportDigest};
 use crate::panel_view::{Age, Ages, Asking, PanelView, Quiet, ReportMark, Revs, Tone, Turn, Why};
 use crate::progress::State;
 use crate::status::{
@@ -582,7 +582,7 @@ impl PanelState {
         let (reported, report) = self.standing(&status, asked, now);
         PanelView {
             tone: Tone::shown(&status, reported),
-            ages: self.ages(now),
+            ages: self.ages(),
             quiet: self.quiet(now),
             since: self.since.total(),
             answers: u32::try_from(self.answered.len()).unwrap_or(u32::MAX),
@@ -597,8 +597,8 @@ impl PanelState {
         }
     }
 
-    fn ages(&self, now: i64) -> Ages {
-        let age = |at: Option<i64>| at.map(|at_ms| Age { at_ms, text: ago(now, at_ms) });
+    fn ages(&self) -> Ages {
+        let age = |at: Option<i64>| at.map(|at_ms| Age { at_ms });
         let spoke = |source| self.last_by_source.get(&source).copied();
         let turn_at = if self.turn.running { self.turn.started_ms } else { self.turn.ended_ms };
         Ages {

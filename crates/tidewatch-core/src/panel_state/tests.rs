@@ -224,7 +224,7 @@ fn events_are_ordered_by_number_and_a_clock_that_goes_backward_never_reorders() 
         Turn { running: true, started_ms: Some(100_000), ended_ms: Some(100_000) }
     );
     assert_eq!(tape.state.clock_ms(), 100_000);
-    assert_eq!(view.ages.turn.map(|age| age.text), Some("just now".to_owned()));
+    assert_eq!(view.ages.turn, Some(Age { at_ms: 100_000 }));
     let seqs: Vec<u64> = tape.log.events().iter().map(|event| event.seq).collect();
     assert_eq!(seqs, [1, 2, 3, 4]);
 }

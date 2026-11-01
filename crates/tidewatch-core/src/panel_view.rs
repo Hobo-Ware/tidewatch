@@ -91,11 +91,10 @@ pub enum ReportMark {
     OutOfDate(Why),
 }
 
-/// A block's last update and how long ago that was.
+/// When a block was last updated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Age {
     pub at_ms: i64,
-    pub text: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
