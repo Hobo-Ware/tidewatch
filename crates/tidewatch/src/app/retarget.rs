@@ -101,7 +101,7 @@ impl Tidewatch {
     }
 
     fn tab_label(&self, id: u64) -> String {
-        self.tabs.items().iter().find(|tab| tab.id == id).map_or_else(String::new, |tab| {
+        self.tabs.get(id).map_or_else(String::new, |tab| {
             crate::tab_title::label(tab.pane.agent.as_ref(), &tab.title)
         })
     }
@@ -156,7 +156,7 @@ impl Tidewatch {
     }
 
     fn subject_of(&self, id: u64) -> Option<Subject> {
-        let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
+        let tab = self.tabs.get(id)?;
         let shell_pid = match &tab.pane.body {
             Body::Shell(term) => live_pid(&tab.pane).or_else(|| term.shell_pid()),
             _ => None,
@@ -209,7 +209,7 @@ impl Tidewatch {
     }
 
     fn look_key(&self, id: u64) -> Option<LookKey> {
-        let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
+        let tab = self.tabs.get(id)?;
         let own = self.tab_dir(tab);
         if let Some(found) = self.retarget.agents.found(id) {
             let cwd = Some(found.cwd.clone()).filter(|cwd| !cwd.as_os_str().is_empty());
@@ -230,7 +230,7 @@ impl Tidewatch {
     }
 
     fn goes_of(&self, id: u64, found_cwd: Option<&std::path::Path>) -> Goes {
-        let Some(tab) = self.tabs.items().iter().find(|tab| tab.id == id) else {
+        let Some(tab) = self.tabs.get(id) else {
             return Goes::Stays;
         };
         let own = self.tab_dir(tab);
@@ -277,7 +277,7 @@ impl Tidewatch {
     }
 
     pub(super) fn change_facts(&self, id: u64) -> Option<Facts> {
-        let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
+        let tab = self.tabs.get(id)?;
         let agent = tab.pane.agent.as_ref();
         let name_of = |cli: &str| {
             self.catalog.agent(cli).map_or_else(|| cli.to_owned(), |agent| agent.name.clone())
@@ -450,8 +450,7 @@ impl Tidewatch {
                     }
                     self.swap_to_agent(*opened, now, ctx);
                     if let Some(note) = base_note
-                        && let Some(agent) =
-                            self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut())
+                        && let Some(agent) = self.tabs.agent_mut(id)
                     {
                         agent.base_note = Some(note);
                     }
@@ -473,7 +472,7 @@ impl Tidewatch {
     }
 
     fn follow_to_group(&mut self, id: u64, landing: &Landing, ctx: &egui::Context) {
-        let Some(tab) = self.tabs.items().iter().find(|tab| tab.id == id) else { return };
+        let Some(tab) = self.tabs.get(id) else { return };
         if tab.pinned || same_folder(&landing.repo, self.workspaces[tab.group].dir()) {
             return;
         }

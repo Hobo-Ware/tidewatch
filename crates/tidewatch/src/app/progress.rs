@@ -133,12 +133,8 @@ impl Tidewatch {
                 }
             }
             agent_avatar::Choice::UseLetter => {
-                let notes = self
-                    .tabs
-                    .items()
-                    .iter()
-                    .find(|t| t.id == tab)
-                    .and_then(|t| t.pane.agent.as_ref()?.run.notes_file.clone());
+                let notes =
+                    self.tabs.get(tab).and_then(|t| t.pane.agent.as_ref()?.run.notes_file.clone());
                 if let Some(notes) = notes {
                     self.avatar_live.clear(tab, &notes, ctx);
                 }
@@ -147,7 +143,7 @@ impl Tidewatch {
     }
 
     fn notes_of(&self, tab: u64) -> Option<std::path::PathBuf> {
-        self.tabs.items().iter().find(|t| t.id == tab)?.pane.agent.as_ref()?.run.notes_file.clone()
+        self.tabs.agent(tab)?.run.notes_file.clone()
     }
 
     fn remember_avatar_ask(&mut self, tab: u64, ctx: &egui::Context) {
@@ -160,12 +156,7 @@ impl Tidewatch {
         if let Some(fake) = self.job_live.fake_agent() {
             return fake;
         }
-        self.tabs
-            .items()
-            .iter()
-            .find(|candidate| candidate.id == tab)
-            .and_then(|candidate| candidate.pane.agent.as_ref())
-            .map_or(Agent::Working, |agent| agent_of(agent.run.shown_tone()))
+        self.tabs.agent(tab).map_or(Agent::Working, |agent| agent_of(agent.run.shown_tone()))
     }
 
     pub(super) fn drive_jobs(&mut self, ctx: &egui::Context) {
@@ -285,7 +276,7 @@ impl Tidewatch {
     }
 
     fn due_items_of(&self, id: u64) -> Vec<Due> {
-        let tab = self.tabs.items().iter().find(|tab| tab.id == id);
+        let tab = self.tabs.get(id);
         let (Some(worktree), Some(known)) =
             (tab.and_then(|tab| tab.pane.worktree.as_ref()), self.progress.ledger(id))
         else {
@@ -320,7 +311,7 @@ impl Tidewatch {
     }
 
     fn due_key(&self, tab: u64, what: &str) -> Option<Key> {
-        let worktree = self.tabs.items().iter().find(|t| t.id == tab)?.pane.worktree.as_ref()?;
+        let worktree = self.tabs.get(tab)?.pane.worktree.as_ref()?;
         Some(Key::new(&worktree.repo, worktree.name(), what))
     }
 
@@ -333,13 +324,7 @@ impl Tidewatch {
         ctx: &egui::Context,
         now: f64,
     ) -> bool {
-        let status = self
-            .tabs
-            .items()
-            .iter()
-            .find(|t| t.id == tab)
-            .and_then(|t| t.pane.agent.as_ref())
-            .map(|agent| agent.run.status().clone());
+        let status = self.tabs.agent(tab).map(|agent| agent.run.status().clone());
         if let Some(reason) = ask_blocked(status.as_ref()) {
             self.show_toast(reason, ctx);
             return false;
@@ -376,13 +361,7 @@ impl Tidewatch {
             .map(|tab| tab.id)
             .collect();
         for id in ids {
-            let status = self
-                .tabs
-                .items()
-                .iter()
-                .find(|t| t.id == id)
-                .and_then(|t| t.pane.agent.as_ref())
-                .map(|agent| agent.run.status().clone());
+            let status = self.tabs.agent(id).map(|agent| agent.run.status().clone());
             if ask_blocked(status.as_ref()).is_some() {
                 continue;
             }
@@ -507,7 +486,7 @@ impl Tidewatch {
             let reported = self.panel.reported(id, now_ms, || {
                 ledger.map(|known| (known.updated_ms, ReportDigest::of(&known.ledger)))
             });
-            if let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut()) {
+            if let Some(agent) = self.tabs.agent_mut(id) {
                 agent.run.set_reported(reported);
             }
         }
@@ -556,7 +535,7 @@ impl Tidewatch {
 
     /// The Answer button: the Reader in front, its reply box asking for the keyboard.
     pub(super) fn open_reply_box_of(&mut self, tab: u64) {
-        if let Some(agent) = self.tabs.get_mut(tab).and_then(|found| found.pane.agent.as_mut()) {
+        if let Some(agent) = self.tabs.agent_mut(tab) {
             agent.reader.set_wants_reader(true);
             agent.reader.view.request_reply_focus();
         }
@@ -630,13 +609,7 @@ impl Tidewatch {
     }
 
     fn send_ready_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) -> bool {
-        let shut = self
-            .tabs
-            .items()
-            .iter()
-            .find(|found| found.id == tab)
-            .and_then(|found| found.pane.agent.as_ref())
-            .and_then(reader_glue::answer_blocked);
+        let shut = self.tabs.agent(tab).and_then(reader_glue::answer_blocked);
         if let Some(reason) = shut {
             self.show_toast(reason, ctx);
             return false;

@@ -174,6 +174,16 @@ pub(crate) enum ClosePolicy {
     Wait,
 }
 
+impl<T> Tabs<Pane<T>> {
+    pub(crate) fn agent(&self, id: u64) -> Option<&AgentTab> {
+        self.get(id)?.pane.agent.as_ref()
+    }
+
+    pub(crate) fn agent_mut(&mut self, id: u64) -> Option<&mut AgentTab> {
+        self.get_mut(id)?.pane.agent.as_mut()
+    }
+}
+
 impl<T> Pane<T> {
     pub(crate) fn shell(shell: T) -> Self {
         Self { body: Body::Shell(shell), worktree: None, agent: None }
@@ -468,6 +478,19 @@ mod tests {
         assert_eq!(tab.title, "Builder");
         assert_eq!(tab.pane.worktree, None);
         assert_eq!(tab.pane.close_policy(), ClosePolicy::Now);
+    }
+
+    #[test]
+    fn agent_lookups_find_the_agent_of_a_tab_and_nothing_for_a_shell_or_an_unknown_id() {
+        let mut tabs = Tabs::new(Pane::shell(0));
+        let shell = tabs.items()[0].id;
+        let agent = tabs
+            .push("Builder".into(), Pane::creating_agent("Builder".into(), "claude".into(), 0.0));
+        assert_eq!(tabs.agent(agent).map(|a| a.profile_name.as_str()), Some("Builder"));
+        assert_eq!(tabs.agent_mut(agent).map(|a| a.profile_name.clone()), Some("Builder".into()));
+        assert_eq!(tabs.agent(shell).map(|a| a.profile_name.as_str()), None);
+        assert_eq!(tabs.agent_mut(shell).map(|a| a.profile_name.clone()), None);
+        assert_eq!(tabs.agent(agent + 100).map(|a| a.profile_name.as_str()), None);
     }
 
     #[test]

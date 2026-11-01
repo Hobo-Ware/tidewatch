@@ -107,7 +107,7 @@ impl Tidewatch {
             return;
         }
         if what.split(',').any(|part| part.trim() == "rows")
-            && let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut())
+            && let Some(agent) = self.tabs.agent_mut(id)
         {
             crate::dev_see::seed(&mut agent.reader.rows, super::wall_ms() as i64);
             agent.reader.dev_found();
@@ -126,7 +126,7 @@ impl Tidewatch {
             self.dev_draft = Some(draft);
             return;
         };
-        let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut()) else {
+        let Some(agent) = self.tabs.agent_mut(id) else {
             return;
         };
         draft.text.clone_into(&mut agent.reader.view.reply);

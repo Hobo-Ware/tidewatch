@@ -32,7 +32,7 @@ impl Tidewatch {
         if let Some(index) = self.tabs.index_of(id) {
             self.dispatch(Action::Select(index), ctx);
         }
-        if let Some(agent) = self.tabs.get_mut(id).and_then(|tab| tab.pane.agent.as_mut()) {
+        if let Some(agent) = self.tabs.agent_mut(id) {
             agent.reader.set_wants_reader(true);
         }
         if let Some(view) = self.views.get_mut(&id) {

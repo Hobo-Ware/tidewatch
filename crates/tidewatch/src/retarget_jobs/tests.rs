@@ -292,7 +292,7 @@ fn a_shell_tab_with_a_session_becomes_an_agent_tab_that_resumes_it_at_the_level_
     let done = run_retarget(&system, &env(&w), &request(&w, builder(None), false));
     assert_eq!(*system.sent.borrow(), [AGENT], "only the agent is signalled, never the shell");
     let (tabs, id, lines) = spawned(done, &w);
-    let tab = tabs.items().iter().find(|tab| tab.id == id).unwrap();
+    let tab = tabs.get(id).unwrap();
     assert!(matches!(tab.pane.body, Body::Shell(1)), "the agent runs in the tab's pty");
     assert_eq!(tab.pane.worktree.as_ref(), Some(&w.worktree));
     let agent = tab.pane.agent.as_ref().expect("an agent tab now");
@@ -310,7 +310,7 @@ fn another_profile_and_level_resume_the_same_session_in_the_same_tab() {
     let target = Target::Agent { profile: "reviewer".into(), level: Some(Level::Plan) };
     let done = run_retarget(&Fake::new(&ps()), &env(&w), &request(&w, target, false));
     let (tabs, id, lines) = spawned(done, &w);
-    let tab = tabs.items().iter().find(|tab| tab.id == id).unwrap();
+    let tab = tabs.get(id).unwrap();
     let launched = tab.pane.agent.as_ref().unwrap().launched.as_ref().unwrap();
     assert_eq!((launched.profile_id.as_str(), launched.level), ("reviewer", Level::Plan));
     assert!(lines[0].starts_with(&format!("claude --resume {ID} ")), "{}", lines[0]);
@@ -379,7 +379,7 @@ fn yolo_runs_exactly_as_picked_in_a_tab_with_no_worktree() {
     asked.subject.dir = w.repo.clone();
     let done = run_retarget(&Fake::new(&ps()), &env(&w), &asked);
     let result = landed(done, &w);
-    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    let tab = result.tabs.get(result.id).unwrap();
     let launched = tab.pane.agent.as_ref().unwrap().launched.as_ref().unwrap();
     assert_eq!(launched.level, Level::Yolo);
     assert!(result.lines[0].contains("--dangerously-skip-permissions"), "{}", result.lines[0]);
@@ -403,7 +403,7 @@ fn a_shell_tab_in_one_worktree_follows_a_session_that_runs_in_another() {
     let done = run_retarget(&system, &env(&w), &request(&w, builder(None), false));
     assert_eq!(*system.sent.borrow(), [AGENT], "only the agent is signalled, never the shell");
     let result = landed(done, &w);
-    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    let tab = result.tabs.get(result.id).unwrap();
     assert_eq!(
         tab.pane.worktree.as_ref(),
         Some(&w.other),
@@ -434,7 +434,7 @@ fn a_folder_another_tab_shows_is_followed_without_owning_it() {
     asked.subject.window.shown = vec![w.other.path.clone()];
     let done = run_retarget(&Fake::new(&ps()), &env(&w), &asked);
     let result = landed(done, &w);
-    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    let tab = result.tabs.get(result.id).unwrap();
     assert_eq!(
         tab.pane.worktree, None,
         "closing this tab never removes a folder another tab shows"
@@ -527,7 +527,7 @@ fn a_shell_tab_in_a_workspace_folder_becomes_an_agent_on_a_new_branch_of_the_rep
     }
     assert!(old_project.join(format!("{ID}.jsonl")).is_file(), "the original is still there");
 
-    let tab = result.tabs.items().iter().find(|tab| tab.id == result.id).unwrap();
+    let tab = result.tabs.get(result.id).unwrap();
     assert_eq!(tab.pane.worktree.as_ref(), Some(&made));
     assert_eq!(
         tab.pane.agent.as_ref().unwrap().launched.as_ref().unwrap().dir.as_deref(),
@@ -665,6 +665,6 @@ fn a_plain_shell_starts_a_new_session_in_place() {
     assert_eq!(*system.sent.borrow(), Vec::<u32>::new());
     let (tabs, id, lines) = spawned(done, &w);
     assert!(!lines[0].contains("--resume"), "{}", lines[0]);
-    let agent = tabs.items().iter().find(|tab| tab.id == id).unwrap().pane.agent.as_ref().unwrap();
+    let agent = tabs.agent(id).unwrap();
     assert!(agent.launched.as_ref().unwrap().session_id.is_some());
 }

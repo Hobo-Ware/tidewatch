@@ -188,7 +188,7 @@ impl Tidewatch {
             crate::image_paste::inject_paste(ctx, text);
             return;
         }
-        let agent = self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut());
+        let agent = self.tabs.agent_mut(tab);
         if let Some(agent) = agent {
             agent.reader.view.reply = appended(&agent.reader.view.reply, &text);
             agent.reader.view.request_reply_focus();

@@ -320,21 +320,12 @@ impl Tidewatch {
         let table = self.agent_table();
         let can_draw = |id| {
             self.tabs
-                .items()
-                .iter()
-                .find(|tab| tab.id == id)
-                .and_then(|tab| tab.pane.agent.as_ref())
+                .agent(id)
                 .and_then(|agent| table.get(&agent.run.agent_id))
                 .is_some_and(|agent| tidewatch_core::avatar_ask::can_draw(agent.wiring))
         };
         let mood = |id| {
-            let meeseeks = self
-                .tabs
-                .items()
-                .iter()
-                .find(|tab| tab.id == id)
-                .and_then(|tab| tab.pane.agent.as_ref())
-                .and_then(|agent| agent.meeseeks.as_ref());
+            let meeseeks = self.tabs.agent(id).and_then(|agent| agent.meeseeks.as_ref());
             Mood { struggling: meeseeks.is_some_and(|m| m.struggle(now_ms).is_some()) }
         };
         let extras = |id| TabExtras {

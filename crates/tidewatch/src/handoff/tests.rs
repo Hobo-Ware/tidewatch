@@ -435,7 +435,7 @@ fn parking_and_never_park_cross_the_handover_and_an_old_layout_has_neither() {
 #[test]
 fn a_window_from_before_the_prompt_flag_cannot_say_where_its_agents_are_so_they_wait_for_a_hook() {
     let mut w = window();
-    let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+    let agent = w.tabs.agent_mut(w.agent_tab).unwrap();
     agent.run.hold(Some(AgentStatus::Done), None);
     agent.run.refresh(2.0);
     let (handover, _) = handover_of(&w);
@@ -455,7 +455,7 @@ fn a_window_from_before_the_prompt_flag_cannot_say_where_its_agents_are_so_they_
     let ptys = Ptys { adopt: &mut adopt, fresh: &fresh };
     let mut rebuilt = rebuild(&old, vec![100, 101, 102, 200, 201], 5.0, ptys).unwrap();
     let id = rebuilt.tabs.items().iter().find(|tab| tab.title == "otter").unwrap().id;
-    let run = &mut rebuilt.tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    let run = &mut rebuilt.tabs.agent_mut(id).unwrap().run;
     run.refresh(600.0);
     assert_eq!((*run.status() == AgentStatus::Done, run.unreported()), (false, true));
 }
@@ -512,7 +512,7 @@ fn an_agent_that_was_done_comes_back_done_and_one_that_was_busy_waits_for_its_fi
         (AgentStatus::NeedsYou(Reason::Permission), false, true),
         (AgentStatus::NeedsYou(Reason::Quiet), false, true),
     ] {
-        let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+        let agent = w.tabs.agent_mut(w.agent_tab).unwrap();
         agent.run.hold(Some(held.clone()), None);
         agent.run.refresh(2.0);
         let run = rebuilt_run(&w, 600.0);
@@ -524,7 +524,7 @@ fn an_agent_that_was_done_comes_back_done_and_one_that_was_busy_waits_for_its_fi
 #[test]
 fn an_agent_that_does_not_report_by_hooks_keeps_reading_its_terminal_after_a_handover() {
     let mut w = window();
-    let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+    let agent = w.tabs.agent_mut(w.agent_tab).unwrap();
     agent.run.hold(Some(AgentStatus::Done), None);
     agent.run.refresh(2.0);
     let (handover, _) = plan(&w.tabs, &facts(&w.workspaces, None), &no_credentials);
@@ -532,7 +532,7 @@ fn an_agent_that_does_not_report_by_hooks_keeps_reading_its_terminal_after_a_han
     let ptys = Ptys { adopt: &mut adopt, fresh: &fresh };
     let mut rebuilt = rebuild(&handover, vec![100, 101, 102, 200, 201], 5.0, ptys).unwrap();
     let id = rebuilt.tabs.items().iter().find(|tab| tab.title == "otter").unwrap().id;
-    let run = &mut rebuilt.tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    let run = &mut rebuilt.tabs.agent_mut(id).unwrap().run;
     run.refresh(600.0);
     assert_eq!((*run.status() == AgentStatus::Done, run.unreported()), (false, false));
 }
@@ -541,7 +541,7 @@ fn an_agent_that_does_not_report_by_hooks_keeps_reading_its_terminal_after_a_han
 fn an_agent_with_remote_control_comes_back_with_its_session_and_the_saved_setting() {
     let mut w = window();
     for saved in [true, false] {
-        let agent = w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap();
+        let agent = w.tabs.agent_mut(w.agent_tab).unwrap();
         agent.remote = Some(RemoteSession::new("web \u{b7} otter".into()));
         agent.launched.as_mut().unwrap().remote = saved;
         let (handover, _) = handover_of(&w);
@@ -924,7 +924,7 @@ fn a_meeseeks() -> tidewatch_core::meeseeks::Meeseeks {
 #[test]
 fn a_meeseeks_crosses_the_handover_with_its_counts_and_comes_back_as_one() {
     let mut w = window();
-    w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().meeseeks = Some(a_meeseeks());
+    w.tabs.agent_mut(w.agent_tab).unwrap().meeseeks = Some(a_meeseeks());
     let (handover, _) = handover_of(&w);
     let text = serde_json::to_string(&handover).unwrap();
     let handover: Handover = serde_json::from_str(&text).unwrap();
@@ -946,8 +946,7 @@ fn a_meeseeks_crosses_the_handover_with_its_counts_and_comes_back_as_one() {
 #[test]
 fn the_name_an_agent_chose_crosses_the_handover() {
     let mut w = window();
-    w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().chosen_name =
-        Some("fix-login-redirect".into());
+    w.tabs.agent_mut(w.agent_tab).unwrap().chosen_name = Some("fix-login-redirect".into());
     let (handover, _) = handover_of(&w);
     let text = serde_json::to_string(&handover).unwrap();
     let handover: Handover = serde_json::from_str(&text).unwrap();
@@ -969,16 +968,14 @@ fn the_name_an_agent_chose_crosses_the_handover() {
 fn a_meeseeks_that_is_being_checked_blocks_a_handover_and_one_that_works_does_not() {
     let mut w = window();
     let mut meeseeks = a_meeseeks();
-    w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().meeseeks =
-        Some(meeseeks.clone());
+    w.tabs.agent_mut(w.agent_tab).unwrap().meeseeks = Some(meeseeks.clone());
     assert_eq!(blocker(&w.tabs), None);
     for phase in [
         tidewatch_core::meeseeks::Phase::Checking(tidewatch_core::meeseeks::Step::Tests),
         tidewatch_core::meeseeks::Phase::Poofing,
     ] {
         meeseeks.phase = phase;
-        w.tabs.get_mut(w.agent_tab).unwrap().pane.agent.as_mut().unwrap().meeseeks =
-            Some(meeseeks.clone());
+        w.tabs.agent_mut(w.agent_tab).unwrap().meeseeks = Some(meeseeks.clone());
         assert_eq!(blocker(&w.tabs), Some(Blocker::MeeseeksBusy), "{phase:?}");
     }
     assert_eq!(Blocker::MeeseeksBusy.text(), "a Meeseeks is being checked");
