@@ -597,6 +597,10 @@ impl Flow {
         self.enters.push(tab, now);
     }
 
+    pub(crate) fn enter_pending(&self, tab: u64) -> bool {
+        self.enters.pending(tab)
+    }
+
     pub(crate) fn due_enters(&mut self, now: f64, output: impl Fn(u64) -> Option<u64>) -> Vec<u64> {
         self.enters.take_due(now, output)
     }

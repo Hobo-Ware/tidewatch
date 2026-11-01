@@ -91,7 +91,7 @@ pub(crate) fn facts<T>(
 /// Whether the agent's input box is free, read off Claude Code's screen. Other CLIs, a tab that is
 /// not at its prompt (a working one too, unless the send goes mid-turn) and a hand send are never
 /// held by the screen.
-fn screen_of(
+pub(crate) fn screen_of(
     tab: &crate::tabs::Tab<Pane<PtyTerm>>,
     status: Option<&AgentStatus>,
     mid_turn: bool,

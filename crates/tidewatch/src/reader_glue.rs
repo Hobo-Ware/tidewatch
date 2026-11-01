@@ -649,9 +649,36 @@ fn type_reply(
     true
 }
 
-/// A message the owner sent. It goes at once when the agent can take it; while the agent works, or
-/// cannot take it, Tidewatch holds it in order, to be edited, deleted or sent now, and types it
-/// when the agent is free. The first message of a tab and a slash command always go at once.
+/// Asks the one send line whether the owner's reply may be typed now. Claude Code takes typed text
+/// while it works and shows it to the model at its next step, so a Claude reply goes mid-turn,
+/// once its input box is free (a pasted message whose Enter has not gone yet counts as not free).
+/// Every other CLI gets a reply only when its turn is over.
+fn offer_reply(
+    tabs: &Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    tab: u64,
+    text: &str,
+    status: &AgentStatus,
+    now: f64,
+) -> Offer {
+    let claude = tabs
+        .get(tab)
+        .and_then(|found| found.pane.agent.as_ref())
+        .is_some_and(|agent| agent.reader.source() == Some(Source::Claude));
+    let send = if claude { Send::reply(text).mid_turn() } else { Send::reply(text) };
+    let screen = match tabs.get(tab) {
+        Some(_) if !claude || *status != AgentStatus::Working => Screen::Free,
+        Some(_) if flow.enter_pending(tab) => Screen::Typed,
+        Some(found) => flow_glue::screen_of(found, Some(status), true),
+        None => Screen::Free,
+    };
+    flow.outbox.offer(tab, &send, Some(status), screen, now)
+}
+
+/// A message the owner sent. It goes at once when the agent can take it. Claude Code takes it
+/// while it works, once its input box is free; any other CLI, or a Claude whose box holds a draft
+/// or a dialog, has it held by Tidewatch in order, to be edited, deleted or sent now, and typed
+/// when the agent can take it. The first message of a tab and a slash command always go at once.
 fn reply(
     tabs: &mut Tabs<Pane<PtyTerm>>,
     flow: &mut Flow,
@@ -674,7 +701,7 @@ fn reply(
     let offer = if first || (is_command(text) && blocked.is_none()) {
         Offer::Go
     } else {
-        flow.outbox.offer(tab, &Send::reply(text), Some(&status), Screen::Free, now)
+        offer_reply(tabs, flow, tab, text, &status, now)
     };
     if offer == Offer::Go
         && (blocked.is_none() || first)
@@ -717,8 +744,7 @@ pub(crate) fn release_lines(
         else {
             continue;
         };
-        let send = Send::reply(&text);
-        if flow.outbox.offer(tab, &send, Some(&status), Screen::Free, now) != Offer::Go {
+        if offer_reply(tabs, flow, tab, &text, &status, now) != Offer::Go {
             continue;
         }
         if type_reply(tabs, flow, tab, &text, (ctx, now)) {
@@ -1565,6 +1591,10 @@ mod tests {
     }
 
     fn idle_pty() -> PtyTerm {
+        pty_running("sleep 20")
+    }
+
+    fn pty_running(script: &str) -> PtyTerm {
         use std::collections::BTreeMap;
         use stdusk_core::repaint::Repaint;
         use stdusk_core::shell::ShellProfile;
@@ -1580,7 +1610,7 @@ mod tests {
             cwd: None,
             profile: Some(ShellProfile {
                 shell: Some("/bin/sh".into()),
-                args: vec!["-c".into(), "sleep 20".into()],
+                args: vec!["-c".into(), script.into()],
                 cwd: None,
                 env: BTreeMap::new(),
             }),
@@ -1624,6 +1654,23 @@ mod tests {
         (tabs, id, Flow::new(tidewatch_core::tools::Tools::default()))
     }
 
+    fn claude_box(draft: &str, want: Screen) -> PtyTerm {
+        let rule = "\u{2500}".repeat(40);
+        let term = pty_running(&format!(
+            "printf '%s\\n' 'Working...' '{rule}' '\u{276f} {draft}' '{rule}'; sleep 20"
+        ));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while crate::prompt_ghost::screen_of(&term.grid_snapshot()) != want {
+            assert!(std::time::Instant::now() < deadline, "the box never reached {want:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        term
+    }
+
+    fn show_screen(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64, term: PtyTerm) {
+        tabs.get_mut(id).unwrap().pane.body = Body::Shell(term);
+    }
+
     fn set_status(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64, status: AgentStatus) {
         tabs.agent_mut(id).unwrap().run.set_status(status);
     }
@@ -1652,7 +1699,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_to_a_working_agent_is_held_by_tidewatch_and_typed_when_the_turn_ends() {
+    fn a_reply_to_a_working_agent_whose_box_is_not_free_is_held_and_typed_when_the_turn_ends() {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
         assert_eq!(say(&mut tabs, &mut flow, id, "also check the Android build", 1.0), None);
         assert_eq!(held(&mut tabs, id), ["also check the Android build"]);
@@ -1668,6 +1715,104 @@ mod tests {
         assert_eq!(flow.due_enters(3.0 + ENTER_DELAY_SECS, busy), Vec::<u64>::new());
         let settled = 3.0 + ENTER_DELAY_SECS + crate::note_send::ENTER_QUIET_SECS + 0.01;
         assert_eq!(flow.due_enters(settled, busy), [id]);
+    }
+
+    #[test]
+    fn a_reply_to_a_working_claude_is_typed_at_once_while_its_input_box_is_free() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        show_screen(&mut tabs, id, claude_box("", Screen::Free));
+        assert_eq!(say(&mut tabs, &mut flow, id, "also check the Android build", 1.0), None);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 1, "it shows as queued until the transcript has it");
+        assert!(flow.enter_pending(id), "the paste gets its Enter");
+        let busy = |_: u64| Some(1);
+        let settled = 1.0 + ENTER_DELAY_SECS + crate::note_send::ENTER_QUIET_SECS + 0.01;
+        assert_eq!(flow.due_enters(settled, busy).len(), 0);
+        assert_eq!(flow.due_enters(settled + 3.0, busy), [id]);
+    }
+
+    #[test]
+    fn a_reply_to_a_working_claude_waits_while_its_box_holds_a_draft_or_a_dialog() {
+        for screen in [Screen::Typed, Screen::NoBox] {
+            let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+            let term = match screen {
+                Screen::NoBox => idle_pty(),
+                _ => claude_box("half a thought", screen),
+            };
+            show_screen(&mut tabs, id, term);
+            say(&mut tabs, &mut flow, id, "also check the Android build", 1.0);
+            assert_eq!(held(&mut tabs, id), ["also check the Android build"], "{screen:?}");
+            assert_eq!(queued(&mut tabs, id), 0, "{screen:?}");
+            assert!(!flow.enter_pending(id), "{screen:?}");
+        }
+    }
+
+    #[test]
+    fn a_held_reply_on_a_working_claude_is_typed_once_the_box_is_free_without_waiting_for_done() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        show_screen(&mut tabs, id, claude_box("half a thought", Screen::Typed));
+        say(&mut tabs, &mut flow, id, "also check the Android build", 1.0);
+        assert_eq!(release(&mut tabs, &mut flow, 2.0), Vec::<String>::new());
+        assert_eq!(held(&mut tabs, id), ["also check the Android build"]);
+        show_screen(&mut tabs, id, claude_box("", Screen::Free));
+        release(&mut tabs, &mut flow, 3.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 1);
+        assert_eq!(*tabs.agent_mut(id).unwrap().run.status(), AgentStatus::Working);
+        assert!(flow.enter_pending(id));
+    }
+
+    #[test]
+    fn a_second_mid_turn_reply_waits_until_the_first_has_its_enter() {
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        show_screen(&mut tabs, id, claude_box("", Screen::Free));
+        say(&mut tabs, &mut flow, id, "one", 1.0);
+        say(&mut tabs, &mut flow, id, "two", 1.1);
+        assert_eq!(held(&mut tabs, id), ["two"]);
+        assert_eq!(queued(&mut tabs, id), 1);
+        flow.due_enters(10.0, |_| None);
+        assert!(!flow.enter_pending(id));
+        release(&mut tabs, &mut flow, 10.1);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 2);
+    }
+
+    #[test]
+    fn a_reply_typed_mid_turn_leaves_the_queue_when_the_transcript_shows_it() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        show_screen(&mut tabs, id, claude_box("", Screen::Free));
+        say(&mut tabs, &mut flow, id, "also check the Android build", 1.0);
+        assert_eq!(queued(&mut tabs, id), 1);
+        tabs.agent_mut(id).unwrap().reader.rows.push(Entry {
+            role: Role::User,
+            text: "also check the Android build".into(),
+            tool: None,
+            ts: Some(now_ms()),
+            images: Vec::new(),
+        });
+        assert_eq!(queued(&mut tabs, id), 0);
+    }
+
+    #[test]
+    fn a_reply_to_a_working_codex_is_held_for_the_turn_even_with_a_free_box() {
+        let mut tabs = Tabs::new(Pane::creating());
+        let mut run = AgentRun::setting_up("codex".into(), 0.0);
+        run.set_status(AgentStatus::Working);
+        let pane = Pane {
+            body: Body::Shell(claude_box("", Screen::Free)),
+            worktree: None,
+            agent: Some(AgentTab::new("Builder".into(), run)),
+        };
+        let id = tabs.push("agent".into(), pane);
+        let mut flow = Flow::new(tidewatch_core::tools::Tools::default());
+        say(&mut tabs, &mut flow, id, "also check the Android build", 1.0);
+        assert_eq!(held(&mut tabs, id), ["also check the Android build"]);
+        release(&mut tabs, &mut flow, 2.0);
+        assert_eq!(held(&mut tabs, id), ["also check the Android build"]);
+        set_status(&mut tabs, id, AgentStatus::Done);
+        release(&mut tabs, &mut flow, 3.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
     }
 
     #[test]

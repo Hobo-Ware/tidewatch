@@ -633,7 +633,9 @@ pub(crate) fn show(
         }
     }
     if held_h > 0.0 {
-        let note = if facts.working {
+        let note = if facts.working && facts.source == Some(Source::Claude) {
+            "Held by Tidewatch \u{b7} sent when Claude's input box is free"
+        } else if facts.working {
             "Held by Tidewatch \u{b7} sent when the agent finishes its turn"
         } else if reason.is_some() {
             "Held by Tidewatch \u{b7} sent when the agent is running again"
@@ -2445,6 +2447,7 @@ mod tests {
         shapes: Vec<(String, Rect)>,
         actions: Vec<Action>,
         working: bool,
+        source: Option<Source>,
         blocked: Option<Blocked>,
         width: f32,
         copied: Vec<String>,
@@ -2459,6 +2462,7 @@ mod tests {
                 shapes: Vec::new(),
                 actions: Vec::new(),
                 working: false,
+                source: Some(Source::Claude),
                 blocked: None,
                 width: 1000.0,
                 copied: Vec::new(),
@@ -2475,11 +2479,11 @@ mod tests {
                 ..RawInput::default()
             };
             let state = &mut self.state;
-            let (working, blocked) = (self.working, self.blocked);
+            let (working, blocked, source) = (self.working, self.blocked, self.source);
             let mut asked = Vec::new();
             let output = self.ctx.run_ui(raw, |ui| {
                 let rect = ui.max_rect();
-                let facts = Facts { working, reply_blocked: blocked, ..facts(None, turn) };
+                let facts = Facts { working, source, reply_blocked: blocked, ..facts(None, turn) };
                 asked = show(ui, rect, rows, state, &facts);
             });
             self.actions.extend(asked);
@@ -3776,7 +3780,26 @@ mod tests {
         settle(frames, rows);
     }
 
-    const HELD_NOTE: &str = "Held by Tidewatch \u{b7} sent when the agent finishes its turn";
+    const HELD_NOTE: &str = "Held by Tidewatch \u{b7} sent when Claude's input box is free";
+
+    #[test]
+    fn the_held_note_names_the_turn_end_for_a_cli_that_cannot_take_text_mid_turn() {
+        let turn_end = "Held by Tidewatch \u{b7} sent when the agent finishes its turn";
+        let rows = turn_rows();
+        for (source, want, absent) in [
+            (Some(Source::Claude), HELD_NOTE, turn_end),
+            (Some(Source::Codex), turn_end, HELD_NOTE),
+            (None, turn_end, HELD_NOTE),
+        ] {
+            let mut frames = Frames::new();
+            frames.working = true;
+            frames.source = source;
+            frames.state.line.hold("also check the Android build", 0).unwrap();
+            settle(&mut frames, &rows);
+            assert!(frames.at(want).is_some(), "{source:?}: {:?}", frames.shapes);
+            assert!(frames.at(absent).is_none(), "{source:?}");
+        }
+    }
 
     #[test]
     fn held_messages_sit_at_the_bottom_of_the_chat_above_the_box_with_three_buttons() {

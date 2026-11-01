@@ -58,7 +58,11 @@ struct Kind {
 
 impl Kind {
     fn holds(self) -> bool {
-        self.reply && !self.command
+        self.reply && !self.command && !self.mid_turn
+    }
+
+    fn reads_screen_mid_turn(self) -> bool {
+        self.mid_turn && !self.command
     }
 }
 
@@ -82,7 +86,8 @@ impl Send {
     }
 
     /// A message the owner typed: it waits while the agent works and goes when the turn is over,
-    /// except a slash command, which runs at once.
+    /// except a slash command, which runs at once. For an agent that takes typed text mid-turn,
+    /// add `mid_turn`: the reply then goes while it works, as soon as its input box is free.
     pub(crate) fn reply(text: &str) -> Self {
         Self { reply: true, ..Self::untold(text, Origin::Hand) }
     }
@@ -96,7 +101,6 @@ impl Send {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn mid_turn(mut self) -> Self {
         self.mid_turn = true;
         self
@@ -219,11 +223,14 @@ impl Lane {
             self.hold_until = None;
         }
         let offer = decide(status, kind, self.held(now));
-        if offer != Offer::Go || kind.origin == Origin::Hand {
+        if offer != Offer::Go {
             return offer;
         }
-        if status == Some(&AgentStatus::Working) {
+        if status == Some(&AgentStatus::Working) && kind.reads_screen_mid_turn() {
             return if screen == Screen::Free { Offer::Go } else { Offer::Wait };
+        }
+        if kind.origin == Origin::Hand {
+            return offer;
         }
         match screen {
             Screen::Free => {
@@ -650,6 +657,47 @@ mod tests {
         for (status, want) in cases {
             let got = Outbox::default().offer(TAB, &reply, Some(&status), Screen::Free, 0.0);
             assert_eq!(got, want, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn a_reply_to_a_working_claude_goes_at_once_only_while_its_input_box_is_free() {
+        let reply = Send::reply("also check the Android build").mid_turn();
+        let cases = [
+            (AgentStatus::Working, Screen::Free, Offer::Go),
+            (AgentStatus::Working, Screen::Typed, Offer::Wait),
+            (AgentStatus::Working, Screen::NoBox, Offer::Wait),
+            (AgentStatus::Done, Screen::Free, Offer::Go),
+            (AgentStatus::Done, Screen::Typed, Offer::Go),
+            (AgentStatus::NeedsYou(Why::Quiet), Screen::Free, Offer::Go),
+            (AgentStatus::Stopped, Screen::Free, Offer::Refuse(NO_AGENT)),
+        ];
+        for (status, screen, want) in cases {
+            let got = Outbox::default().offer(TAB, &reply, Some(&status), screen, 0.0);
+            assert_eq!(got, want, "{status:?} {screen:?}");
+        }
+    }
+
+    #[test]
+    fn a_reply_to_a_working_cli_that_cannot_take_it_mid_turn_still_waits_for_the_turn_to_end() {
+        let reply = Send::reply("also check the Android build");
+        for screen in [Screen::Free, Screen::Typed, Screen::NoBox] {
+            let got =
+                Outbox::default().offer(TAB, &reply, Some(&AgentStatus::Working), screen, 0.0);
+            assert_eq!(got, Offer::Wait, "{screen:?}");
+        }
+        let done =
+            Outbox::default().offer(TAB, &reply, Some(&AgentStatus::Done), Screen::Free, 0.0);
+        assert_eq!(done, Offer::Go);
+    }
+
+    #[test]
+    fn a_slash_command_to_a_working_claude_goes_whatever_its_input_box_holds() {
+        let command = Send::reply("/model opus").mid_turn();
+        for screen in [Screen::Free, Screen::Typed, Screen::NoBox] {
+            let got =
+                Outbox::default().offer(TAB, &command, Some(&AgentStatus::Working), screen, 0.0);
+            assert_eq!(got, Offer::Go, "{screen:?}");
         }
     }
 
