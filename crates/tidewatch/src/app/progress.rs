@@ -507,6 +507,7 @@ impl Tidewatch {
                 None => look(&known.ledger, stale),
             });
             row.avatar = self.avatar_live.get(row.tab_id).cloned();
+            row.agents_running = self.subagent_live.running(row.tab_id);
             row.job_line = self
                 .job_live
                 .board(row.tab_id)

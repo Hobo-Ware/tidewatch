@@ -426,6 +426,7 @@ fn agent_strip(
                                         tip: "orders".into(),
                                     }),
                                     tokens: None,
+                                    agents: None,
                                 })),
                                 avatar: with_avatar.then(|| {
                                     let (svg, reason) = crate::avatar_glue::FAKE[0];
@@ -605,6 +606,22 @@ fn the_tooltip_names_the_number_the_chord_and_the_job() {
         } else {
             assert!(got.starts_with(&format!("{title}\nTab {number}")), "{got}");
         }
+    }
+}
+
+#[test]
+fn the_tooltip_lists_the_ledger_then_the_running_agents_then_the_tokens() {
+    let cases = [
+        ([None, None, None], "tab"),
+        ([Some("Step 2 of 4"), None, Some("1.2M tokens")], "tab\nStep 2 of 4\n1.2M tokens"),
+        ([None, Some("4 agents running"), None], "tab\n4 agents running"),
+        (
+            [Some("Step 2 of 4"), Some("1 agent running"), Some("1.2M tokens")],
+            "tab\nStep 2 of 4\n1 agent running\n1.2M tokens",
+        ),
+    ];
+    for (lines, want) in cases {
+        assert_eq!(tip_lines("tab", lines), want);
     }
 }
 

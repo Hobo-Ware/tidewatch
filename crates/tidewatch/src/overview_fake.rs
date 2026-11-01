@@ -125,6 +125,7 @@ fn row(id: u64, spec: &Spec) -> Row {
         done_check: None,
         look: None,
         job_line: None,
+        agents_running: 0,
         tokens: crate::budget_glue::fake_tokens(),
         avatar: crate::avatar_glue::fake_requested()
             .then(|| crate::avatar_glue::fake_face(id as usize))

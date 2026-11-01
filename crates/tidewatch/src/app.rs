@@ -39,6 +39,7 @@ mod settings;
 mod slow;
 mod stdusk;
 pub(crate) mod strip;
+mod subagents;
 mod tabs;
 mod takeover;
 mod terminal;
@@ -128,6 +129,7 @@ use crate::session_glue::Saver;
 use crate::settings::Settings;
 use crate::shell::{self, Shell};
 use crate::slash_glue;
+use crate::subagents_glue;
 use crate::sync_glue;
 use crate::tab_view::TabView;
 use crate::tabs::Tabs;
@@ -204,6 +206,7 @@ pub(crate) struct Tidewatch {
     job_live: job_glue::Host,
     panel: panel_host::Host,
     link_live: link_glue::Host,
+    subagent_live: subagents_glue::Host,
     dev_links: Option<crate::link_view::LinkView>,
     me: me_glue::Host,
     avatar_live: avatar_glue::Host,
@@ -340,6 +343,7 @@ impl Tidewatch {
         );
         let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let link_live = link_glue::Host::from_env(paths.is_some() && screenshot.is_none());
+        let subagent_live = subagents_glue::Host::from_env();
         let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let me = me_glue::Host::start(
             &cc.egui_ctx,
@@ -464,6 +468,7 @@ impl Tidewatch {
             job_live,
             panel,
             link_live,
+            subagent_live,
             dev_links: crate::link_view::LinkView::from_dev(
                 std::env::var("TIDEWATCH_DEV_LINKS").ok().as_deref(),
             ),

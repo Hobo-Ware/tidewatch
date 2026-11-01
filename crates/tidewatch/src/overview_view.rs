@@ -1152,6 +1152,7 @@ mod tests {
             done_check: None,
             look: None,
             job_line: None,
+            agents_running: 0,
             tokens: None,
             avatar: None,
             kind: AgentKind::Cli("claude".into()),
