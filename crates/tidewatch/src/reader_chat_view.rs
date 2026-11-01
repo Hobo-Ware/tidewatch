@@ -12,8 +12,8 @@ use std::time::Duration;
 use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::{
     Align, Color32, CornerRadius, FontId, Frame, Label, Layout, Margin, OutputCommand, Painter,
-    Pos2, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, TextStyle, Ui,
-    UiBuilder, pos2, vec2,
+    Pos2, Rect, Response, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, TextStyle, Ui, pos2,
+    vec2,
 };
 use jiff::tz::TimeZone;
 use tidewatch_core::question;
@@ -21,6 +21,7 @@ use tidewatch_core::user_markup::{self, TaskResult};
 
 use crate::agent_avatar::{Face, paint_face};
 use crate::brand;
+use crate::bubble_toolbar::{self, BubbleAction};
 use crate::code_block::{self, Look};
 use crate::emoji_motion;
 use crate::emoji_text;
@@ -35,7 +36,7 @@ use crate::reader_rows::{Kind, Row, ToolKind};
 use crate::reader_turns::{self, Body, Call, Group, Section};
 use crate::reader_view::{ellipsized, output_preview, split_label};
 use crate::screen_kit::TEXT_TAG;
-use crate::screen_kit::{Size, body, button_width, mono, quiet_button};
+use crate::screen_kit::{body, mono};
 use crate::token_view;
 use crate::tokens;
 
@@ -204,14 +205,6 @@ pub(crate) fn user(
     user_bubble(ui, row, Meta::Stamp(at_ms, zone), (width, pastes), fresh)
 }
 
-/// What a click on the buttons of a user's bubble asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BubbleAction {
-    SendAgain,
-    EditAndSend,
-    Dismiss,
-}
-
 /// Where a message the transcript does not have yet stands.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Queue {
@@ -245,82 +238,6 @@ enum Meta<'a> {
 }
 
 const NOT_SEEN: &str = "Not seen by the agent";
-const ACTION_GAP: f32 = 6.0;
-const ACTION_ROOM: f32 = 12.0;
-
-fn action_labels(meta_line: Meta<'_>) -> &'static [&'static str] {
-    match meta_line {
-        Meta::Stamp(..) => &["Send again", "Copy", "Edit and send"],
-        Meta::NotSeen => &["Send again", "Dismiss"],
-        Meta::Queued(_) => &[],
-    }
-}
-
-fn actions_width(ui: &Ui, meta_line: Meta<'_>) -> f32 {
-    let labels = action_labels(meta_line);
-    let widths: f32 = labels
-        .iter()
-        .map(|label| {
-            if *label == "Copy" {
-                code_block::button_width(ui.painter())
-            } else {
-                button_width(ui, label, Size::Compact)
-            }
-        })
-        .sum();
-    widths + ACTION_GAP * labels.len().saturating_sub(1) as f32
-}
-
-/// The buttons in the meta line of a bubble, to the left of its `You` label: drawn over the
-/// bubble's first padding, so the line keeps its height. They show while the pointer is over the
-/// bubble, and always for a message the agent did not show.
-fn bubble_actions(
-    ui: &mut Ui,
-    row: &Row,
-    (meta, whole): (Rect, Rect),
-    meta_line: Meta<'_>,
-) -> Option<BubbleAction> {
-    let id = ui.id().with(("bubble-actions", row.seq));
-    let always = matches!(meta_line, Meta::NotSeen);
-    let shown = always || ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
-    let over = ui.rect_contains_pointer(whole.expand2(vec2(0.0, ACTION_ROOM / 2.0)));
-    if over != ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false) {
-        ui.data_mut(|data| data.insert_temp(id, over));
-        ui.ctx().request_repaint();
-    }
-    if !shown {
-        return None;
-    }
-    let height = Size::Compact.height();
-    let mut x = meta.left();
-    let mut asked = None;
-    for label in action_labels(meta_line) {
-        if *label == "Copy" {
-            let width = code_block::button_width(ui.painter());
-            code_block::copy_button(
-                ui,
-                id.with("copy"),
-                pos2(x + width, meta.center().y),
-                &row.text,
-            );
-            x += width + ACTION_GAP;
-            continue;
-        }
-        let width = button_width(ui, label, Size::Compact);
-        let rect =
-            Rect::from_min_size(pos2(x, meta.center().y - height / 2.0), vec2(width, height));
-        let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-        if quiet_button(&mut child, label, true, Size::Compact).clicked() {
-            asked = Some(match *label {
-                "Send again" => BubbleAction::SendAgain,
-                "Dismiss" => BubbleAction::Dismiss,
-                _ => BubbleAction::EditAndSend,
-            });
-        }
-        x += width + ACTION_GAP;
-    }
-    asked
-}
 
 fn queued_meta(ui: &mut Ui, time: f64) {
     let width = ui.available_width();
@@ -381,22 +298,9 @@ fn user_bubble(
         let column =
             ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
-                let crowded = actions_width(ui, meta_line) + 2.0 * ACTION_ROOM + 96.0 > max_w;
-                let hiding = crowded
-                    && actionable
-                    && ui.data(|data| {
-                        data.get_temp::<bool>(ui.id().with(("bubble-actions", row.seq)))
-                            .unwrap_or(false)
-                    });
                 match meta_line {
-                    Meta::Stamp(..) if hiding => {
-                        ui.allocate_exact_size(vec2(ui.available_width(), META_H), Sense::hover());
-                    }
                     Meta::Stamp(at_ms, zone) => meta(ui, &stamped("You", at_ms, zone), Align::Max),
                     Meta::Queued(time) => queued_meta(ui, time),
-                    Meta::NotSeen if crowded => {
-                        ui.allocate_exact_size(vec2(ui.available_width(), META_H), Sense::hover());
-                    }
                     Meta::NotSeen => not_seen_meta(ui),
                 }
                 let meta_rect = Rect::from_min_size(
@@ -473,9 +377,20 @@ fn user_bubble(
                         });
                     });
                 let whole = Rect::from_min_max(meta_rect.min, bubble.response.rect.max);
-                if actionable {
+                let kind = match meta_line {
+                    Meta::Stamp(..) => Some(bubble_toolbar::Kind::Sent),
+                    Meta::NotSeen => Some(bubble_toolbar::Kind::NotSeen),
+                    Meta::Queued(_) => None,
+                };
+                if let Some(kind) = kind.filter(|_| actionable) {
                     ui.set_opacity(1.0);
-                    asked = bubble_actions(ui, row, (meta_rect, whole), meta_line);
+                    asked = bubble_toolbar::show(
+                        ui,
+                        row.seq,
+                        &row.text,
+                        kind,
+                        (bubble.response.rect, whole),
+                    );
                 }
                 bubble.response.rect
             });
@@ -483,7 +398,12 @@ fn user_bubble(
         painter.set_opacity(dim);
         me_face::paint(ui.ctx(), &painter, user_face_rect(right, column.inner.bottom()));
     });
-    ui.add_space(OUTER);
+    let room = if actionable && !matches!(meta_line, Meta::Queued(_)) {
+        bubble_toolbar::ROOM
+    } else {
+        0.0
+    };
+    ui.add_space(OUTER + room);
     asked
 }
 
@@ -1171,6 +1091,7 @@ fn section_body(ui: &mut Ui, section: &Section, calls: &[Call<'_>]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::screen_kit::Size;
     use egui::{Event, PointerButton, RawInput};
 
     const TEXT: &str = "Preview at localhost:5174 now, [docs](https://x.dev/docs) and \
@@ -1737,7 +1658,7 @@ mod tests {
     }
 
     #[test]
-    fn a_not_seen_message_keeps_its_label_and_buttons_apart_at_any_width() {
+    fn a_not_seen_message_keeps_its_label_clear_of_the_toolbar_at_any_width() {
         let ctx = crate::fonts::test_context();
         crate::me_face::set(&ctx, crate::me_face::Me::Letter("V".to_owned()));
         for width in [260.0, 420.0, 700.0] {
@@ -1763,16 +1684,11 @@ mod tests {
                 }
             }
             let label = texts.iter().find(|(text, _)| text == NOT_SEEN).map(|(_, rect)| *rect);
-            let buttons: Vec<Rect> = texts
-                .iter()
-                .filter(|(text, _)| text == "Send again" || text == "Dismiss")
-                .map(|(_, rect)| *rect)
-                .collect();
-            assert_eq!(buttons.len(), 2, "both buttons at {width}: {texts:?}");
-            for rect in &buttons {
-                assert!(rect.right() <= width, "{rect:?} past the edge at {width}");
-                assert!(label.is_none_or(|label| !label.intersects(*rect)), "{label:?} {rect:?}");
-            }
+            let placed = ctx
+                .data(|data| data.get_temp::<bubble_toolbar::Placed>(bubble_toolbar::placed_id(1)))
+                .unwrap_or_else(|| panic!("the toolbar at {width}: {texts:?}"));
+            assert!(placed.toolbar.right() <= width, "{placed:?} past the edge at {width}");
+            assert!(label.is_some_and(|label| !label.intersects(placed.toolbar)), "{label:?}");
         }
     }
 }

@@ -174,7 +174,7 @@ fn grid_point(icon: Rect, x: f32, y: f32) -> Pos2 {
     icon.min + vec2(x, y) * (icon.width() / 24.0)
 }
 
-fn paint_copy(painter: &Painter, icon: Rect, ink: Color32) {
+pub(crate) fn paint_copy(painter: &Painter, icon: Rect, ink: Color32) {
     let stroke = Stroke::new(1.3, ink);
     let at = |x, y| grid_point(icon, x, y);
     let back = [(15.0, 9.0), (15.0, 5.0), (13.0, 3.0), (5.0, 3.0), (3.0, 5.0), (3.0, 13.0)];
@@ -184,7 +184,7 @@ fn paint_copy(painter: &Painter, icon: Rect, ink: Color32) {
     painter.rect_stroke(front, CornerRadius::same(2), stroke, StrokeKind::Middle);
 }
 
-fn paint_check(painter: &Painter, icon: Rect, ink: Color32) {
+pub(crate) fn paint_check(painter: &Painter, icon: Rect, ink: Color32) {
     let points = [(4.5, 12.5), (9.5, 17.5), (19.5, 7.0)];
     painter.add(Shape::line(
         points.iter().map(|(x, y)| grid_point(icon, *x, *y)).collect(),

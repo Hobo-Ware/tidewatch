@@ -27,6 +27,7 @@ mod autofetch_glue;
 mod avatar_glue;
 mod avatar_redraw;
 mod brand;
+mod bubble_toolbar;
 mod budget_glue;
 mod bullets;
 mod catalog;

@@ -24,6 +24,7 @@ use crate::ask_model::Ask;
 use crate::ask_view;
 use crate::at_files;
 use crate::brand;
+use crate::bubble_toolbar::BubbleAction;
 use crate::composer::{self, Draft, Outcome, Spec};
 use crate::due_view::{self, Facts as DueFacts};
 use crate::held_view;
@@ -37,7 +38,7 @@ use crate::question_card::{Card, Effect};
 use crate::question_view::{self, ChipClick, Live, PermissionClick};
 use crate::quick_reply::{self, Quick};
 use crate::quiet_notes::{self, Entry};
-use crate::reader_chat_view::{self, BubbleAction, Queue, Scene};
+use crate::reader_chat_view::{self, Queue, Scene};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Origin, Row, Rows};
 use crate::reader_scroll::{self, Autoscroll, Heights};
@@ -1385,6 +1386,7 @@ pub(crate) fn reply_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bubble_toolbar::{Placed, Tool, placed_id, tool_id};
     use egui::{Event, Key, Modifiers, RawInput, TextEdit};
 
     const INPUT_H: f32 = composer::BOX_H + 2.0 * composer::GAP_Y;
@@ -2425,6 +2427,8 @@ mod tests {
         working: bool,
         blocked: Option<Blocked>,
         width: f32,
+        copied: Vec<String>,
+        time: Option<f64>,
     }
 
     impl Frames {
@@ -2437,6 +2441,8 @@ mod tests {
                 working: false,
                 blocked: None,
                 width: 1000.0,
+                copied: Vec::new(),
+                time: None,
             }
         }
 
@@ -2445,6 +2451,7 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(self.width, 800.0))),
                 events,
                 focused: true,
+                time: self.time,
                 ..RawInput::default()
             };
             let state = &mut self.state;
@@ -2456,12 +2463,26 @@ mod tests {
                 asked = show(ui, rect, rows, state, &facts);
             });
             self.actions.extend(asked);
+            self.copied.extend(output.platform_output.commands.iter().filter_map(|command| {
+                match command {
+                    egui::OutputCommand::CopyText(text) => Some(text.clone()),
+                    _ => None,
+                }
+            }));
             self.shapes.clear();
             output.shapes.iter().for_each(|clipped| shape_texts(&clipped.shape, &mut self.shapes));
         }
 
         fn at(&self, text: &str) -> Option<egui::Pos2> {
             self.shapes.iter().find(|(drawn, _)| drawn == text).map(|(_, rect)| rect.center())
+        }
+
+        fn tool(&self, seq: u64, tool: Tool) -> Option<egui::Pos2> {
+            self.ctx.read_response(tool_id(seq, tool)).map(|response| response.rect.center())
+        }
+
+        fn toolbar(&self, seq: u64) -> Option<Placed> {
+            self.ctx.data(|data| data.get_temp::<Placed>(placed_id(seq)))
         }
 
         fn click(&mut self, rows: &Rows, at: egui::Pos2) {
@@ -3622,6 +3643,15 @@ mod tests {
 
     fn click_text(frames: &mut Frames, rows: &Rows, text: &str) {
         let at = frames.at(text).unwrap_or_else(|| panic!("{text}: {:?}", frames.shapes));
+        click_at(frames, rows, at);
+    }
+
+    fn click_tool(frames: &mut Frames, rows: &Rows, seq: u64, tool: Tool) {
+        let at = frames.tool(seq, tool).unwrap_or_else(|| panic!("{tool:?} is not drawn"));
+        click_at(frames, rows, at);
+    }
+
+    fn click_at(frames: &mut Frames, rows: &Rows, at: egui::Pos2) {
         let button = |pressed| Event::PointerButton {
             pos: at,
             button: egui::PointerButton::Primary,
@@ -3803,24 +3833,36 @@ mod tests {
         assert!(frames.state.scroll.following());
     }
 
+    const NOT_SEEN_SEQ: u64 = u64::MAX;
+
+    fn first_seq(rows: &Rows) -> u64 {
+        rows.stamped().next().expect("a row").0.seq
+    }
+
+    fn point_at(frames: &mut Frames, rows: &Rows, at: egui::Pos2) {
+        frames.run(rows, Turn::Finished, vec![Event::PointerMoved(at)]);
+        settle(frames, rows);
+    }
+
     #[test]
     fn a_message_the_agent_never_showed_reads_not_seen_and_can_be_sent_again_or_dismissed() {
         let mut rows = user_rows("start");
         rows.queue_user("lost one", now_ms() - 3 * 60_000);
         let mut frames = Frames::new();
         settle(&mut frames, &rows);
-        for want in ["Not seen by the agent", "Send again", "Dismiss"] {
-            assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
-        }
+        assert!(frames.at("Not seen by the agent").is_some(), "{:?}", frames.shapes);
         assert!(frames.at("Queued").is_none());
-        click_text(&mut frames, &rows, "Send again");
+        for tool in [Tool::SendAgain, Tool::Dismiss] {
+            assert!(frames.tool(NOT_SEEN_SEQ, tool).is_some(), "{tool:?} is always shown");
+        }
+        click_tool(&mut frames, &rows, NOT_SEEN_SEQ, Tool::SendAgain);
         let id = rows.queued().next().unwrap().id;
         assert_eq!(
             frames.actions,
             [Action::SendAgain { text: "lost one".into(), forget: Some(id) }]
         );
         frames.actions.clear();
-        click_text(&mut frames, &rows, "Dismiss");
+        click_tool(&mut frames, &rows, NOT_SEEN_SEQ, Tool::Dismiss);
         assert_eq!(frames.actions, [Action::Forget(id)]);
     }
 
@@ -3831,22 +3873,31 @@ mod tests {
         let mut frames = Frames::new();
         settle(&mut frames, &rows);
         assert!(frames.at("Queued").is_some());
-        assert!(frames.at("Send again").is_none() && frames.at("Dismiss").is_none());
+        assert_eq!(frames.toolbar(NOT_SEEN_SEQ).map(|placed| placed.toolbar), None);
+        assert!(frames.tool(NOT_SEEN_SEQ, Tool::SendAgain).is_none());
+        assert!(frames.tool(NOT_SEEN_SEQ, Tool::Dismiss).is_none());
     }
 
     #[test]
-    fn pointing_at_your_own_bubble_offers_send_again_copy_and_edit_and_send() {
+    fn pointing_at_your_own_bubble_offers_edit_copy_and_send_again_as_icons() {
         let rows = user_rows("run the tests again");
+        let seq = first_seq(&rows);
         let mut frames = Frames::new();
         settle(&mut frames, &rows);
-        assert!(frames.at("Send again").is_none(), "hidden until the pointer is on the bubble");
-        let over = frames.at("run the tests again").unwrap();
-        frames.run(&rows, Turn::Finished, vec![Event::PointerMoved(over)]);
-        settle(&mut frames, &rows);
-        for want in ["Send again", "Copy", "Edit and send"] {
-            assert!(frames.at(want).is_some(), "{want}: {:?}", frames.shapes);
+        for tool in [Tool::EditAndSend, Tool::Copy, Tool::SendAgain] {
+            assert!(frames.tool(seq, tool).is_none(), "{tool:?} hidden until the pointer is near");
         }
-        click_text(&mut frames, &rows, "Send again");
+        let over = frames.at("run the tests again").unwrap();
+        point_at(&mut frames, &rows, over);
+        let drawn: Vec<Tool> = [Tool::EditAndSend, Tool::Copy, Tool::SendAgain]
+            .into_iter()
+            .filter(|tool| frames.tool(seq, *tool).is_some())
+            .collect();
+        assert_eq!(drawn, [Tool::EditAndSend, Tool::Copy, Tool::SendAgain]);
+        for label in ["Send again", "Copy", "Edit and send"] {
+            assert!(frames.at(label).is_none(), "{label} is an icon, not a printed label");
+        }
+        click_tool(&mut frames, &rows, seq, Tool::SendAgain);
         assert_eq!(
             frames.actions,
             [Action::SendAgain { text: "run the tests again".into(), forget: None }]
@@ -3854,15 +3905,147 @@ mod tests {
     }
 
     #[test]
+    fn each_icon_names_itself_in_a_tooltip() {
+        let rows = user_rows("run the tests again");
+        let seq = first_seq(&rows);
+        let mut frames = Frames::new();
+        let mut clock = 0.0;
+        frames.time = Some(clock);
+        settle(&mut frames, &rows);
+        let over = frames.at("run the tests again").unwrap();
+        point_at(&mut frames, &rows, over);
+        for (tool, name) in [
+            (Tool::EditAndSend, "Edit and send"),
+            (Tool::Copy, "Copy"),
+            (Tool::SendAgain, "Send again"),
+        ] {
+            let at = frames.tool(seq, tool).unwrap();
+            point_at(&mut frames, &rows, at);
+            for _ in 0..12 {
+                clock += 1.0;
+                frames.time = Some(clock);
+                frames.run(&rows, Turn::Finished, vec![]);
+            }
+            assert!(frames.at(name).is_some(), "{name}: {:?}", frames.shapes);
+        }
+    }
+
+    #[test]
+    fn the_toolbar_sits_under_the_bubble_and_stops_short_of_the_next_message() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = user_rows("first message");
+        rows.push(Entry {
+            role: Role::User,
+            text: "second message".into(),
+            tool: None,
+            ts: Some(now_ms()),
+            images: Vec::new(),
+        });
+        let seq = first_seq(&rows);
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        let over = frames.at("first message").unwrap();
+        point_at(&mut frames, &rows, over);
+        let placed = frames.toolbar(seq).expect("the toolbar is drawn while the pointer is on it");
+        let next = frames
+            .shapes
+            .iter()
+            .find(|(text, _)| text == "second message")
+            .map(|(_, rect)| *rect)
+            .expect("the next message is drawn");
+        assert_eq!(placed.toolbar.right(), placed.bubble.right());
+        assert!(placed.toolbar.top() >= placed.bubble.bottom(), "{placed:?} over the bubble");
+        assert!(placed.toolbar.top() - placed.bubble.bottom() <= 4.0, "{placed:?} far under it");
+        assert!(placed.toolbar.bottom() <= next.top(), "{placed:?} over the next message {next:?}");
+    }
+
+    #[test]
+    fn the_toolbar_never_covers_the_next_messages_you_line() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = user_rows("first message");
+        rows.push(Entry {
+            role: Role::User,
+            text: "second message".into(),
+            tool: None,
+            ts: Some(now_ms()),
+            images: Vec::new(),
+        });
+        let seq = first_seq(&rows);
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        let over = frames.at("first message").unwrap();
+        point_at(&mut frames, &rows, over);
+        let placed = frames.toolbar(seq).expect("the toolbar is drawn");
+        let lines: Vec<Rect> = frames
+            .shapes
+            .iter()
+            .filter(|(text, _)| text.starts_with("You"))
+            .map(|(_, rect)| *rect)
+            .collect();
+        assert_eq!(lines.len(), 2, "{:?}", frames.shapes);
+        let next = lines.iter().max_by(|a, b| a.top().total_cmp(&b.top())).unwrap();
+        assert!(
+            placed.toolbar.bottom() <= next.top(),
+            "{:?} over the next You line {next:?}",
+            placed.toolbar
+        );
+    }
+
+    #[test]
+    fn the_toolbar_of_the_last_message_ends_above_the_reply_box() {
+        let rows = user_rows("run the tests again");
+        let seq = first_seq(&rows);
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        let over = frames.at("run the tests again").unwrap();
+        point_at(&mut frames, &rows, over);
+        let placed = frames.toolbar(seq).expect("the toolbar is drawn");
+        let reply = frames.shapes.iter().find(|(text, _)| text == "Reply to the agent").unwrap().1;
+        assert!(placed.toolbar.bottom() <= reply.top(), "{:?} over {reply:?}", placed.toolbar);
+    }
+
+    #[test]
+    fn moving_from_the_bubble_down_to_the_toolbar_keeps_it_shown_and_leaving_hides_it() {
+        let rows = user_rows("run the tests again");
+        let seq = first_seq(&rows);
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        let over = frames.at("run the tests again").unwrap();
+        point_at(&mut frames, &rows, over);
+        let placed = frames.toolbar(seq).unwrap();
+        let halfway = pos2(placed.toolbar.center().x, placed.bubble.bottom() + 1.0);
+        point_at(&mut frames, &rows, halfway);
+        assert!(frames.tool(seq, Tool::Copy).is_some(), "still shown in the gap");
+        let on_it = frames.tool(seq, Tool::Copy).unwrap();
+        point_at(&mut frames, &rows, on_it);
+        assert!(frames.tool(seq, Tool::EditAndSend).is_some(), "still shown on the toolbar");
+        point_at(&mut frames, &rows, pos2(20.0, 700.0));
+        assert!(frames.tool(seq, Tool::Copy).is_none(), "hidden once the pointer is away");
+    }
+
+    #[test]
+    fn copy_puts_the_message_text_on_the_clipboard_and_asks_the_agent_for_nothing() {
+        let rows = user_rows("run the tests again");
+        let seq = first_seq(&rows);
+        let mut frames = Frames::new();
+        settle(&mut frames, &rows);
+        let over = frames.at("run the tests again").unwrap();
+        point_at(&mut frames, &rows, over);
+        click_tool(&mut frames, &rows, seq, Tool::Copy);
+        assert_eq!(frames.copied, ["run the tests again"]);
+        assert_eq!(frames.actions, Vec::<Action>::new());
+    }
+
+    #[test]
     fn edit_and_send_puts_the_message_in_the_box_and_keeps_the_draft_for_after() {
         let rows = user_rows("run the tests again");
+        let seq = first_seq(&rows);
         let mut frames = Frames::new();
         frames.state.reply = "my draft".into();
         settle(&mut frames, &rows);
         let over = frames.at("run the tests again").unwrap();
-        frames.run(&rows, Turn::Finished, vec![Event::PointerMoved(over)]);
-        settle(&mut frames, &rows);
-        click_text(&mut frames, &rows, "Edit and send");
+        point_at(&mut frames, &rows, over);
+        click_tool(&mut frames, &rows, seq, Tool::EditAndSend);
         assert_eq!(frames.state.reply, "run the tests again");
         frames.run(&rows, Turn::Finished, vec![key_press(egui::Key::Enter)]);
         assert_eq!(frames.actions, [Action::Reply("run the tests again".into())]);
