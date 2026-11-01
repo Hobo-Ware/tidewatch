@@ -52,6 +52,7 @@ pub(crate) fn saved_window(
         remote: false,
         meeseeks: None,
         folder_repo: None,
+        chosen_name: None,
     });
     Ok(SavedWindow {
         dir: target.repo.to_path_buf(),

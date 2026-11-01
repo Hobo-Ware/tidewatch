@@ -1279,16 +1279,21 @@ fn an_agent_tab_is_labelled_by_its_work_and_not_by_the_worktree_name() {
     let (texts, _) = titled_strip(|_| {});
     assert!(texts.iter().any(|(text, _)| text.contains("brave-otter")), "{texts:?}");
     let (texts, label) = titled_strip(|agent| agent.run.set_goal(Some("Fix the login redirect")));
-    assert!(texts.iter().any(|(text, _)| text.contains("Fix the login redirect")), "{texts:?}");
+    assert!(texts.iter().any(|(text, _)| text.contains("fix-login-redirect")), "{texts:?}");
     assert!(texts.iter().all(|(text, _)| !text.contains("brave-otter")), "{texts:?}");
-    assert_eq!(label, "Fix the login redirect");
+    assert_eq!(label, "fix-login-redirect");
+    let (texts, _) = titled_strip(|agent| {
+        let title = Some("\u{2733} Add retry to sync".to_owned());
+        agent.run.feed(TermSnapshot { title, ..TermSnapshot::default() }, 1.0);
+    });
+    assert!(texts.iter().any(|(text, _)| text.contains("Add retry to sync")), "{texts:?}");
     let (texts, _) = titled_strip(|agent| {
         agent.run.set_goal(Some("Ledger goal"));
         let title = Some("\u{2733} Add retry to sync".to_owned());
         agent.run.feed(TermSnapshot { title, ..TermSnapshot::default() }, 1.0);
     });
-    assert!(texts.iter().any(|(text, _)| text.contains("Add retry to sync")), "{texts:?}");
-    assert!(texts.iter().all(|(text, _)| !text.contains("Ledger goal")), "{texts:?}");
+    assert!(texts.iter().any(|(text, _)| text.contains("ledger-goal")), "{texts:?}");
+    assert!(texts.iter().all(|(text, _)| !text.contains("Add retry to sync")), "{texts:?}");
 }
 
 #[test]

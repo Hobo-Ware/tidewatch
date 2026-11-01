@@ -1,4 +1,4 @@
-//! The `set_name` tool of the Tidewatch MCP server: a Meeseeks names itself with a short kebab-case
+//! The `set_name` tool of the Tidewatch MCP server: an agent names its tab with a short kebab-case
 //! name for its task. The name is what every tab label shows; the worktree and branch keep theirs.
 
 use serde_json::{Map, Value, json};
@@ -17,7 +17,7 @@ const RULE: &str = "2 to 4 lowercase words joined by single hyphens (letters and
 pub fn tool_definition() -> Value {
     json!({
         "name": SET_TOOL,
-        "description": "Only for a Meeseeks: call this once, first thing, to name yourself after your task. The name is what Tidewatch shows on your tab.",
+        "description": "Call this once, with your first progress report, to name your tab after your task, and again only if the task changes. The name is what Tidewatch shows on your tab.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -29,7 +29,7 @@ pub fn tool_definition() -> Value {
     })
 }
 
-/// The problems with `name` as a Meeseeks name, empty when it is one.
+/// The problems with `name` as a tab name, empty when it is one.
 #[must_use]
 pub fn problems(name: &str) -> Vec<String> {
     let mut problems = Vec::new();
@@ -85,7 +85,7 @@ pub fn set(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> (String, bool)
     if !found.is_empty() {
         return refused(&found);
     }
-    emit(TabEvent::MeeseeksName { name: name.to_owned() });
+    emit(TabEvent::TabName { name: name.to_owned() });
     (format!("Recorded. This tab is now called {name}."), false)
 }
 
@@ -114,7 +114,7 @@ mod tests {
         for name in good {
             let ((text, is_error), events) = call(&json!({"name": format!("  {name} ")}));
             assert!(!is_error, "{name}: {text}");
-            assert_eq!(events, [TabEvent::MeeseeksName { name: name.into() }], "{name}");
+            assert_eq!(events, [TabEvent::TabName { name: name.into() }], "{name}");
         }
     }
 

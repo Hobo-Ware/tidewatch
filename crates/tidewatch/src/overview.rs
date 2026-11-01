@@ -975,7 +975,7 @@ mod tests {
             Pane { body: Body::Shell(1), worktree: None, agent: Some(agent) },
         );
         let input = collect("web", Path::new("/work/web"), 0, &tabs, 0.0);
-        assert_eq!(titles(&input.rows), ["Fix the login redirect"]);
+        assert_eq!(titles(&input.rows), ["fix-login-redirect"]);
     }
 
     #[test]

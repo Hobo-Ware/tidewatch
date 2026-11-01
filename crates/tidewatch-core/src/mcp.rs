@@ -4,9 +4,9 @@
 //! [`handle_post`] takes the raw request body of an authenticated `/mcp` POST and returns the reply.
 //! It speaks `initialize`, `ping`, `tools/list` and `tools/call` and swallows notifications. The
 //! tools are `report_finding`, `list_notes`, `reply_to_note`, `ask_user`, `update_progress`,
-//! `get_progress`, `get_workflow`, `report_job`, `set_avatar`, `meeseeks_done` and `set_name`, plus
+//! `get_progress`, `get_workflow`, `report_job`, `set_avatar`, `set_name` and `meeseeks_done`, plus
 //! the repo service tools of `services_mcp.rs`. A tab is offered the ones its [`Offer`] allows
-//! (`meeseeks_done` and `set_name` only to a Meeseeks, `report_finding` to neither a Meeseeks,
+//! (`meeseeks_done` only to a Meeseeks, `report_finding` to neither a Meeseeks,
 //! `ask_user` only to a CLI without a question tool Tidewatch reads); a call to one it is not
 //! offered is answered with a tool error that says where it works. `set_avatar` stays listed, because
 //! a session that listed its tools at start never hears of a new one, but a call is refused until the
@@ -36,12 +36,12 @@ use crate::events::TabEvent;
 use crate::job_mcp;
 use crate::launch::MCP_SERVER_NAME;
 use crate::meeseeks_mcp;
-use crate::meeseeks_name;
 use crate::notes::Notes;
 use crate::progress_mcp;
 use crate::question::{self, AskReply, Reply};
 use crate::question_words;
 use crate::services_mcp;
+use crate::tab_name;
 use crate::workflow_mcp;
 use crate::workflow_profile::Workflow;
 
@@ -104,7 +104,7 @@ pub struct Offer<'a> {
 impl Offer<'_> {
     fn offers(self, tool: &str) -> bool {
         match tool {
-            meeseeks_mcp::DONE_TOOL | meeseeks_name::SET_TOOL => self.role == TabRole::Meeseeks,
+            meeseeks_mcp::DONE_TOOL => self.role == TabRole::Meeseeks,
             "report_finding" => self.role != TabRole::Meeseeks,
             question::TOOL_NAME => !asks_by_itself(self.agent),
             _ => true,
@@ -114,7 +114,6 @@ impl Offer<'_> {
     fn refusal(tool: &str) -> String {
         match tool {
             meeseeks_mcp::DONE_TOOL => "`meeseeks_done` is not offered in this tab: only a Meeseeks can call it. Finish with your end-of-turn block.".to_owned(),
-            meeseeks_name::SET_TOOL => "`set_name` is not offered in this tab: only a Meeseeks can call it. This tab keeps the name it has.".to_owned(),
             question::TOOL_NAME => "`ask_user` is not offered to this CLI: it has a question tool of its own. Ask with that.".to_owned(),
             _ => format!("`{tool}` is not offered to a Meeseeks: nobody reads a finding in a tab that ends with its task. Put what you found in the summary of `meeseeks_done`."),
         }
@@ -310,7 +309,7 @@ pub fn tool_definitions() -> Value {
         job_mcp::tool_definition(),
         avatar_mcp::tool_definition(),
         meeseeks_mcp::tool_definition(),
-        meeseeks_name::tool_definition(),
+        tab_name::tool_definition(),
     ]);
     if let Some(list) = tools.as_array_mut() {
         list.extend(services_mcp::tool_definitions());
@@ -362,8 +361,8 @@ fn call_tool(
         let (text, is_error) = meeseeks_mcp::done(args, emit);
         return Ok(tool_result(&text, is_error));
     }
-    if name == meeseeks_name::SET_TOOL {
-        let (text, is_error) = meeseeks_name::set(args, emit);
+    if name == tab_name::SET_TOOL {
+        let (text, is_error) = tab_name::set(args, emit);
         return Ok(tool_result(&text, is_error));
     }
     if name == job_mcp::REPORT_TOOL {
@@ -754,6 +753,7 @@ mod tests {
             "get_workflow",
             "report_job",
             "set_avatar",
+            "set_name",
             "list_services",
             "add_service",
             "restart_service",
@@ -772,7 +772,7 @@ mod tests {
             names
         };
         assert_eq!(sorted(TabRole::Agent), with(&["report_finding"]));
-        assert_eq!(sorted(TabRole::Meeseeks), with(&["meeseeks_done", "set_name"]));
+        assert_eq!(sorted(TabRole::Meeseeks), with(&["meeseeks_done"]));
     }
 
     #[test]
@@ -847,7 +847,6 @@ mod tests {
     fn a_call_to_a_tool_the_tab_is_not_offered_is_a_tool_error_that_says_where_it_works() {
         let cases = [
             (TabRole::Agent, "meeseeks_done", json!({"summary": "x"}), "only a Meeseeks"),
-            (TabRole::Agent, "set_name", json!({"name": "fix-login"}), "only a Meeseeks"),
             (
                 TabRole::Meeseeks,
                 "report_finding",
@@ -1086,18 +1085,20 @@ mod tests {
     }
 
     #[test]
-    fn set_name_over_rpc_tells_the_tab_and_a_bad_name_is_a_tool_error() {
-        let h = Harness::of(TabRole::Meeseeks);
-        let reply = h.call("set_name", &json!({"name": "fix-https-validation"}));
-        assert_eq!(reply["result"]["isError"], false, "{reply}");
-        let events = h.events.borrow();
-        assert_eq!(*events, [TabEvent::MeeseeksName { name: "fix-https-validation".into() }]);
-        drop(events);
-        for bad in [json!({}), json!({"name": "Fix Login"}), json!({"name": "login"})] {
-            let reply = h.call("set_name", &bad);
-            assert_eq!(reply["result"]["isError"], true, "{bad}");
+    fn set_name_over_rpc_tells_the_tab_of_any_role_and_a_bad_name_is_a_tool_error() {
+        for role in [TabRole::Agent, TabRole::Meeseeks] {
+            let h = Harness::of(role);
+            let reply = h.call("set_name", &json!({"name": "fix-https-validation"}));
+            assert_eq!(reply["result"]["isError"], false, "{role:?} {reply}");
+            let events = h.events.borrow();
+            assert_eq!(*events, [TabEvent::TabName { name: "fix-https-validation".into() }]);
+            drop(events);
+            for bad in [json!({}), json!({"name": "Fix Login"}), json!({"name": "login"})] {
+                let reply = h.call("set_name", &bad);
+                assert_eq!(reply["result"]["isError"], true, "{role:?} {bad}");
+            }
+            assert_eq!(h.events.borrow().len(), 1, "{role:?}");
         }
-        assert_eq!(h.events.borrow().len(), 1);
     }
 
     #[test]

@@ -165,6 +165,7 @@ pub(crate) struct Reader {
     typing: Typing,
     pub(crate) auto: Countdown,
     session_title: Option<String>,
+    own_title: Option<String>,
     first_message: Option<String>,
     pub(crate) rows: Rows,
     pub(crate) view: ViewState,
@@ -207,6 +208,7 @@ impl Reader {
             typing: Typing::default(),
             auto: Countdown::default(),
             session_title: None,
+            own_title: None,
             first_message: None,
             rows: Rows::default(),
             view: ViewState::started_at(started_ms),
@@ -229,6 +231,15 @@ impl Reader {
 
     pub(crate) fn session_title(&self) -> Option<&str> {
         self.session_title.as_deref()
+    }
+
+    /// The name the owner gave the session with `/rename`.
+    pub(crate) fn own_title(&self) -> Option<&str> {
+        self.own_title.as_deref()
+    }
+
+    pub(crate) fn fake_own_title(&mut self, title: Option<&str>) {
+        self.own_title = title.map(str::to_owned);
     }
 
     pub(crate) fn fake_session_title(&mut self, title: &str) {
@@ -461,6 +472,7 @@ impl Reader {
                 }
                 Message::Facts(facts) => self.panel_facts.extend(facts),
                 Message::Title(title) => self.session_title = Some(title),
+                Message::OwnTitle(title) => self.own_title = title,
                 Message::Tokens(tokens) => {
                     self.tokens = tokens;
                     self.recount_share();

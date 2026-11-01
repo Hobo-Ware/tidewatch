@@ -331,6 +331,7 @@ impl Host {
                 let mut pane = Pane::creating_agent(profile.name.clone(), agent.id.clone(), now);
                 if let Some(creating) = &mut pane.agent {
                     creating.folder_pick.clone_from(&saved.folder_repo);
+                    creating.chosen_name.clone_from(&saved.chosen_name);
                 }
                 let id = tabs.push_in(group, title, pane);
                 restore_jobs::reopen(
