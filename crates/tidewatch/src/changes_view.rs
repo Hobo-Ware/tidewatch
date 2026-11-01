@@ -330,6 +330,7 @@ pub(crate) fn paint_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::painted_text_rects;
     use kelp_core::status::parse_porcelain;
 
     fn groups() -> Groups {
@@ -417,17 +418,6 @@ mod tests {
         texts: Vec<(String, Rect)>,
     }
 
-    fn collect(shape: &Shape, out: &mut Vec<(String, Rect)>) {
-        match shape {
-            Shape::Text(text) => out.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-            _ => {}
-        }
-    }
-
     impl Panel {
         fn new(porcelain: &str, side: bool) -> Self {
             let mut view = TabView::new(1, "/work/web".into(), false, None);
@@ -452,7 +442,7 @@ mod tests {
             });
             self.texts.clear();
             for clipped in &output.shapes {
-                collect(&clipped.shape, &mut self.texts);
+                painted_text_rects(&clipped.shape, &mut self.texts);
             }
         }
 

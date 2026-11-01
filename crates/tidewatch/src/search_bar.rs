@@ -228,7 +228,8 @@ fn paint_magnifier(painter: &egui::Painter, center: egui::Pos2) {
 mod tests {
     use super::*;
     use crate::commit_search::Ask;
-    use egui::{Context, Event, RawInput, Shape};
+    use crate::test_support::painted_text_rects;
+    use egui::{Context, Event, RawInput};
     use kelp_ui::graph::Selection;
     use std::time::Duration;
 
@@ -237,17 +238,6 @@ mod tests {
         view: TabView,
         texts: Vec<(String, Rect)>,
         width: f32,
-    }
-
-    fn collect(shape: &Shape, out: &mut Vec<(String, Rect)>) {
-        match shape {
-            Shape::Text(text) => out.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-            _ => {}
-        }
     }
 
     impl Bar {
@@ -277,7 +267,7 @@ mod tests {
             });
             self.texts.clear();
             for clipped in &output.shapes {
-                collect(&clipped.shape, &mut self.texts);
+                painted_text_rects(&clipped.shape, &mut self.texts);
             }
         }
 

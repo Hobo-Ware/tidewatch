@@ -443,6 +443,7 @@ fn round_rect_path(rect: Rect, radius: f32) -> Vec<Pos2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::painted_text_rects_nonblank;
 
     #[test]
     fn the_two_drawn_tags_keep_their_inks_and_outlines() {
@@ -494,17 +495,6 @@ mod tests {
         assert_eq!(folded("Fix the build.\n\nThen the docs.", 400.0), (1, false));
     }
 
-    fn collect(shape: &Shape, out: &mut Vec<(String, Rect)>) {
-        match shape {
-            Shape::Text(text) if !text.galley.text().trim().is_empty() => out.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-            _ => {}
-        }
-    }
-
     struct Line {
         ctx: egui::Context,
         run: Vec<Record>,
@@ -543,7 +533,7 @@ mod tests {
             });
             self.texts.clear();
             for shape in &output.shapes {
-                collect(&shape.shape, &mut self.texts);
+                painted_text_rects_nonblank(&shape.shape, &mut self.texts);
             }
             if clicked {
                 self.open = !self.open;
@@ -734,7 +724,7 @@ mod tests {
             self.last = last;
             self.texts.clear();
             for shape in &output.shapes {
-                collect(&shape.shape, &mut self.texts);
+                painted_text_rects_nonblank(&shape.shape, &mut self.texts);
             }
         }
 

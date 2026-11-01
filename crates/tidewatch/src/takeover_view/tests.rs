@@ -2,6 +2,7 @@ use egui::{Event, PointerButton, RawInput, Rect, pos2, vec2};
 use tidewatch_core::elsewhere::Cli;
 
 use super::*;
+use crate::test_support::painted_text_rects_nonblank;
 
 fn row(id: &str, status: Status, offer: Offer) -> Row {
     Row {
@@ -215,7 +216,7 @@ impl Screen {
         }
         let mut found = Vec::new();
         for clipped in &output.shapes {
-            collect_texts(&clipped.shape, &mut found);
+            painted_text_rects_nonblank(&clipped.shape, &mut found);
         }
         found
     }
@@ -232,15 +233,6 @@ impl Screen {
         self.frame(ctx, vec![Event::PointerMoved(at)]);
         self.frame(ctx, vec![button(true)]);
         self.frame(ctx, vec![button(false)]);
-    }
-}
-
-fn collect_texts(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
-    match shape {
-        egui::Shape::Text(text) if !text.galley.text().trim().is_empty() => found
-            .push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()))),
-        egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_texts(shape, found)),
-        _ => {}
     }
 }
 
@@ -374,7 +366,7 @@ fn drawn_at(width: f32, data: &Card) -> Drawn {
         });
         found.clear();
         for clipped in &output.shapes {
-            collect_texts(&clipped.shape, &mut found);
+            painted_text_rects_nonblank(&clipped.shape, &mut found);
         }
     }
     Drawn { texts: found, left, height }

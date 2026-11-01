@@ -3,6 +3,7 @@ use egui::{Event, PointerButton, RawInput, Rect, Shape, pos2, vec2};
 use std::sync::Arc;
 
 use super::*;
+use crate::test_support::painted_text_rects;
 
 const SHELLS: u32 = 3;
 
@@ -112,7 +113,7 @@ impl Strip {
         self.texts.clear();
         self.dots.clear();
         for clipped in &output.shapes {
-            collect_text(&clipped.shape, &mut self.texts);
+            painted_text_rects(&clipped.shape, &mut self.texts);
             collect_dots(&clipped.shape, &mut self.dots);
         }
         self.rects = rects;
@@ -380,15 +381,6 @@ fn every_icon_box_is_thirty_six_square_and_no_tab_carries_a_colour_fill() {
     assert!(all.iter().all(|fill| *fill == egui::Color32::TRANSPARENT), "{all:?}");
 }
 
-fn collect_text(shape: &Shape, out: &mut Vec<(String, Rect)>) {
-    match shape {
-        Shape::Text(text) => out
-            .push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()))),
-        Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_text(shape, out)),
-        _ => {}
-    }
-}
-
 fn agent_strip(
     title: &str,
     width: f32,
@@ -449,7 +441,7 @@ fn agent_strip(
         });
         texts.clear();
         for clipped in &output.shapes {
-            collect_text(&clipped.shape, &mut texts);
+            painted_text_rects(&clipped.shape, &mut texts);
         }
     }
     (rects, texts)
@@ -520,7 +512,7 @@ fn a_shell_tab_keeps_its_number() {
         });
         texts.clear();
         for clipped in &output.shapes {
-            collect_text(&clipped.shape, &mut texts);
+            painted_text_rects(&clipped.shape, &mut texts);
         }
     }
     assert!(texts.iter().any(|(text, _)| text.starts_with("2  shell 1")), "{texts:?}");
@@ -1098,7 +1090,7 @@ fn a_poofed_tab_keeps_its_title_under_a_dimmed_face_and_has_no_status_dot() {
         for clipped in &output.shapes {
             circle_fills(&clipped.shape, &mut fills_seen);
             circles(&clipped.shape, &mut dots);
-            collect_text(&clipped.shape, &mut texts);
+            painted_text_rects(&clipped.shape, &mut texts);
         }
     }
     assert!(
@@ -1263,7 +1255,7 @@ fn titled_strip(prepare: impl FnOnce(&mut crate::pane::AgentTab)) -> (Vec<(Strin
         });
         texts.clear();
         for clipped in &output.shapes {
-            collect_text(&clipped.shape, &mut texts);
+            painted_text_rects(&clipped.shape, &mut texts);
         }
         tip = tabs.items()[1]
             .pane

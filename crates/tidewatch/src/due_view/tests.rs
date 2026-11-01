@@ -1,9 +1,10 @@
 //! The card: its room, and headless frames for Ask, Snooze, a busy agent and text that never overlaps.
 
-use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Shape};
+use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
 use tidewatch_core::progress::Mark;
 
 use super::*;
+use crate::test_support::painted_text_rects_nonblank;
 
 fn due(steps: usize) -> Due {
     Due {
@@ -25,15 +26,6 @@ struct Card {
     blocked: Option<&'static str>,
     texts: Vec<(String, Rect)>,
     action: Option<Action>,
-}
-
-fn collect(shape: &Shape, out: &mut Vec<(String, Rect)>) {
-    match shape {
-        Shape::Text(text) if !text.galley.text().trim().is_empty() => out
-            .push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()))),
-        Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-        _ => {}
-    }
 }
 
 impl Card {
@@ -64,7 +56,7 @@ impl Card {
         let output = self.ctx.run_ui(raw, |ui| action = show(ui, rect, facts));
         self.texts.clear();
         for shape in &output.shapes {
-            collect(&shape.shape, &mut self.texts);
+            painted_text_rects_nonblank(&shape.shape, &mut self.texts);
         }
         self.action = action.clone();
         action

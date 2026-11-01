@@ -2,7 +2,7 @@ use std::fs;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Shape, pos2, vec2};
+use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, pos2, vec2};
 use kelp_ui::avatars::AvatarStore;
 use tidewatch_core::folder_repos::{self, Target};
 
@@ -12,6 +12,7 @@ use crate::jobs::Jobs;
 use crate::pane_jobs::Done;
 use crate::progress_view::TabState;
 use crate::tab_view::{TabView, ViewSpec};
+use crate::test_support::painted_text_rects;
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -38,15 +39,6 @@ fn now_ms() -> i64 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
     )
     .unwrap()
-}
-
-fn collect(shape: &Shape, out: &mut Vec<(String, egui::Rect)>) {
-    match shape {
-        Shape::Text(text) => out
-            .push((text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()))),
-        Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, out)),
-        _ => {}
-    }
 }
 
 const SIZE: egui::Vec2 = vec2(460.0, 600.0);
@@ -92,7 +84,7 @@ impl Screen {
         }
         self.texts.clear();
         for clipped in &output.shapes {
-            collect(&clipped.shape, &mut self.texts);
+            painted_text_rects(&clipped.shape, &mut self.texts);
         }
     }
 

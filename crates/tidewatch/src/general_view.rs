@@ -478,18 +478,8 @@ mod tests {
 mod checklist_tests {
     use super::*;
     use crate::overview_checklist::{Chip, Source};
+    use crate::test_support::painted_text_rects_nonblank;
     use egui::{Event, PointerButton, RawInput, Rect, pos2, vec2};
-
-    fn walk(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
-        match shape {
-            egui::Shape::Text(text) if !text.galley.text().trim().is_empty() => found.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, found)),
-            _ => {}
-        }
-    }
 
     fn frame(
         ctx: &egui::Context,
@@ -506,7 +496,7 @@ mod checklist_tests {
         let output = ctx.run_ui(raw, |ui| action = checklist_card(ui, list));
         let mut found = Vec::new();
         for clipped in &output.shapes {
-            walk(&clipped.shape, &mut found);
+            painted_text_rects_nonblank(&clipped.shape, &mut found);
         }
         (action, found)
     }
@@ -606,14 +596,7 @@ mod about_tests {
     use egui::{RawInput, Rect, pos2, vec2};
 
     use super::*;
-
-    fn walk(shape: &egui::Shape, texts: &mut Vec<String>) {
-        match shape {
-            egui::Shape::Text(text) => texts.push(text.galley.text().to_owned()),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, texts)),
-            _ => {}
-        }
-    }
+    use crate::test_support::painted_strings;
 
     #[test]
     fn the_about_card_credits_google_noto_emoji_and_its_license() {
@@ -627,7 +610,7 @@ mod about_tests {
         let output = ctx.run_ui(raw, |ui| about_card(ui, &on_time));
         let mut texts = Vec::new();
         for clipped in &output.shapes {
-            walk(&clipped.shape, &mut texts);
+            painted_strings(&clipped.shape, &mut texts);
         }
         assert!(texts.iter().any(|text| text == "About"), "{texts:?}");
         assert!(
@@ -654,7 +637,7 @@ mod about_tests {
         let output = ctx.run_ui(raw, |ui| about_card(ui, on_time));
         let mut texts = Vec::new();
         for clipped in &output.shapes {
-            walk(&clipped.shape, &mut texts);
+            painted_strings(&clipped.shape, &mut texts);
         }
         texts
     }

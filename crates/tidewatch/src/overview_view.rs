@@ -1024,6 +1024,7 @@ mod tests {
     use super::*;
     use crate::agenda::{Item, Mark};
     use crate::overview::{AgentKind, PlaceInput};
+    use crate::test_support::painted_text_rects_nonblank;
     use egui::{Event, PointerButton, RawInput};
     use tidewatch_core::status::{AgentStatus, Reason};
 
@@ -1074,7 +1075,7 @@ mod tests {
         });
         let (mut found, mut boxes, mut discs) = (Vec::new(), Vec::new(), Vec::new());
         for clipped in &output.shapes {
-            walk(&clipped.shape, &mut found);
+            painted_text_rects_nonblank(&clipped.shape, &mut found);
             walk_boxes(&clipped.shape, &mut boxes);
             walk_discs(&clipped.shape, &mut discs);
         }
@@ -1177,17 +1178,6 @@ mod tests {
         crate::overview::build(places)
     }
 
-    fn walk(shape: &egui::Shape, found: &mut Vec<(String, Rect)>) {
-        match shape {
-            egui::Shape::Text(text) if !text.galley.text().trim().is_empty() => found.push((
-                text.galley.text().to_owned(),
-                text.galley.rect.translate(text.pos.to_vec2()),
-            )),
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, found)),
-            _ => {}
-        }
-    }
-
     fn walk_boxes(shape: &egui::Shape, found: &mut Vec<Rect>) {
         match shape {
             egui::Shape::Rect(rect) => found.push(rect.rect),
@@ -1238,7 +1228,7 @@ mod tests {
             let mut found = Vec::new();
             let mut boxes = Vec::new();
             for clipped in &output.shapes {
-                walk(&clipped.shape, &mut found);
+                painted_text_rects_nonblank(&clipped.shape, &mut found);
                 walk_boxes(&clipped.shape, &mut boxes);
             }
             (out, found, boxes)
