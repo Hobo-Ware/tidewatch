@@ -1,7 +1,7 @@
 //! The seams between the Reader and the rest of the app: starting each agent tab's feed, toggling
 //! the view, drawing it in the terminal area and typing what the user chose into the pty.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +9,7 @@ use egui::{Context, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::avatar::Avatar;
 use tidewatch_core::clock::now_ms;
-use tidewatch_core::paths::sent_file_beside;
+use tidewatch_core::paths::{home_dir, sent_file_beside};
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::question_words;
 use tidewatch_core::sent::{Reason as Said, because};
@@ -71,7 +71,7 @@ pub(crate) fn start(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, dev: &DevRead
         if !matches!(tab.pane.body, Body::Shell(_)) || !agent.reader.needs_start() {
             continue;
         }
-        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { continue };
+        let Some(home) = home_dir() else { continue };
         if dev.raw {
             agent.reader.set_wants_reader(false);
         }

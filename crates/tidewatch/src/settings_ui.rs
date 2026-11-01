@@ -82,8 +82,10 @@ const COPY_GAP: f32 = 8.0;
 
 /// `path` for the screen: the home folder as `~`.
 pub(crate) fn shown_path(path: &str) -> String {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    tidewatch_core::folder_repos::tilde(std::path::Path::new(path), home.as_deref())
+    tidewatch_core::folder_repos::tilde(
+        std::path::Path::new(path),
+        tidewatch_core::paths::home_dir().as_deref(),
+    )
 }
 
 /// A path on one line in `room`: `~` for the home folder, cut in the middle with an ellipsis so the

@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use tidewatch_core::github_clone::{self, CloneError, Landing};
+use tidewatch_core::paths::home_dir;
 use tidewatch_core::tools::Tools;
 
 use super::Tidewatch;
@@ -46,7 +47,7 @@ impl Tidewatch {
             .as_ref()
             .and_then(|paths| paths.root().parent())
             .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .or_else(home_dir)
             .unwrap_or_else(|| PathBuf::from("/"))
     }
 
