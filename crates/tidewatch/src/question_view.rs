@@ -21,7 +21,9 @@ use crate::reader_rows::{Asked, QuestionRow, ToolKind};
 use crate::reader_turns;
 use crate::reader_view::{INSET, ellipsized};
 use crate::screen_kit::TEXT_SECONDARY;
-use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
+use crate::screen_kit::{
+    Size, TEXT_TAG, body, heading, icon_button, mono, primary_button, quiet_button,
+};
 use crate::screen_kit::{TEXT_BODY, TEXT_TITLE};
 
 const CARD_RADIUS: u8 = 14;
@@ -44,7 +46,20 @@ const SECTION_GAP: f32 = 14.0;
 const DOT: f32 = 7.0;
 const ANSWER_ROW_PAD_X: i8 = 14;
 const ANSWER_ROW_PAD_Y: i8 = 12;
+pub(crate) const FOLDED_H: f32 = 44.0;
+const FOLDED_RADIUS: u8 = 12;
+const FOLDED_BAR: f32 = 3.0;
+const FOLDED_PAD: f32 = 14.0;
+const FOLDED_GAP: f32 = 12.0;
+const FOLDED_MIN_TEXT: f32 = 96.0;
+const FOLD_W: f32 = 28.0;
 const ROW_INK: Color32 = Color32::from_rgb(0x4a, 0x52, 0x63);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fold {
+    Folded,
+    Open,
+}
 
 /// A live card: the state of the questions in row `seq`, and what the last frame measured.
 pub(crate) struct Live {
@@ -54,6 +69,7 @@ pub(crate) struct Live {
     pub(crate) picks: usize,
     /// What is left before Tidewatch answers for the user, in a tab that runs on its own.
     pub(crate) auto_left: Option<f64>,
+    fold: Fold,
     height: f32,
     focus_other: bool,
     focused_once: bool,
@@ -61,6 +77,8 @@ pub(crate) struct Live {
     reclaim: bool,
     #[cfg(test)]
     rects: std::cell::RefCell<Vec<Rect>>,
+    #[cfg(test)]
+    fold_at: std::cell::Cell<Option<Rect>>,
 }
 
 impl Live {
@@ -70,18 +88,35 @@ impl Live {
             card,
             picks: 0,
             auto_left: None,
+            fold: Fold::Folded,
             height: ESTIMATED_H,
             focus_other: false,
             focused_once: false,
             reclaim: false,
             #[cfg(test)]
             rects: std::cell::RefCell::default(),
+            #[cfg(test)]
+            fold_at: std::cell::Cell::default(),
         }
     }
 
     /// How much room the card took last frame, with the gap above the reply box.
     pub(crate) fn height(&self) -> f32 {
-        self.height + ROW_GAP
+        let own = if self.is_folded() { FOLDED_H } else { self.height };
+        own + ROW_GAP
+    }
+
+    pub(crate) fn is_folded(&self) -> bool {
+        self.fold == Fold::Folded
+    }
+
+    pub(crate) fn open(&mut self) {
+        self.fold = Fold::Open;
+        self.reclaim = true;
+    }
+
+    pub(crate) fn fold(&mut self) {
+        self.fold = Fold::Folded;
     }
 }
 
@@ -495,7 +530,7 @@ fn header_row(ui: &mut Ui, live: &Live, profile: &str) {
         (n, false) => format!("{} of {n}", live.card.step() + 1),
         (n, true) => format!("{} of {n} \u{b7} pick any", live.card.step() + 1),
     };
-    let mut right = rect.right();
+    let mut right = rect.right() - FOLD_W - 10.0;
     if !text.is_empty() {
         let galley = painter.layout_no_wrap(text, body(12.0), brand::FAINT);
         right -= galley.size().x;
@@ -595,6 +630,10 @@ pub(crate) fn live_card(
     grab: bool,
 ) -> Effect {
     let width = dock.width() - 2.0 * INSET;
+    if live.is_folded() {
+        folded_line(ui, dock, live, profile, grab);
+        return Effect::Nothing;
+    }
     let max_h = dock.height();
     let height = live.height.min(max_h);
     let region =
@@ -656,6 +695,20 @@ pub(crate) fn live_card(
         live.height = rect.height();
         ui.ctx().request_repaint();
     }
+    let fold_at = Rect::from_center_size(
+        pos2(
+            rect.right() - f32::from(CARD_PAD_X) - FOLD_W / 2.0,
+            rect.top() + 20.0 + HEADER_H / 2.0,
+        ),
+        vec2(FOLD_W, FOLD_W),
+    );
+    #[cfg(test)]
+    live.fold_at.set(Some(fold_at));
+    if fold_button(ui, fold_at).clicked() {
+        live.fold();
+        ui.ctx().request_repaint();
+        return Effect::Nothing;
+    }
     if let Some(row) = drawn.clicked.or(multi_click) {
         let chosen = live.card.choose(row);
         if chosen == Effect::TypeOther {
@@ -709,6 +762,108 @@ pub(crate) fn live_card(
         }
     }
     effect
+}
+
+fn fold_button(ui: &mut Ui, at: Rect) -> Response {
+    let mut child = ui.new_child(UiBuilder::new().max_rect(at));
+    let response = icon_button(&mut child, "", "Fold", Size::Compact);
+    let center = response.rect.center();
+    let stroke = Stroke::new(1.5, brand::SOFT);
+    let painter = ui.painter();
+    painter.line_segment([center + vec2(-4.0, 1.5), center + vec2(0.0, -2.5)], stroke);
+    painter.line_segment([center + vec2(0.0, -2.5), center + vec2(4.0, 1.5)], stroke);
+    response
+}
+
+fn options_text(count: usize) -> String {
+    if count == 1 { "1 option".to_owned() } else { format!("{count} options") }
+}
+
+/// The folded card: one line over the reply box that says who asks what, with an Answer button.
+/// It takes no keys except Enter, and only while the reply box is empty and nothing else holds the
+/// keyboard.
+fn folded_line(ui: &mut Ui, dock: Rect, live: &mut Live, profile: &str, reply_empty: bool) {
+    let region = Rect::from_min_size(
+        pos2(dock.left() + INSET, dock.bottom() - FOLDED_H),
+        vec2(dock.width() - 2.0 * INSET, FOLDED_H),
+    );
+    let id = ui.id().with(("question-fold", live.seq));
+    #[cfg(test)]
+    {
+        live.rects.borrow_mut().clear();
+        live.rects.borrow_mut().push(region);
+    }
+    let line = ui.interact(region, id, Sense::click());
+    let (headline, detail) = headlines(live.card.question());
+    let mut tip = headline.clone();
+    if let Some(detail) = detail {
+        tip = format!("{tip}\n{detail}");
+    }
+    let line = line.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip);
+    let painter = ui.painter().clone();
+    let radius = CornerRadius::same(FOLDED_RADIUS);
+    painter.rect(
+        region,
+        radius,
+        brand::ITEM,
+        Stroke::new(1.0, brand::ITEM_LINE),
+        StrokeKind::Inside,
+    );
+    let bar = Rect::from_min_size(region.min, vec2(FOLDED_BAR, region.height()));
+    painter.with_clip_rect(bar).rect_filled(region, radius, brand::ORANGE);
+    let mid = region.center().y;
+    paint_dot(
+        &painter,
+        pos2(region.left() + FOLDED_BAR + FOLDED_PAD + DOT / 2.0, mid),
+        brand::ORANGE,
+    );
+    let text_left = region.left() + FOLDED_BAR + FOLDED_PAD + DOT + 8.0;
+    let button_w = Size::Compact.pad() * 2.0
+        + painter
+            .layout_no_wrap("Answer".to_owned(), body(Size::Compact.font()), brand::TEXT)
+            .size()
+            .x;
+    let button_left = region.right() - FOLDED_GAP - button_w;
+    let mut meta = options_text(live.card.question().options.len());
+    if let Some(left) = live.auto_left {
+        meta = format!("{meta} \u{b7} picks in {}", question_auto::clock_text(left));
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+    }
+    let meta_galley = painter.layout_no_wrap(meta, body(TEXT_TAG), brand::MUTED);
+    let meta_left = button_left - FOLDED_GAP - meta_galley.size().x;
+    let shows_meta = meta_left - FOLDED_GAP - text_left >= FOLDED_MIN_TEXT;
+    let text_right = if shows_meta { meta_left } else { button_left } - FOLDED_GAP;
+    let mut job = LayoutJob::default();
+    job.append(
+        &format!("{profile} asks:"),
+        0.0,
+        TextFormat::simple(heading(TEXT_BODY), brand::TEXT),
+    );
+    job.append(&format!(" {headline}"), 0.0, TextFormat::simple(body(TEXT_BODY), brand::TEXT));
+    job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_left).max(1.0));
+    let galley = painter.layout_job(job);
+    painter.galley(pos2(text_left, mid - galley.size().y / 2.0), galley, brand::TEXT);
+    if shows_meta {
+        painter.galley(
+            pos2(meta_left, mid - meta_galley.size().y / 2.0),
+            meta_galley,
+            brand::MUTED,
+        );
+    }
+    let button_at = Rect::from_min_size(
+        pos2(button_left, mid - Size::Compact.height() / 2.0),
+        vec2(button_w, Size::Compact.height()),
+    );
+    let mut child = ui.new_child(UiBuilder::new().max_rect(button_at));
+    let answer = primary_button(&mut child, "Answer", true, Size::Compact).clicked();
+    let enter = reply_empty
+        && (ui.ctx().memory(egui::Memory::focused).is_none()
+            || ui.ctx().egui_wants_keyboard_input())
+        && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+    if answer || line.clicked() || enter {
+        live.open();
+        ui.ctx().request_repaint();
+    }
 }
 
 fn paint_question_icon(painter: &Painter, center: Pos2, ink: Color32) {
@@ -1013,8 +1168,14 @@ mod tests {
         QuestionOption::new(label)
     }
 
+    fn opened(mut live: Live) -> Live {
+        live.open();
+        live.reclaim = false;
+        live
+    }
+
     fn live() -> Live {
-        Live::new(
+        opened(Live::new(
             7,
             Card::new(vec![
                 Question {
@@ -1032,7 +1193,7 @@ mod tests {
                     options: vec![option("Unit"), option("Lints"), option("UI")],
                 },
             ]),
-        )
+        ))
     }
 
     struct Screen {
@@ -1042,6 +1203,8 @@ mod tests {
         composer_focus: bool,
         grab: bool,
         effects: Vec<Effect>,
+        width: f32,
+        texts: Vec<(String, Rect)>,
     }
 
     fn key(key: Key, modifiers: Modifiers) -> Event {
@@ -1057,19 +1220,21 @@ mod tests {
                 composer_focus: false,
                 grab: true,
                 effects: Vec::new(),
+                width: 700.0,
+                texts: Vec::new(),
             }
         }
 
         fn frame(&mut self, events: Vec<Event>) {
             let raw = RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 800.0))),
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(self.width, 800.0))),
                 events,
                 focused: true,
                 ..RawInput::default()
             };
-            let Self { ctx, live, composer, composer_focus, grab, effects } = self;
-            let _ = ctx.run_ui(raw, |ui| {
-                let dock = Rect::from_min_max(pos2(0.0, 0.0), pos2(700.0, 740.0));
+            let Self { ctx, live, composer, composer_focus, grab, effects, width, texts } = self;
+            let out = ctx.run_ui(raw, |ui| {
+                let dock = Rect::from_min_max(pos2(0.0, 0.0), pos2(*width, 740.0));
                 let field = Rect::from_min_size(pos2(14.0, 750.0), vec2(600.0, 30.0));
                 let response =
                     ui.put(field, TextEdit::singleline(composer).id(Id::new("composer")));
@@ -1079,7 +1244,27 @@ mod tests {
                 let effect = live_card(ui, dock, live, "Builder", *grab);
                 effects.push(effect);
             });
+            *texts = out
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    Shape::Text(text) => {
+                        Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
             self.grab = false;
+        }
+
+        fn folded() -> Self {
+            let mut screen = Self::new();
+            screen.live.fold();
+            screen
+        }
+
+        fn text(&self, text: &str) -> Option<Rect> {
+            self.texts.iter().find(|(shown, _)| shown.contains(text)).map(|(_, rect)| *rect)
         }
 
         fn settle(&mut self) {
@@ -1178,7 +1363,7 @@ mod tests {
 
     fn picks_screen() -> Screen {
         let mut screen = Screen::new();
-        screen.live = Live::new(
+        screen.live = opened(Live::new(
             8,
             Card::new(vec![Question {
                 text: "Which storage?".into(),
@@ -1197,7 +1382,7 @@ mod tests {
                     },
                 ],
             }]),
-        );
+        ));
         screen
     }
 
@@ -1233,7 +1418,7 @@ mod tests {
         decided.settle();
         let bare = {
             let mut screen = picks_screen();
-            screen.live = Live::new(
+            screen.live = opened(Live::new(
                 9,
                 Card::new(vec![Question {
                     text: "Which storage?".into(),
@@ -1242,7 +1427,7 @@ mod tests {
                     select: Select::Single,
                     options: vec![option("On the run"), option("On the stage")],
                 }]),
-            );
+            ));
             screen.settle();
             screen.live.height
         };
@@ -1303,6 +1488,137 @@ mod tests {
         let (question, answer) = (at("Which retry?").unwrap(), at("Backoff").unwrap());
         assert!(answer.y > question.y + 10.0, "the answer sits below the question");
         assert!(at("Question").is_some() && at("12:41").is_some() && at("Your answer").is_some());
+    }
+
+    #[test]
+    fn a_new_question_opens_folded_at_one_44_px_line_over_the_reply_box() {
+        let mut screen = Screen::new();
+        screen.live = Live::new(3, screen.live.card.clone());
+        assert!(screen.live.is_folded());
+        assert_eq!(screen.live.height(), FOLDED_H + ROW_GAP);
+        screen.settle();
+        let rects = screen.rects();
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].height(), 44.0);
+        assert_eq!(rects[0].bottom(), 740.0);
+        assert_eq!(rects[0].width(), 700.0 - 2.0 * INSET);
+        assert!(screen.text("Builder asks:").is_some());
+        assert!(screen.text("2 options").is_some());
+    }
+
+    #[test]
+    fn the_folded_line_counts_a_single_option_in_the_singular() {
+        assert_eq!(options_text(1), "1 option");
+        assert_eq!(options_text(3), "3 options");
+    }
+
+    #[test]
+    fn the_answer_button_opens_the_full_card() {
+        let mut screen = Screen::folded();
+        screen.settle();
+        let answer = screen.text("Answer").expect("the button").center();
+        screen.click(answer);
+        screen.settle();
+        assert!(!screen.live.is_folded());
+        assert_eq!(screen.rects().len(), 2, "the two options are drawn");
+    }
+
+    #[test]
+    fn a_click_on_the_line_opens_the_full_card() {
+        let mut screen = Screen::folded();
+        screen.settle();
+        screen.click(pos2(200.0, 720.0));
+        assert!(!screen.live.is_folded());
+    }
+
+    #[test]
+    fn digit_keys_and_the_other_card_keys_do_nothing_while_folded_and_pick_once_open() {
+        let mut screen = Screen::folded();
+        screen.settle();
+        for pressed in [Key::Num1, Key::Num2, Key::Space, Key::ArrowDown, Key::G] {
+            screen.frame(vec![key(pressed, Modifiers::NONE)]);
+        }
+        screen.frame(vec![key(Key::Enter, Modifiers::COMMAND)]);
+        assert!(screen.live.is_folded());
+        assert!(!screen.live.card.is_picked(0) && !screen.live.card.is_picked(1));
+        assert_eq!(screen.live.card.cursor(), 0);
+        assert_eq!(screen.effects.iter().filter(|e| **e != Effect::Nothing).count(), 0);
+        screen.live.open();
+        screen.settle();
+        screen.frame(vec![key(Key::Num2, Modifiers::NONE)]);
+        assert!(screen.live.card.is_picked(1));
+    }
+
+    #[test]
+    fn the_fold_button_folds_the_open_card_again() {
+        let mut screen = Screen::new();
+        screen.settle();
+        assert!(!screen.live.is_folded());
+        let at = screen.live.fold_at.get().expect("the fold button").center();
+        screen.click(at);
+        assert!(screen.live.is_folded());
+        screen.settle();
+        assert_eq!(screen.rects().len(), 1);
+        assert_eq!(screen.live.height(), FOLDED_H + ROW_GAP);
+    }
+
+    #[test]
+    fn enter_opens_the_folded_card_only_while_the_reply_box_is_empty() {
+        let mut screen = Screen::folded();
+        screen.composer_focus = true;
+        screen.settle();
+        screen.grab = false;
+        screen.frame(vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(screen.live.is_folded(), "a reply box with text keeps its Enter");
+        screen.grab = true;
+        screen.frame(vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(!screen.live.is_folded());
+    }
+
+    #[test]
+    fn enter_opens_the_folded_card_when_nothing_holds_the_keyboard() {
+        let mut screen = Screen::folded();
+        screen.settle();
+        screen.grab = true;
+        screen.frame(vec![key(Key::Enter, Modifiers::NONE)]);
+        assert!(!screen.live.is_folded());
+    }
+
+    #[test]
+    fn the_countdown_shows_on_the_folded_line() {
+        let mut screen = Screen::folded();
+        screen.live.auto_left = Some(44.2);
+        screen.settle();
+        assert!(screen.text("2 options \u{b7} picks in 0:45").is_some());
+    }
+
+    #[test]
+    fn the_folded_line_keeps_its_texts_inside_the_column_at_420_and_1400_px() {
+        for width in [420.0, 1400.0] {
+            let mut screen = Screen::folded();
+            screen.width = width;
+            screen.live.auto_left = Some(45.0);
+            screen.live.card = Card::new(vec![Question {
+                text: "The show merge refuses 146682 into 60968 because their seasons do not \
+                       match. How should we finish the show-level part?"
+                    .into(),
+                header: None,
+                decision: None,
+                select: Select::Single,
+                options: vec![option("Stage"), option("Run"), option("Both")],
+            }]);
+            screen.settle();
+            let line = screen.rects()[0];
+            let answer = screen.text("Answer").expect("the button");
+            let asks = screen.text("Builder asks:").expect("the question");
+            assert!(line.contains_rect(answer), "{width}: {answer:?} in {line:?}");
+            assert!(line.contains_rect(asks), "{width}: {asks:?} in {line:?}");
+            if let Some(meta) = screen.text("options") {
+                assert!(line.contains_rect(meta), "{width}: {meta:?} in {line:?}");
+                assert!(asks.right() <= meta.left(), "{width}: the question meets the count");
+            }
+            assert!(asks.right() <= answer.left(), "{width}: the question meets the button");
+        }
     }
 
     fn drawn_texts(row: &QuestionRow, auto: bool) -> Vec<String> {
