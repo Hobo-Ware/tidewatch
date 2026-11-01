@@ -42,7 +42,7 @@ use crate::paths::{
 use crate::sent::{self, Reason, Record, because};
 use crate::status::parse_hook;
 use crate::workflow_detect;
-use crate::{progress_store, prompt_answer};
+use crate::{name_ask, progress_store, prompt_answer};
 
 /// The hook agent whose `UserPromptSubmit` answer reaches the model as context.
 const PROMPT_ANSWERING_AGENT: &str = "claude";
@@ -129,6 +129,9 @@ impl Shared {
     }
 
     fn emit(&self, entry: &Entry, event: TabEvent) {
+        if matches!(event, TabEvent::TabName { .. }) {
+            let _ = name_ask::mark_asked(&entry.notes_file);
+        }
         let _ = self.events.send(TabMessage {
             tab_id: entry.tab_id,
             generation: entry.generation,
@@ -561,6 +564,9 @@ fn prompt_reply(
     }
     if let Some(line) = ledger.as_ref().and_then(prompt_answer::ledger_context) {
         contexts.push(line);
+    }
+    if let Some(line) = name_ask::line_due(&entry.notes_file, ledger.as_ref()) {
+        contexts.push(line.to_owned());
     }
     if let Some(line) = service_line_due(shared, entry.tab_id) {
         contexts.push(line);
@@ -1087,6 +1093,7 @@ mod tests {
         let fixed_marker = avatar_asked_file_beside(&notes_of(&f, &fixed));
         f.shared.avatar_ask_exempt.lock().unwrap().extend([3]);
         for (what, token) in [("asked", &asked), ("drawn", &drawn), ("fixed", &fixed)] {
+            name_ask::mark_asked(&notes_of(&f, token)).unwrap();
             save_ledger(&f, token, CALM);
             let response = f.send("POST", "/hook/claude", Some(token), PROMPT);
             assert_eq!(response.body, "{}", "{what}");
@@ -1099,6 +1106,7 @@ mod tests {
     fn only_a_claude_prompt_carries_the_icon_ask() {
         let f = fixture();
         let token = f.register(1, "a");
+        name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
         save_ledger(&f, &token, CALM);
         let marker = avatar_asked_file_beside(&notes_of(&f, &token));
         let others = [
@@ -1142,6 +1150,72 @@ mod tests {
         assert!(context.contains("\"Verified live\""), "{context}");
     }
 
+    const SET_NAME: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_name","arguments":{"name":"fix-login-redirect"}}}"#;
+
+    #[test]
+    fn a_tab_with_a_goal_and_no_name_is_asked_for_one_on_its_next_prompt_and_never_twice() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        already_asked(&f, &token);
+        let notes = notes_of(&f, &token);
+        assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}", "no report");
+        assert!(!name_ask::was_asked(&notes));
+        save_ledger(&f, &token, CALM);
+        let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert_eq!(context_of(&response), name_ask::ASK);
+        assert!(name_ask::was_asked(&notes), "the marker is written with the ask");
+        for _ in 0..2 {
+            assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}");
+        }
+        assert_eq!(sent::load(&sent_file_beside(&notes)), [], "the ask leaves no record");
+    }
+
+    #[test]
+    fn the_name_ask_shares_an_answer_with_the_open_line_and_each_tab_is_asked_on_its_own() {
+        let open =
+            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
+        let f = fixture();
+        let (one, two) = (f.register(1, "a"), f.register(2, "b"));
+        already_asked(&f, &one);
+        already_asked(&f, &two);
+        save_ledger(&f, &one, open);
+        save_ledger(&f, &two, CALM);
+        let both = context_of(&f.send("POST", "/hook/claude", Some(&one), PROMPT));
+        let lines: Vec<&str> = both.lines().collect();
+        assert_eq!(lines.len(), 2, "{both}");
+        assert!(lines[0].starts_with("Open in your report:") && lines[1] == name_ask::ASK);
+        assert_eq!(context_of(&f.send("POST", "/hook/claude", Some(&two), PROMPT)), name_ask::ASK);
+        let again = context_of(&f.send("POST", "/hook/claude", Some(&one), PROMPT));
+        assert!(!again.contains("set_name"), "{again}");
+    }
+
+    #[test]
+    fn a_tab_that_named_itself_is_never_asked() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        already_asked(&f, &token);
+        save_ledger(&f, &token, CALM);
+        let reply = f.send("POST", "/mcp", Some(&token), SET_NAME);
+        assert_eq!(body_json(&reply)["result"]["isError"], false, "{}", reply.body);
+        assert!(name_ask::was_asked(&notes_of(&f, &token)));
+        assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}");
+    }
+
+    #[test]
+    fn a_bad_name_does_not_stop_the_ask() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        already_asked(&f, &token);
+        save_ledger(&f, &token, CALM);
+        let bad = SET_NAME.replace("fix-login-redirect", "Fix Login");
+        let reply = f.send("POST", "/mcp", Some(&token), &bad);
+        assert_eq!(body_json(&reply)["result"]["isError"], true, "{}", reply.body);
+        assert_eq!(
+            context_of(&f.send("POST", "/hook/claude", Some(&token), PROMPT)),
+            name_ask::ASK
+        );
+    }
+
     #[test]
     fn a_prompt_to_a_tab_that_never_saved_a_report_or_waits_on_the_owner_adds_no_report_line() {
         let cases = [
@@ -1155,6 +1229,7 @@ mod tests {
             let f = fixture();
             let token = f.register(1, "a");
             already_asked(&f, &token);
+            name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
             if let Some(text) = text {
                 save_ledger(&f, &token, text);
             }
@@ -1173,6 +1248,7 @@ mod tests {
         let f = fixture();
         let token = f.register(1, "a");
         already_asked(&f, &token);
+        name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
         save_ledger(&f, &token, open);
         for _ in 0..2 {
             let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
@@ -1220,6 +1296,7 @@ mod tests {
         for token in [&one, &two] {
             already_asked(&f, token);
             save_ledger(&f, token, CALM);
+            name_ask::mark_asked(&notes_of(&f, token)).unwrap();
         }
         let line = |text: &str| HashMap::from([(1, text.to_owned()), (2, text.to_owned())]);
         let ask = |token: &str| f.send("POST", "/hook/claude", Some(token), PROMPT);
