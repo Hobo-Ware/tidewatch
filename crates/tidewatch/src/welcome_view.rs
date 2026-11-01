@@ -15,7 +15,8 @@ use crate::screen_kit::{
 };
 use crate::screen_kit::{TEXT_BODY, TEXT_TITLE};
 use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
-use crate::welcome::{Recent, shown_path};
+use crate::welcome::Recent;
+use tidewatch_core::folder_repos::tilde;
 
 const COLUMN_W: f32 = 560.0;
 const INTRO_H: f32 = 65.0;
@@ -112,7 +113,7 @@ pub(crate) fn show(
             painter.text(
                 pos2(name.right() + 12.0, row.center().y),
                 Align2::LEFT_CENTER,
-                shown_path(&repo.dir, home),
+                tilde(&repo.dir, home),
                 mono(TEXT_SECONDARY),
                 brand::MUTED,
             );

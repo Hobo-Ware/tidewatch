@@ -15,7 +15,7 @@ use crate::screen_kit::{
 };
 use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 use crate::settings_ui::text_input;
-use crate::welcome::shown_path;
+use tidewatch_core::folder_repos::tilde;
 
 const CARD_H: f32 = 92.0;
 const BAR_H: f32 = 4.0;
@@ -87,7 +87,7 @@ fn form_body(
             note(ui, &format!("Looking for {} on this machine...", repo.slug()), brand::MUTED);
         }
         Verdict::Ready(repo, Landing::Open(dir)) => {
-            known_card(ui, &format!("{} is already at ", repo.slug()), &shown_path(dir, home));
+            known_card(ui, &format!("{} is already at ", repo.slug()), &tilde(dir, home));
         }
         Verdict::Ready(_, Landing::Clone { .. }) => {}
         Verdict::Ready(_, Landing::Refuse(why)) => note(ui, why, brand::RED),
@@ -102,7 +102,7 @@ fn form_body(
             path_line(
                 ui,
                 "Clones to ",
-                &shown_path(target, home),
+                &tilde(target, home),
                 &target.display().to_string(),
                 body(TEXT_TAG),
                 brand::MUTED,
@@ -172,7 +172,7 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
     painter.text(
         inner.left_top() + vec2(0.0, 22.0),
         Align2::LEFT_TOP,
-        fit_path(painter, "", &shown_path(&cloning.target, home), &mono(TEXT_TAG), inner.width()),
+        fit_path(painter, "", &tilde(&cloning.target, home), &mono(TEXT_TAG), inner.width()),
         mono(TEXT_TAG),
         brand::FAINT,
     );
