@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agents::{Agent, AgentOverride, AgentTable, ArgList, Level};
 use crate::effort_migration;
-use crate::fsutil::write_atomic;
+use crate::fsutil::save_toml;
 use crate::paths::TidewatchPaths;
 
 fn yes() -> bool {
@@ -115,8 +115,7 @@ impl Profiles {
     }
 
     pub fn save(&self, file: &Path) -> std::io::Result<()> {
-        let text = toml::to_string(self).map_err(std::io::Error::other)?;
-        write_atomic(file, &text)
+        save_toml(file, self)
     }
 
     /// First launch: when `profiles.toml` does not exist, seed profiles for the agents found on

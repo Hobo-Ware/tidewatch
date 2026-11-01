@@ -2,18 +2,17 @@
 
 use std::path::Path;
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{read_json, save_json};
 use crate::job::JobBoard;
 
 /// The saved board. A missing or unreadable file is `None`.
 #[must_use]
 pub fn load(file: &Path) -> Option<JobBoard> {
-    serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()
+    read_json(file)
 }
 
 pub fn save(file: &Path, board: &JobBoard) -> std::io::Result<()> {
-    let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
-    write_atomic(file, &text)
+    save_json(file, board)
 }
 
 #[cfg(test)]

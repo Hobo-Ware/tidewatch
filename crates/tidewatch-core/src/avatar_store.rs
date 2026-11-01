@@ -3,16 +3,16 @@
 use std::path::Path;
 
 use crate::avatar::{Avatar, clean};
-use crate::fsutil::write_atomic;
+use crate::fsutil::{read_json, save_json, write_atomic};
 
 #[must_use]
 pub fn load(file: &Path) -> Option<Avatar> {
-    let saved: Avatar = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let saved: Avatar = read_json(file)?;
     clean(&saved.svg, &saved.reason).ok()
 }
 
 pub fn save(file: &Path, avatar: &Avatar) -> std::io::Result<()> {
-    write_atomic(file, &serde_json::to_string(avatar).map_err(std::io::Error::other)?)
+    save_json(file, avatar)
 }
 
 pub fn clear(file: &Path) -> std::io::Result<()> {

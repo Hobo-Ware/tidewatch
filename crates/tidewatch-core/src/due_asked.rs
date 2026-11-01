@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::civil_date::Date;
-use crate::fsutil::write_atomic;
+use crate::fsutil::save_json_pretty;
 
 #[derive(Serialize, Deserialize)]
 struct Saved {
@@ -28,8 +28,7 @@ pub fn load(file: &Path, today: Date) -> Vec<String> {
 
 pub fn save(file: &Path, today: Date, asked: &[String]) -> std::io::Result<()> {
     let saved = Saved { day: today, asked: asked.to_vec() };
-    let text = serde_json::to_string_pretty(&saved).map_err(std::io::Error::other)?;
-    write_atomic(file, &text)
+    save_json_pretty(file, &saved)
 }
 
 #[cfg(test)]

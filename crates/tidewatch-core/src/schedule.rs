@@ -7,7 +7,7 @@ use std::thread::JoinHandle;
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{load_toml_or_default, save_toml};
 use crate::progress::{Ledger, Mark, Scheduled, When};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,16 +95,11 @@ impl Index {
     /// A missing or unreadable file is an empty index.
     #[must_use]
     pub fn load(file: &Path) -> Self {
-        let Ok(text) = std::fs::read_to_string(file) else { return Self::default() };
-        toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("tidewatch: {} is invalid ({e}); starting empty", file.display());
-            Self::default()
-        })
+        load_toml_or_default(file, "starting empty")
     }
 
     pub fn save(&self, file: &Path) -> std::io::Result<()> {
-        let text = toml::to_string(self).map_err(std::io::Error::other)?;
-        write_atomic(file, &text)
+        save_toml(file, self)
     }
 
     /// Replaces the tab's entry, or drops it when it has no open item left.

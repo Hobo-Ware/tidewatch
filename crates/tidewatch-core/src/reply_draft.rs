@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{read_json, save_json};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Draft {
@@ -25,8 +25,7 @@ impl Draft {
 /// The saved draft, with the files that are gone left out. None when there is nothing to bring back.
 #[must_use]
 pub fn load(file: &Path) -> Option<Draft> {
-    let text = std::fs::read_to_string(file).ok()?;
-    let mut draft: Draft = serde_json::from_str(&text).ok()?;
+    let mut draft: Draft = read_json(file)?;
     draft.pictures.retain(|path| path.exists());
     (!draft.is_blank()).then_some(draft)
 }
@@ -42,8 +41,7 @@ pub fn save(file: &Path, draft: &Draft) -> std::io::Result<()> {
             _ => Ok(()),
         };
     }
-    let text = serde_json::to_string(draft).map_err(std::io::Error::other)?;
-    write_atomic(file, &text)
+    save_json(file, draft)
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{read_json, save_json};
 use crate::link_board::{Link, LinkBoard};
 
 static WRITING: Mutex<()> = Mutex::new(());
@@ -13,12 +13,11 @@ static WRITING: Mutex<()> = Mutex::new(());
 /// The saved board. A missing or unreadable file is `None`.
 #[must_use]
 pub fn load(file: &Path) -> Option<LinkBoard> {
-    serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()
+    read_json(file)
 }
 
 pub fn save(file: &Path, board: &LinkBoard) -> std::io::Result<()> {
-    let text = serde_json::to_string(board).map_err(std::io::Error::other)?;
-    write_atomic(file, &text)
+    save_json(file, board)
 }
 
 /// Merges `incoming` into the saved board and saves it when it changed. Returns the board as it
