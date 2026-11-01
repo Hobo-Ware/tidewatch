@@ -156,15 +156,6 @@ impl PanelState {
         &self.jobs
     }
 
-    /// The jobs as they stand at `now_ms`: stalled, ended or gone by the clock.
-    #[must_use]
-    pub fn jobs_at(&self, now_ms: i64) -> JobBoard {
-        let now = now_ms.max(self.clock_ms);
-        let mut board = self.jobs.clone();
-        board.tick(now, self.job_agent(now));
-        board
-    }
-
     #[must_use]
     pub fn links(&self) -> &LinkBoard {
         &self.links
