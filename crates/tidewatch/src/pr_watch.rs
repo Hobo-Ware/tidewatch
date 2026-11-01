@@ -19,7 +19,7 @@ use tidewatch_core::worktree_cleanup::Report;
 
 use crate::merge_cleanup::{Busy, Cleanup};
 use crate::note_send::{HOLD_SECS, gate, gate_reason};
-use crate::status_view::Tone;
+use tidewatch_core::panel_view::Tone;
 
 /// How soon to look again while checks run.
 pub(crate) const FAST_SECS: f64 = 20.0;

@@ -11,7 +11,8 @@ use crate::reader::Shown;
 use crate::remote_pill::{self, Pill, Popover};
 use crate::screen_kit::{Size, body};
 use crate::segmented;
-use crate::status_view::{self, Tone};
+use crate::status_view;
+use tidewatch_core::panel_view::Tone;
 
 pub(crate) const HEIGHT: f32 = CHROME_H;
 const LEFT_PAD: f32 = 10.0;
@@ -62,7 +63,7 @@ pub(crate) fn line_of<T>(
     (cli_name, remote_app): (&str, Option<&'static str>),
 ) -> Option<Line> {
     let agent = pane.agent.as_ref()?;
-    let ready = is_ready(agent.first_prompt, status_view::tone(agent.run.status()));
+    let ready = is_ready(agent.first_prompt, Tone::of(agent.run.status()));
     let tone = agent.run.shown_tone();
     let level = agent.launched.as_ref().map(|launched| launched.level.label());
     let who = [Some(agent.profile_name.as_str()), Some(cli_name), level]

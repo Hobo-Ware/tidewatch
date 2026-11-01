@@ -20,8 +20,9 @@ use crate::notify::Notifier;
 use crate::outbox::Screen;
 use crate::pane::{Body, Pane};
 use crate::remote_session::Step;
-use crate::status_view::{self, Tone};
+use crate::status_view;
 use crate::tabs::Tabs;
+use tidewatch_core::panel_view::Tone;
 
 /// When the UI next needs a frame because of agent status.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

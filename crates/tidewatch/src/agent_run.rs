@@ -10,6 +10,7 @@ use stdusk_core::terminal::{CmdState, PtyTerm};
 use tidewatch_core::agents::reports_by_hooks;
 use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
+use tidewatch_core::panel_view::Tone;
 use tidewatch_core::progress::State;
 use tidewatch_core::resume_mode::exit_is_abnormal;
 use tidewatch_core::status::{
@@ -420,9 +421,8 @@ impl AgentRun {
 
     /// The one tone every screen shows for this tab. A tab Tidewatch answered a question for stays
     /// in Needs you until its owner opens it, so a guess is never filed as the owner's decision.
-    pub(crate) fn shown_tone(&self) -> crate::status_view::Tone {
-        use crate::status_view::Tone;
-        let tone = crate::status_view::shown(&self.status, self.reported);
+    pub(crate) fn shown_tone(&self) -> Tone {
+        let tone = Tone::shown(&self.status, self.reported);
         match tone {
             Tone::Working | Tone::Done | Tone::Waiting if self.picked.is_some() => Tone::Needs,
             _ => tone,
@@ -890,7 +890,6 @@ mod tests {
 
     #[test]
     fn a_tab_shows_one_tone_the_reported_one_unless_a_process_fact_says_more() {
-        use crate::status_view::Tone;
         let mut run = AgentRun::setting_up("claude".into(), 0.0);
         assert_eq!(run.shown_tone(), Tone::Setup);
         run.set_reported(Some(State::Waiting));
@@ -907,7 +906,6 @@ mod tests {
 
     #[test]
     fn a_tab_tidewatch_answered_for_stays_in_needs_you_until_its_owner_opens_it() {
-        use crate::status_view::Tone;
         let mut run = AgentRun::setting_up("claude".into(), 0.0);
         run.pick_made("Tidewatch picked \"A\" for you".into());
         let table = [

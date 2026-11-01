@@ -12,9 +12,9 @@ use crate::agenda::{Day, Item, Mark};
 use crate::overview::{self, AgentKind, Next, Overview, PlaceInput, PoofedRow, Row, Stamp};
 use crate::overview_view::State;
 use crate::progress_model::{look, look_as};
-use crate::status_view::{Tone, shown};
 use crate::takeover::{Offer, Status};
 use crate::takeover_view::Card;
+use tidewatch_core::panel_view::Tone;
 
 pub(crate) struct Fake {
     pub(crate) overview: Overview,
@@ -92,7 +92,7 @@ fn ask_look(question: &str, why: &str, options: &str) -> crate::progress_model::
 fn reported_row(id: u64, spec: &Spec, state: Reported, ledger: &Ledger) -> Row {
     let mut r = row(id, spec);
     r.look = Some(look_as(ledger, false, state));
-    r.tone = shown(&spec.status, Some(state));
+    r.tone = Tone::shown(&spec.status, Some(state));
     r
 }
 
@@ -117,7 +117,7 @@ fn row(id: u64, spec: &Spec) -> Row {
         },
         branch: String::new(),
         status: spec.status.clone(),
-        tone: crate::status_view::tone(&spec.status),
+        tone: Tone::of(&spec.status),
         detail: Some(spec.line.to_owned()),
         end_block: None,
         elapsed: spec.mins * 60.0,

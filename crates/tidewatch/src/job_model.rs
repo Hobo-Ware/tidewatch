@@ -5,7 +5,7 @@ use jiff::tz::TimeZone;
 use tidewatch_core::background::Launch;
 use tidewatch_core::job::{Agent, Ended, Job, JobBoard, JobState};
 
-use crate::status_view::Tone;
+use tidewatch_core::panel_view::Tone;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Card {
