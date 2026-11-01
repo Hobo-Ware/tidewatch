@@ -2,10 +2,10 @@
 //! frame, and what GitHub says about a pull request or branch to the tabs that watch it.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
-use super::{Tidewatch, WAKE_SLACK_S};
+use super::Tidewatch;
 use crate::repo::Workspace;
+use crate::wake::request_wake;
 
 impl Tidewatch {
     pub(super) fn drive_github_events(&mut self, ctx: &egui::Context, now: f64) {
@@ -26,7 +26,7 @@ impl Tidewatch {
         let front = self.tabs.items().get(self.tabs.active()).map(|tab| tab.id);
         self.link_live.set_world(front, &self.github_events.live_slugs());
         if let Some(wait) = driven.wake_in {
-            ctx.request_repaint_after(Duration::from_secs_f64(wait + WAKE_SLACK_S));
+            request_wake(ctx, wait);
         }
     }
 }

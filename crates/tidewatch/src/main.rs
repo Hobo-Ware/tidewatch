@@ -279,6 +279,7 @@ mod update_chip;
 mod updates;
 mod updates_view;
 mod waiting_notes;
+mod wake;
 mod welcome;
 mod welcome_view;
 mod window_chrome;

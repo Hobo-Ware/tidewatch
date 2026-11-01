@@ -9,7 +9,6 @@ use tidewatch_core::meeseeks_check::Work;
 use tidewatch_core::meeseeks_log::{Poofed, StageLine};
 use tidewatch_core::sent::{Reason, because};
 
-use super::WAKE_SLACK_S;
 use super::{Tidewatch, wall_ms};
 use crate::due::ask_blocked;
 use crate::flow_glue;
@@ -18,6 +17,7 @@ use crate::outbox::{Offer, Send};
 use crate::pane::{Body, Pane};
 use crate::progress_glue::today;
 use crate::progress_model::{self, StageShape};
+use crate::wake::WAKE_SLACK_S;
 use crate::{meeseeks_summary, meeseeks_summary_view};
 
 const CLOCK_TICK: Duration = Duration::from_secs(30);

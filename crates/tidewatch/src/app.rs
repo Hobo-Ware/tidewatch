@@ -145,7 +145,6 @@ use crate::{closed_jobs, closed_state};
 
 const FONT_SIZE: f32 = 13.0;
 const ANIMATION_FRAME_MS: u64 = 40;
-const WAKE_SLACK_S: f64 = 0.02;
 
 pub(crate) struct Tidewatch {
     workspaces: Vec<Workspace>,

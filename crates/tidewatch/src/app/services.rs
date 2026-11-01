@@ -4,19 +4,19 @@
 //! button, which is readable at the terminal's width where a list in a popover would not be).
 
 use std::path::Path;
-use std::time::Duration;
 
 use egui::{Align, Layout, Rect, Sense, UiBuilder, pos2, vec2};
 use tidewatch_core::services_mcp::{self, Call, ServiceCall};
 
+use super::Tidewatch;
 use super::terminal::{TerminalGrid, show_shell};
-use super::{Tidewatch, WAKE_SLACK_S};
 use crate::brand;
 use crate::layout;
 use crate::repo::Workspace;
 use crate::screen_kit::{Size, TEXT_SECONDARY, body, mono, quiet_button};
 use crate::services_glue::{Begin, Command, Row};
 use crate::services_view::{self, Action};
+use crate::wake::request_wake;
 
 const BACK_LABEL: &str = "\u{2039} Terminal";
 const HEADER_GAP: f32 = 12.0;
@@ -52,7 +52,7 @@ impl Tidewatch {
             .collect();
         self.services.sync(&repos);
         if let Some(wait) = self.services.drive() {
-            ctx.request_repaint_after(Duration::from_secs_f64(wait + WAKE_SLACK_S));
+            request_wake(ctx, wait);
         }
         let agents = self.tabs.items().iter().filter_map(|tab| {
             tab.pane.agent.as_ref()?;

@@ -7,11 +7,12 @@ use std::time::Duration;
 use tidewatch_core::amphetamine_system::{FakeSystem, RealSystem, System};
 use tidewatch_core::paths::TidewatchPaths;
 
-use super::{Tidewatch, WAKE_SLACK_S, wall_ms};
+use super::{Tidewatch, wall_ms};
 use crate::amphetamine_glue::{Dev, Files, Host};
 use crate::amphetamine_view::Action;
 use crate::keep_awake_hold::{Hold, RealHold};
 use crate::toast::Toast;
+use crate::wake::request_wake;
 
 struct NoHold;
 
@@ -80,7 +81,7 @@ impl Tidewatch {
             ctx.request_repaint();
         }
         if let Some(seconds) = wake {
-            ctx.request_repaint_after(Duration::from_secs_f64(seconds + WAKE_SLACK_S));
+            request_wake(ctx, seconds);
         }
     }
 

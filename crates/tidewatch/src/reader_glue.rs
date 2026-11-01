@@ -44,12 +44,12 @@ use crate::screen_kit::{Size, button_width, quiet_button};
 use crate::send_line::is_command;
 use crate::slash;
 use crate::tabs::Tabs;
+use crate::wake::request_wake;
 
 const NOTE_H: f32 = 24.0;
 const NOTE_PAD: f32 = 8.0;
 const NOTE_MARGIN_X: f32 = 8.0;
 const NOTE_MARGIN_Y: f32 = 4.0;
-const WAKE_SLACK_S: f64 = 0.02;
 /// The pause between two key presses typed into an agent's menu.
 const KEY_GAP_S: f64 = ENTER_DELAY_SECS;
 /// How long a menu needs to close after Esc before text can follow.
@@ -93,16 +93,12 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
                     Step::Paste(text) => {
                         term.paste(&text);
                         flow.queue_enter(id, now);
-                        ctx.request_repaint_after(Duration::from_secs_f64(
-                            ENTER_DELAY_SECS + WAKE_SLACK_S,
-                        ));
+                        request_wake(ctx, ENTER_DELAY_SECS);
                     }
                 }
             }
             if let Some(due) = agent.reader.next_step_due() {
-                ctx.request_repaint_after(Duration::from_secs_f64(
-                    (due - now).max(0.0) + WAKE_SLACK_S,
-                ));
+                request_wake(ctx, (due - now).max(0.0));
             }
         }
         if let Some(agent) = tab.pane.agent.as_mut() {
@@ -158,7 +154,7 @@ fn keep_reply_box(agent: &mut AgentTab, ctx: &Context, now: f64) {
     }
     let view = &agent.reader.view;
     if let Some(wake) = agent.reader.store.tick(&view.reply, now) {
-        ctx.request_repaint_after(Duration::from_secs_f64(wake + WAKE_SLACK_S));
+        request_wake(ctx, wake);
     }
 }
 
@@ -225,7 +221,7 @@ fn pick_for_the_absent<T: ShowsScreen>(
     match poll {
         Poll::Idle => None,
         Poll::Counting { left } => {
-            ctx.request_repaint_after(Duration::from_secs_f64(left.clamp(0.0, 1.0) + WAKE_SLACK_S));
+            request_wake(ctx, left.clamp(0.0, 1.0));
             None
         }
         Poll::Due(seq) => {

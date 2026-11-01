@@ -21,6 +21,7 @@ use crate::dev_screenshot::save_png;
 use crate::pane::Pane;
 use crate::session_writer::{Debounce, MAX_WAIT, QUIET};
 use crate::tabs::{Action, Tabs};
+use crate::wake::request_wake;
 
 const DEFAULT_SELECT_AFTER_SECS: f64 = 4.0;
 
@@ -167,7 +168,7 @@ impl DevSession {
         .flatten()
         .reduce(f64::min);
         if let Some(at) = next {
-            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + 0.02));
+            request_wake(ctx, (at - now).max(0.0));
         }
     }
 }

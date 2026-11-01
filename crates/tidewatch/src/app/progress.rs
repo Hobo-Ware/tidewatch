@@ -10,7 +10,6 @@ use jiff::tz::TimeZone;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::WAKE_SLACK_S;
 use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar;
@@ -34,6 +33,7 @@ use crate::progress_state::Facts;
 use crate::reader_glue::Opened;
 use crate::status_view::state_of;
 use crate::step_tick;
+use crate::wake::WAKE_SLACK_S;
 use crate::{due_view, flow_glue, reader_glue, reader_view};
 use tidewatch_core::panel_event::{AskKind, Fact, Source as Logged, StepBy};
 use tidewatch_core::panel_rules::ReportDigest;

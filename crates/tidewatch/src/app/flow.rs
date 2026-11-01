@@ -1,16 +1,16 @@
 //! The restore and the delivery flow, driven once per frame.
 
 use std::path::Path;
-use std::time::Duration;
 
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::WindowPlan;
 
-use super::{Tidewatch, WAKE_SLACK_S};
+use super::Tidewatch;
 use crate::flow_glue;
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
 use crate::reader_glue;
 use crate::restore_glue::{Env, Spawn};
+use crate::wake::request_wake;
 
 impl Tidewatch {
     /// Carries out the restore: the plan of a dev switch, or whatever the startup and reopen jobs
@@ -80,7 +80,7 @@ impl Tidewatch {
             }
         }
         if let Some(at) = self.flow.tick(&facts, ctx, now, unix) {
-            ctx.request_repaint_after(Duration::from_secs_f64((at - now).max(0.0) + WAKE_SLACK_S));
+            request_wake(ctx, (at - now).max(0.0));
         }
         for text in self.flow.take_notices() {
             self.show_toast(text, ctx);
