@@ -4,9 +4,10 @@
 use egui::{FontDefinitions, FontFamily, FontId};
 use stdusk_egui::fonts::{BOLD_FONT_FAMILY, installed_families, resolve_bold_font, resolve_font};
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::{FontChoice, Prefs};
+use tidewatch_core::prefs::FontChoice;
 
 use crate::jobs::Jobs;
+use crate::prefs_save::update_in_background;
 
 /// The egui family the terminal grid draws with: the picked face first, then the bundled monospace
 /// chain, so a glyph the face misses still finds a fallback.
@@ -115,11 +116,7 @@ impl Host {
         }
         if let Some(paths) = paths.cloned() {
             let saved = choice.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.terminal.font = saved) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.terminal.font = saved);
         }
         self.choice = choice.clone();
         self.loading = true;

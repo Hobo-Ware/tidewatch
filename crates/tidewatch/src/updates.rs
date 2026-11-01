@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use kelp_core::update::Release;
 use kelp_ui::update::{Status, UpdateConfig, Updater};
 use tidewatch_core::paths::TidewatchPaths;
-use tidewatch_core::prefs::{Prefs, UpdatePrefs};
+use tidewatch_core::prefs::UpdatePrefs;
 use tidewatch_core::update::{self, APP_NAME, Mode};
 
 use crate::fix_dialog;
+use crate::prefs_save::update_in_background;
 use crate::update_chip;
 
 pub(crate) const NOTIFY_ONLY_HINT: &str =
@@ -280,15 +281,13 @@ fn short_status(status: &Status) -> String {
 /// Writes the update settings off the UI thread, leaving the rest of the file as it is on disk; a
 /// failure goes to stderr.
 pub(crate) fn save(paths: TidewatchPaths, prefs: UpdatePrefs) {
-    std::thread::spawn(move || {
-        if let Err(e) = Prefs::update(&paths, |p| p.updates = prefs) {
-            eprintln!("tidewatch: cannot save settings.toml: {e}");
-        }
-    });
+    update_in_background(paths, move |p| p.updates = prefs);
 }
 
 #[cfg(test)]
 mod tests {
+    use tidewatch_core::prefs::Prefs;
+
     use super::*;
 
     fn release(version: &str) -> Release {

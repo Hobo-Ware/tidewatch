@@ -4,10 +4,11 @@
 use std::path::Path;
 use std::time::Instant;
 
-use tidewatch_core::prefs::{GitPrefs, Prefs};
+use tidewatch_core::prefs::GitPrefs;
 
 use super::Tidewatch;
 use crate::autofetch_glue;
+use crate::prefs_save::update_in_background;
 
 impl Tidewatch {
     pub(super) fn drive_autofetch(&mut self, ctx: &egui::Context) {
@@ -33,11 +34,7 @@ impl Tidewatch {
     pub(super) fn set_git_prefs(&mut self, prefs: GitPrefs) {
         self.autofetch.set_prefs(prefs, Instant::now());
         if let Some(paths) = self.paths.clone() {
-            std::thread::spawn(move || {
-                if let Err(e) = Prefs::update(&paths, |p| p.git = prefs) {
-                    eprintln!("tidewatch: cannot save settings.toml: {e}");
-                }
-            });
+            update_in_background(paths, move |p| p.git = prefs);
         }
     }
 
