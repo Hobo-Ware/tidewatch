@@ -79,7 +79,7 @@ fn end_of_turn(ts_ms: i64) -> Vec<Timed> {
 }
 
 fn feed(tabs: &mut Tabs<Pane<u32>>, tab: u64, facts: Vec<Timed>) {
-    let agent = tabs.get_mut(tab).unwrap().pane.agent.as_mut().unwrap();
+    let agent = tabs.agent_mut(tab).unwrap();
     agent.reader.push_panel_facts(facts);
 }
 
@@ -328,12 +328,12 @@ fn the_start_of_an_agent_a_resume_and_a_kept_run_are_logged_once_each() {
     host.collect(&mut tabs, 0.0, 0);
     host.collect(&mut tabs, 1.0, 1_000);
     assert_eq!(names(&host, id), ["started"]);
-    let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    let run = &mut tabs.agent_mut(id).unwrap().run;
     run.resumed(2.0);
     run.kept_running();
     host.collect(&mut tabs, 2.0, 2_000);
     assert_eq!(names(&host, id), ["started", "restart"]);
-    let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    let run = &mut tabs.agent_mut(id).unwrap().run;
     run.resumed(3.0);
     host.collect(&mut tabs, 3.0, 3_000);
     assert_eq!(names(&host, id), ["started", "restart", "hook"]);
@@ -508,10 +508,10 @@ fn a_hook_that_is_dropped_never_reaches_the_log_but_the_other_events_do() {
     };
     host.heard(&ask, 1_000);
     assert_eq!(names(&host, id), ["started", "ask_opened"]);
-    let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    let run = &mut tabs.agent_mut(id).unwrap().run;
     run.set_asking(Some("Which one?".into()));
     host.collect(&mut tabs, 2.0, 2_000);
-    let run = &mut tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run;
+    let run = &mut tabs.agent_mut(id).unwrap().run;
     run.set_asking(None);
     host.collect(&mut tabs, 3.0, 3_000);
     assert_eq!(names(&host, id), ["started", "ask_opened", "ask_closed"]);
@@ -544,7 +544,7 @@ fn the_real_feed_and_reader_end_a_turn_whose_stop_hook_never_came_within_three_s
     let session = "44444444-aaaa-bbbb-cccc-000000000004";
     let (mut tabs, id) = tabs_with_agent(&home.path().join("notes.json"));
     {
-        let agent = tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap();
+        let agent = tabs.agent_mut(id).unwrap();
         agent.reader =
             crate::reader::Reader::for_agent("claude", Some(session.into()), cwd.clone());
         agent.reader.start(home.path(), || {});
@@ -584,7 +584,7 @@ fn the_real_feed_and_reader_end_a_turn_whose_stop_hook_never_came_within_three_s
     std::io::Write::write_all(&mut file, end.as_bytes()).unwrap();
     let began = Instant::now();
     while tone(&tabs) != Tone::Done && began.elapsed() < Duration::from_secs(6) {
-        let agent = tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap();
+        let agent = tabs.agent_mut(id).unwrap();
         agent.reader.drain();
         let now = 1.2 + began.elapsed().as_secs_f64();
         host.collect(&mut tabs, now, wall_ms());

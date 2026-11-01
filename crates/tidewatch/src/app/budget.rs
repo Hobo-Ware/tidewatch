@@ -21,7 +21,7 @@ impl Tidewatch {
     }
 
     pub(super) fn tokens_of(&self, tab: u64) -> Option<TabTokens> {
-        let agent = self.tabs.items().iter().find(|found| found.id == tab)?.pane.agent.as_ref()?;
+        let agent = self.tabs.agent(tab)?;
         token_budget::tab_tokens(agent.reader.tokens(), agent.reader.token_share())
             .or_else(budget_glue::fake_tokens)
     }

@@ -122,7 +122,7 @@ impl Tidewatch {
     }
 
     fn look_spec(&self, tab: u64) -> Option<LookSpec> {
-        let found = self.tabs.items().iter().find(|t| t.id == tab)?;
+        let found = self.tabs.get(tab)?;
         let meeseeks = found.pane.agent.as_ref()?.meeseeks.as_ref()?;
         Some(LookSpec {
             tools: self.flow.tools(),
@@ -187,7 +187,7 @@ impl Tidewatch {
 
     fn paste_when_idle(&mut self, ctx: &egui::Context, now: f64) {
         for tab in self.meeseeks.pending_tabs() {
-            let Some(found) = self.tabs.items().iter().find(|t| t.id == tab) else {
+            let Some(found) = self.tabs.get(tab) else {
                 self.meeseeks.forget(tab);
                 continue;
             };
@@ -265,11 +265,7 @@ impl Tidewatch {
 
     fn meeseeks_event(&mut self, tab: u64, event: Event, ctx: &egui::Context) {
         let now_ms = wall_ms() as i64;
-        let Some(meeseeks) = self
-            .tabs
-            .get_mut(tab)
-            .and_then(|t| t.pane.agent.as_mut())
-            .and_then(|agent| agent.meeseeks.as_mut())
+        let Some(meeseeks) = self.tabs.agent_mut(tab).and_then(|agent| agent.meeseeks.as_mut())
         else {
             return;
         };
@@ -375,7 +371,7 @@ impl Tidewatch {
     }
 
     pub(super) fn take_over_meeseeks(&mut self, tab: u64, ctx: &egui::Context) {
-        let Some(agent) = self.tabs.get_mut(tab).and_then(|t| t.pane.agent.as_mut()) else {
+        let Some(agent) = self.tabs.agent_mut(tab) else {
             return;
         };
         if agent.meeseeks.take().is_none() {

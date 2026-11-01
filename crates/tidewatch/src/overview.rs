@@ -948,7 +948,7 @@ mod tests {
         let row = collect("web", Path::new("/work/web"), 0, &tabs, 0.0).rows.remove(0);
         assert_eq!(row.pick_line().map(String::as_str), Some("Tidewatch picked \"A\" for you"));
         assert_eq!(ask_button(&row), "Review");
-        tabs.get_mut(1).unwrap().pane.agent.as_mut().unwrap().run.pick_reviewed();
+        tabs.agent_mut(1).unwrap().run.pick_reviewed();
         let opened = collect("web", Path::new("/work/web"), 0, &tabs, 0.0).rows.remove(0);
         assert_eq!((opened.pick_line(), ask_button(&opened)), (None, "Answer"));
     }

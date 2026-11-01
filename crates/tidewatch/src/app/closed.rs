@@ -14,7 +14,7 @@ use crate::closed_state::{Card, CardAction, fake_card, fake_requested};
 
 impl Tidewatch {
     pub(super) fn closed_facts(&self, id: u64) -> Option<Tab> {
-        let tab = self.tabs.items().iter().find(|tab| tab.id == id)?;
+        let tab = self.tabs.get(id)?;
         let agent = tab.pane.agent.as_ref()?;
         tab.pane.worktree.as_ref()?;
         let launched = agent.launched.as_ref()?;
@@ -30,9 +30,7 @@ impl Tidewatch {
     pub(super) fn note_kept_tab(&self, id: u64, ctx: &egui::Context) {
         let Some(paths) = self.paths.clone() else { return };
         let Some(facts) = self.closed_facts(id) else { return };
-        let Some(worktree) =
-            self.tabs.items().iter().find(|tab| tab.id == id).and_then(|t| t.pane.worktree.clone())
-        else {
+        let Some(worktree) = self.tabs.get(id).and_then(|t| t.pane.worktree.clone()) else {
             return;
         };
         closed_jobs::note_kept(&self.closed_jobs, ctx, paths, worktree, facts);

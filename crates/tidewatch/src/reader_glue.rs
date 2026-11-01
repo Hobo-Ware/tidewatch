@@ -559,14 +559,14 @@ pub(crate) fn apply(
                 continue;
             }
             Action::SendAgain { text, forget } => {
-                if let (Some(id), Some(agent)) = (forget, agent_of(tabs, tab)) {
+                if let (Some(id), Some(agent)) = (forget, tabs.agent_mut(tab)) {
                     agent.reader.rows.forget_queued(id);
                 }
                 toast = reply(tabs, flow, tab, &text, (ctx, now)).or(toast);
                 continue;
             }
             Action::Forget(id) => {
-                if let Some(agent) = agent_of(tabs, tab) {
+                if let Some(agent) = tabs.agent_mut(tab) {
                     agent.reader.rows.forget_queued(id);
                 }
                 continue;
@@ -623,10 +623,6 @@ pub(crate) fn apply(
     toast
 }
 
-fn agent_of(tabs: &mut Tabs<Pane<PtyTerm>>, tab: u64) -> Option<&mut AgentTab> {
-    tabs.get_mut(tab)?.pane.agent.as_mut()
-}
-
 /// Types one of the owner's messages into the agent through the one send line, and shows it as
 /// queued until the transcript has it. False when the tab has no terminal to type into.
 fn type_reply(
@@ -639,7 +635,7 @@ fn type_reply(
     if !flow_glue::deliver(tabs, flow, tab, &Send::reply(text), ctx, now) {
         return false;
     }
-    if let Some(agent) = agent_of(tabs, tab) {
+    if let Some(agent) = tabs.agent_mut(tab) {
         let source = agent.reader.source();
         if !is_command(text) {
             agent.reader.queue_user(text);
@@ -659,7 +655,7 @@ fn reply(
     text: &str,
     (ctx, now): (&Context, f64),
 ) -> Option<String> {
-    let agent = agent_of(tabs, tab)?;
+    let agent = tabs.agent_mut(tab)?;
     let first = agent.first_prompt == FirstPrompt::Awaiting;
     if first {
         agent.first_prompt = FirstPrompt::Sent;
@@ -682,7 +678,7 @@ fn reply(
     {
         return None;
     }
-    let agent = agent_of(tabs, tab)?;
+    let agent = tabs.agent_mut(tab)?;
     ctx.request_repaint_after(Duration::from_secs_f64(0.5));
     if agent.reader.view.line.hold(text, now_ms()).is_err() {
         agent.reader.view.keep_in_box(text);
@@ -706,7 +702,7 @@ pub(crate) fn release_lines(
         .map(|found| found.id)
         .collect();
     for tab in waiting {
-        let Some(agent) = agent_of(tabs, tab) else { continue };
+        let Some(agent) = tabs.agent_mut(tab) else { continue };
         let status = agent.run.status().clone();
         if crate::dev_reader::pretend_working() {
             continue;
@@ -722,7 +718,7 @@ pub(crate) fn release_lines(
             continue;
         }
         if type_reply(tabs, flow, tab, &text, (ctx, now)) {
-            if let Some(agent) = agent_of(tabs, tab) {
+            if let Some(agent) = tabs.agent_mut(tab) {
                 agent.reader.view.line.delete(id);
             }
         } else {
@@ -762,13 +758,13 @@ fn send_now(
     ctx: &Context,
     now: f64,
 ) -> Option<String> {
-    let agent = agent_of(tabs, tab)?;
+    let agent = tabs.agent_mut(tab)?;
     let held = agent.reader.view.line.delete(id)?;
     if !interrupts(agent.run.status()) {
         if type_reply(tabs, flow, tab, &held.text, (ctx, now)) {
             return None;
         }
-        agent_of(tabs, tab)?.reader.view.keep_in_box(&held.text);
+        tabs.agent_mut(tab)?.reader.view.keep_in_box(&held.text);
         return Some("The message could not be typed: the tab has no terminal".to_owned());
     }
     if !is_command(&held.text) {
@@ -1625,16 +1621,16 @@ mod tests {
     }
 
     fn set_status(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64, status: AgentStatus) {
-        agent_of(tabs, id).unwrap().run.set_status(status);
+        tabs.agent_mut(id).unwrap().run.set_status(status);
     }
 
     fn held(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64) -> Vec<String> {
-        let agent = agent_of(tabs, id).unwrap();
+        let agent = tabs.agent_mut(id).unwrap();
         agent.reader.view.line.items().iter().map(|held| held.text.clone()).collect()
     }
 
     fn queued(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64) -> usize {
-        agent_of(tabs, id).unwrap().reader.rows.queued_len()
+        tabs.agent_mut(id).unwrap().reader.rows.queued_len()
     }
 
     fn say(
@@ -1718,10 +1714,10 @@ mod tests {
     #[test]
     fn the_first_message_of_a_tab_goes_whatever_the_agent_reports() {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::SettingUp);
-        agent_of(&mut tabs, id).unwrap().first_prompt = FirstPrompt::Awaiting;
+        tabs.agent_mut(id).unwrap().first_prompt = FirstPrompt::Awaiting;
         assert_eq!(say(&mut tabs, &mut flow, id, "build the thing", 1.0), None);
         assert_eq!(held(&mut tabs, id), Vec::<String>::new());
-        assert_eq!(agent_of(&mut tabs, id).unwrap().first_prompt, FirstPrompt::Sent);
+        assert_eq!(tabs.agent_mut(id).unwrap().first_prompt, FirstPrompt::Sent);
     }
 
     #[test]
@@ -1745,7 +1741,7 @@ mod tests {
         }
         let toast = say(&mut tabs, &mut flow, id, "one too many", 2.0);
         assert_eq!(toast.as_deref(), Some(LINE_FULL_TOAST));
-        let agent = agent_of(&mut tabs, id).unwrap();
+        let agent = tabs.agent_mut(id).unwrap();
         assert_eq!(agent.reader.view.line.len(), crate::send_line::MAX_HELD);
         assert_eq!(agent.reader.view.reply, "one too many");
     }
@@ -1755,13 +1751,13 @@ mod tests {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
         say(&mut tabs, &mut flow, id, "first", 1.0);
         say(&mut tabs, &mut flow, id, "second", 1.0);
-        let first = agent_of(&mut tabs, id).unwrap().reader.view.line.items()[0].id;
-        agent_of(&mut tabs, id).unwrap().reader.view.begin_edit_held(first);
+        let first = tabs.agent_mut(id).unwrap().reader.view.line.items()[0].id;
+        tabs.agent_mut(id).unwrap().reader.view.begin_edit_held(first);
         set_status(&mut tabs, id, AgentStatus::Done);
         release(&mut tabs, &mut flow, 2.0);
         assert_eq!(held(&mut tabs, id), ["first", "second"]);
-        agent_of(&mut tabs, id).unwrap().reader.view.line.set_text(first, "first, edited");
-        agent_of(&mut tabs, id)
+        tabs.agent_mut(id).unwrap().reader.view.line.set_text(first, "first, edited");
+        tabs.agent_mut(id)
             .unwrap()
             .reader
             .view
@@ -1774,7 +1770,7 @@ mod tests {
     fn send_now_stops_a_working_agent_and_types_the_message_after_the_esc() {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
         say(&mut tabs, &mut flow, id, "drop everything and do this", 1.0);
-        let held_id = agent_of(&mut tabs, id).unwrap().reader.view.line.items()[0].id;
+        let held_id = tabs.agent_mut(id).unwrap().reader.view.line.items()[0].id;
         let ctx = Context::default();
         assert_eq!(
             apply(vec![Action::SendNow(held_id)], &mut tabs, id, &mut flow, &ctx, 10.0),
@@ -1782,7 +1778,7 @@ mod tests {
         );
         assert_eq!(held(&mut tabs, id), Vec::<String>::new());
         assert_eq!(queued(&mut tabs, id), 1);
-        let agent = agent_of(&mut tabs, id).unwrap();
+        let agent = tabs.agent_mut(id).unwrap();
         assert_eq!(
             agent.reader.take_due_step(10.0),
             Some(Step::Keys(reader_keys::INTERRUPT.to_vec()))
@@ -1799,12 +1795,12 @@ mod tests {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
         say(&mut tabs, &mut flow, id, "go", 1.0);
         set_status(&mut tabs, id, AgentStatus::Done);
-        let held_id = agent_of(&mut tabs, id).unwrap().reader.view.line.items()[0].id;
+        let held_id = tabs.agent_mut(id).unwrap().reader.view.line.items()[0].id;
         let ctx = Context::default();
         apply(vec![Action::SendNow(held_id)], &mut tabs, id, &mut flow, &ctx, 10.0);
         assert_eq!(held(&mut tabs, id), Vec::<String>::new());
         assert_eq!(queued(&mut tabs, id), 1);
-        assert_eq!(agent_of(&mut tabs, id).unwrap().reader.take_due_step(99.0), None);
+        assert_eq!(tabs.agent_mut(id).unwrap().reader.take_due_step(99.0), None);
     }
 
     #[test]
@@ -1824,8 +1820,8 @@ mod tests {
     #[test]
     fn send_again_replaces_the_queued_copy_and_goes_through_the_line() {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
-        agent_of(&mut tabs, id).unwrap().reader.rows.queue_user("lost one", 0);
-        let queued_id = agent_of(&mut tabs, id).unwrap().reader.rows.queued().next().unwrap().id;
+        tabs.agent_mut(id).unwrap().reader.rows.queue_user("lost one", 0);
+        let queued_id = tabs.agent_mut(id).unwrap().reader.rows.queued().next().unwrap().id;
         let again = Action::SendAgain { text: "lost one".into(), forget: Some(queued_id) };
         apply(vec![again], &mut tabs, id, &mut flow, &Context::default(), 5.0);
         assert_eq!(queued(&mut tabs, id), 0);
@@ -1835,8 +1831,8 @@ mod tests {
     #[test]
     fn dismiss_forgets_a_queued_message_without_sending_it() {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
-        agent_of(&mut tabs, id).unwrap().reader.rows.queue_user("lost one", 0);
-        let queued_id = agent_of(&mut tabs, id).unwrap().reader.rows.queued().next().unwrap().id;
+        tabs.agent_mut(id).unwrap().reader.rows.queue_user("lost one", 0);
+        let queued_id = tabs.agent_mut(id).unwrap().reader.rows.queued().next().unwrap().id;
         apply(vec![Action::Forget(queued_id)], &mut tabs, id, &mut flow, &Context::default(), 5.0);
         assert_eq!((queued(&mut tabs, id), held(&mut tabs, id)), (0, Vec::<String>::new()));
     }
@@ -1846,18 +1842,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let notes = dir.path().join("tab").join("notes.json");
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
-        agent_of(&mut tabs, id).unwrap().run.notes_file = Some(notes.clone());
+        tabs.agent_mut(id).unwrap().run.notes_file = Some(notes.clone());
         let ctx = Context::default();
         drain(&mut tabs, &mut flow, &ctx, 1.0);
         say(&mut tabs, &mut flow, id, "run the tests", 2.0);
-        assert_eq!(
-            agent_of(&mut tabs, id).unwrap().reader.view.recall.entries(),
-            ["run the tests"]
-        );
+        assert_eq!(tabs.agent_mut(id).unwrap().reader.view.recall.entries(), ["run the tests"]);
         let (mut again, id2, mut flow2) = agent_in(AgentStatus::Done);
-        agent_of(&mut again, id2).unwrap().run.notes_file = Some(notes);
+        again.agent_mut(id2).unwrap().run.notes_file = Some(notes);
         drain(&mut again, &mut flow2, &ctx, 1.0);
-        let recall = &agent_of(&mut again, id2).unwrap().reader.view.recall;
+        let recall = &again.agent_mut(id2).unwrap().reader.view.recall;
         assert_eq!(recall.entries(), ["run the tests"]);
     }
 
@@ -1867,15 +1860,15 @@ mod tests {
         let notes = dir.path().join("tab").join("notes.json");
         let ctx = Context::default();
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Done);
-        agent_of(&mut tabs, id).unwrap().run.notes_file = Some(notes.clone());
+        tabs.agent_mut(id).unwrap().run.notes_file = Some(notes.clone());
         drain(&mut tabs, &mut flow, &ctx, 1.0);
-        agent_of(&mut tabs, id).unwrap().reader.view.reply = "check the totals in".into();
+        tabs.agent_mut(id).unwrap().reader.view.reply = "check the totals in".into();
         drain(&mut tabs, &mut flow, &ctx, 2.0);
         drain(&mut tabs, &mut flow, &ctx, 2.0 + crate::reply_store::SETTLE_SECS + 0.01);
         let (mut again, id2, mut flow2) = agent_in(AgentStatus::Done);
-        agent_of(&mut again, id2).unwrap().run.notes_file = Some(notes);
+        again.agent_mut(id2).unwrap().run.notes_file = Some(notes);
         drain(&mut again, &mut flow2, &ctx, 1.0);
-        assert_eq!(agent_of(&mut again, id2).unwrap().reader.view.reply, "check the totals in");
+        assert_eq!(again.agent_mut(id2).unwrap().reader.view.reply, "check the totals in");
     }
 
     fn claude_menu_pane(screen: &[&str]) -> (Pane<Fake>, u64) {

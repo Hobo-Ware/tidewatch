@@ -428,7 +428,7 @@ pub(crate) fn reopened<T>(
         (Some(prepared), None) => (spawn.agent)(dir, prepared),
         (None, _) => (spawn.shell)(dir, note.as_deref()),
     });
-    if let Some(agent) = tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut())
+    if let Some(agent) = tabs.agent_mut(tab)
         && let (Some(why), Some((line, fits))) = (typed, prepared)
     {
         agent.resume_note = Some(why.note(fits));

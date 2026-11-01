@@ -47,7 +47,7 @@ fn agent_in(status: AgentStatus) -> Tabs<Pane<PtyTerm>> {
 }
 
 fn set_status(tabs: &mut Tabs<Pane<PtyTerm>>, status: AgentStatus) {
-    let agent = tabs.get_mut(TAB).unwrap().pane.agent.as_mut().unwrap();
+    let agent = tabs.agent_mut(TAB).unwrap();
     agent.run.hold(Some(status), None);
     agent.run.refresh(1.0);
 }

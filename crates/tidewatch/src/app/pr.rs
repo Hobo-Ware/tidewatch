@@ -189,13 +189,7 @@ impl Tidewatch {
     }
 
     fn busy_now(&self, tab: u64, now: f64) -> Busy {
-        let Some(agent) = self
-            .tabs
-            .items()
-            .iter()
-            .find(|candidate| candidate.id == tab)
-            .and_then(|candidate| candidate.pane.agent.as_ref())
-        else {
+        let Some(agent) = self.tabs.agent(tab) else {
             return Busy::default();
         };
         Busy::of(
@@ -260,9 +254,7 @@ impl Tidewatch {
         let Some(Body::PushFix { commits, .. }) = self.pr.body(tab, card) else { return };
         let Some(repo) = self
             .tabs
-            .items()
-            .iter()
-            .find(|candidate| candidate.id == tab)
+            .get(tab)
             .and_then(|candidate| candidate.pane.worktree.as_ref())
             .map(|worktree| worktree.repo.clone())
         else {

@@ -141,7 +141,7 @@ pub(crate) fn deliver(
 }
 
 fn status_of(tabs: &Tabs<Pane<PtyTerm>>, tab: u64) -> Option<AgentStatus> {
-    let found = tabs.items().iter().find(|candidate| candidate.id == tab)?;
+    let found = tabs.get(tab)?;
     found.pane.agent.as_ref().map(|agent| agent.run.status().clone())
 }
 
@@ -157,7 +157,7 @@ pub(crate) fn offer_to_agent(
 ) -> Offer {
     let status = status_of(tabs, tab);
     let held = flow.outbox.held(tab, now) && status == Some(AgentStatus::Done);
-    let screen = match tabs.items().iter().find(|candidate| candidate.id == tab) {
+    let screen = match tabs.get(tab) {
         Some(found) if send.origin == Origin::Auto && !held => {
             screen_of(found, status.as_ref(), send.mid_turn)
         }
@@ -233,9 +233,7 @@ pub(crate) fn drain_outbox(
         let status = status_of(tabs, tab);
         let held = flow.outbox.held(tab, now) && status == Some(AgentStatus::Done);
         let screen = tabs
-            .items()
-            .iter()
-            .find(|candidate| candidate.id == tab)
+            .get(tab)
             .filter(|_| !held)
             .map_or(Screen::Free, |found| screen_of(found, status.as_ref(), false));
         match flow.outbox.next_ready(tab, status.as_ref(), screen, now) {
@@ -263,7 +261,7 @@ pub(crate) fn drain_outbox(
 }
 
 pub(crate) fn output_of(tabs: &Tabs<Pane<PtyTerm>>, tab: u64) -> Option<u64> {
-    match &tabs.items().iter().find(|candidate| candidate.id == tab)?.pane.body {
+    match &tabs.get(tab)?.pane.body {
         Body::Shell(term) => Some(term.output_gen()),
         _ => None,
     }

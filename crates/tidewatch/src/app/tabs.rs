@@ -273,7 +273,7 @@ impl Tidewatch {
                     self.show_toast(format!("Started without part of the setup: {note}"), ctx);
                 }
                 if let Some(note) = base_note {
-                    match self.tabs.get_mut(tab).and_then(|tab| tab.pane.agent.as_mut()) {
+                    match self.tabs.agent_mut(tab) {
                         Some(agent) => agent.base_note = Some(note),
                         None => self.show_toast(note, ctx),
                     }

@@ -27,12 +27,12 @@ pub(crate) struct Waiting {
 }
 
 fn status_of(tabs: &Tabs<Pane<PtyTerm>>, tab: u64) -> Option<AgentStatus> {
-    let found = tabs.items().iter().find(|candidate| candidate.id == tab)?;
+    let found = tabs.get(tab)?;
     found.pane.agent.as_ref().map(|agent| agent.run.status().clone())
 }
 
 fn name_of(tabs: &Tabs<Pane<PtyTerm>>, tab: u64) -> Option<String> {
-    let found = tabs.items().iter().find(|candidate| candidate.id == tab)?;
+    let found = tabs.get(tab)?;
     Some(
         found.pane.agent.as_ref().map_or_else(
             || found.title.clone(),

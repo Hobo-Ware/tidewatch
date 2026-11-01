@@ -326,12 +326,12 @@ mod tests {
         let quiet = |_: &u32| TermSnapshot::default();
         let (mut tabs, id) = tabs_with_agent();
         let (mut notifier, _) = recording_notifier();
-        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().run.await_report();
+        tabs.agent_mut(id).unwrap().run.await_report();
         let quiet_at = tidewatch_core::status::STATUS_QUIET_SECS;
         poll(&mut tabs, quiet, &mut notifier, false, quiet_at);
         assert_eq!(tones(&tabs), [Tone::Done]);
         let status = |tabs: &Tabs<Pane<u32>>| {
-            let tab = tabs.items().iter().find(|tab| tab.id == id).unwrap();
+            let tab = tabs.get(id).unwrap();
             tab.pane.agent.as_ref().unwrap().run.status().clone()
         };
         assert_eq!(status(&tabs), AgentStatus::NeedsYou(Reason::Quiet));
@@ -606,17 +606,14 @@ mod tests {
             ));
             pane
         });
-        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().remote =
-            Some(RemoteSession::new("web \u{b7} otter".into()));
+        tabs.agent_mut(id).unwrap().remote = Some(RemoteSession::new("web \u{b7} otter".into()));
         let reads = Cell::new(0);
         let rows = |_: &u32| {
             reads.set(reads.get() + 1);
             Rows { lines: vec![format!("Remote Control active {link}")], cols: 80 }
         };
         let link_of = |tabs: &Tabs<Pane<u32>>, id: u64| {
-            tabs.items()
-                .iter()
-                .find(|t| t.id == id)
+            tabs.get(id)
                 .and_then(|t| t.pane.agent.as_ref()?.remote.as_ref()?.link().map(str::to_owned))
         };
         assert_eq!(watch_links(&mut tabs, |_| 0, rows, 1.0), None, "no output yet");
@@ -633,8 +630,7 @@ mod tests {
     fn output_that_comes_too_soon_after_a_look_asks_for_a_wake_up() {
         use crate::remote_session::RemoteSession;
         let (mut tabs, id) = tabs_with_agent();
-        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().remote =
-            Some(RemoteSession::new("web".into()));
+        tabs.agent_mut(id).unwrap().remote = Some(RemoteSession::new("web".into()));
         let rows = |_: &u32| Rows { lines: vec!["starting".into()], cols: 80 };
         assert_eq!(watch_links(&mut tabs, |_| 1, rows, 1.0), None);
         let later = watch_links(&mut tabs, |_| 2, rows, 1.5);
@@ -644,19 +640,16 @@ mod tests {
 
     fn meeseeks_tab() -> (Tabs<Pane<u32>>, u64) {
         let (mut tabs, id) = tabs_with_agent();
-        tabs.get_mut(id).unwrap().pane.agent.as_mut().unwrap().meeseeks =
-            Some(tidewatch_core::meeseeks::Meeseeks::summon(
-                "x",
-                tidewatch_core::meeseeks::Criteria::default(),
-                0,
-            ));
+        tabs.agent_mut(id).unwrap().meeseeks = Some(tidewatch_core::meeseeks::Meeseeks::summon(
+            "x",
+            tidewatch_core::meeseeks::Criteria::default(),
+            0,
+        ));
         (tabs, id)
     }
 
     fn turns(tabs: &Tabs<Pane<u32>>, id: u64) -> u32 {
-        tabs.items()
-            .iter()
-            .find(|tab| tab.id == id)
+        tabs.get(id)
             .and_then(|tab| tab.pane.agent.as_ref()?.meeseeks.as_ref())
             .map_or(0, |meeseeks| meeseeks.turns)
     }
@@ -686,10 +679,6 @@ mod tests {
         }
     }
 
-    fn agent_of(tabs: &Tabs<Pane<u32>>, id: u64) -> Option<&crate::pane::AgentTab> {
-        tabs.items().iter().find(|tab| tab.id == id).and_then(|tab| tab.pane.agent.as_ref())
-    }
-
     #[test]
     fn a_chosen_name_is_kept_on_any_agent_tab_and_a_meeseeks_keeps_it_in_its_own_record_too() {
         let named = |tab| TabMessage {
@@ -699,7 +688,7 @@ mod tests {
         };
         let (mut tabs, id) = meeseeks_tab();
         assert_eq!(route(&mut tabs, named(id), 1.0), None);
-        let agent = agent_of(&tabs, id).unwrap();
+        let agent = tabs.agent(id).unwrap();
         assert_eq!(agent.chosen_name.as_deref(), Some("fix-https-validation"));
         assert_eq!(
             agent.meeseeks.as_ref().and_then(|meeseeks| meeseeks.name.as_deref()),
@@ -707,7 +696,7 @@ mod tests {
         );
         let (mut plain, plain_id) = tabs_with_agent();
         assert_eq!(route(&mut plain, named(plain_id), 1.0), None);
-        let agent = agent_of(&plain, plain_id).unwrap();
+        let agent = plain.agent(plain_id).unwrap();
         assert_eq!(agent.chosen_name.as_deref(), Some("fix-https-validation"));
         assert!(agent.meeseeks.is_none());
         let later = TabMessage {
@@ -716,7 +705,7 @@ mod tests {
             event: TabEvent::TabName { name: "retry-sync".into() },
         };
         assert_eq!(route(&mut plain, later, 2.0), None);
-        assert_eq!(agent_of(&plain, plain_id).unwrap().chosen_name.as_deref(), Some("retry-sync"));
+        assert_eq!(plain.agent(plain_id).unwrap().chosen_name.as_deref(), Some("retry-sync"));
         assert_eq!(route(&mut plain, named(99), 3.0), None, "a closed tab is ignored");
     }
 

@@ -348,8 +348,7 @@ mod tests {
         let mut tabs = tabs();
         tabs.push("builder".into(), pane(Body::Shell(1), None, Some(picked)));
         let before = signature(&view(false), &tabs);
-        tabs.get_mut(1).unwrap().pane.agent.as_mut().unwrap().folder_pick =
-            Some(PathBuf::from("/ws/api"));
+        tabs.agent_mut(1).unwrap().folder_pick = Some(PathBuf::from("/ws/api"));
         assert_ne!(signature(&view(false), &tabs), before);
         let saved = saved_window(&view(false), &tabs);
         let SavedTab::Agent(tab) = &saved.tabs[1] else { panic!("an agent tab") };

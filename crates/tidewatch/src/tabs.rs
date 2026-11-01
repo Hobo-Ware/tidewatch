@@ -128,7 +128,7 @@ impl<T> Tabs<T> {
     }
 
     pub(crate) fn group_of(&self, id: u64) -> Option<usize> {
-        self.items.iter().find(|tab| tab.id == id).map(|tab| tab.group)
+        self.get(id).map(|tab| tab.group)
     }
 
     pub(crate) fn main_id(&self, group: usize) -> Option<u64> {
@@ -192,6 +192,10 @@ impl<T> Tabs<T> {
 
     pub(crate) fn index_of(&self, id: u64) -> Option<usize> {
         self.items.iter().position(|t| t.id == id)
+    }
+
+    pub(crate) fn get(&self, id: u64) -> Option<&Tab<T>> {
+        self.items.iter().find(|t| t.id == id)
     }
 
     pub(crate) fn get_mut(&mut self, id: u64) -> Option<&mut Tab<T>> {
@@ -407,6 +411,15 @@ mod tests {
         assert_eq!(tabs.index_of(id), Some(2));
         assert_eq!(tabs.get_mut(id).unwrap().title, "agent");
         assert_eq!(tabs.items()[2].pane, 7);
+    }
+
+    #[test]
+    fn get_finds_a_tab_by_id_and_nothing_for_an_unknown_one() {
+        let mut tabs = tabs_with(1);
+        let id = tabs.push("agent".into(), 7);
+        assert_eq!(tabs.get(id).map(|tab| tab.pane), Some(7));
+        assert_eq!(tabs.get(id).map(|tab| tab.title.as_str()), Some("agent"));
+        assert_eq!(tabs.get(id + 100).map(|tab| tab.pane), None);
     }
 
     #[test]

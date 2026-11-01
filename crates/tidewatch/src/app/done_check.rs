@@ -64,7 +64,7 @@ impl Tidewatch {
         let facts: Vec<Facts<'_>> = seen
             .iter()
             .filter_map(|(id, eligible, claim)| {
-                let agent = self.tabs.items().iter().find(|t| t.id == *id)?.pane.agent.as_ref()?;
+                let agent = self.tabs.agent(*id)?;
                 Some(Facts {
                     id: *id,
                     status: agent.run.status(),
@@ -88,7 +88,7 @@ impl Tidewatch {
     }
 
     fn done_check_request(&self, tab: u64) -> Option<Request> {
-        let worktree = self.tabs.items().iter().find(|t| t.id == tab)?.pane.worktree.as_ref()?;
+        let worktree = self.tabs.get(tab)?.pane.worktree.as_ref()?;
         let pr = match self.pr.watch(tab).and_then(|watch| watch.cards.number) {
             Some(number) => PrFact::Number(number),
             None => match self.flow.tab(tab).map(|state| &state.pr.lookup) {
@@ -113,9 +113,7 @@ impl Tidewatch {
 
     fn tab_workflow(&self, tab: u64) -> Workflow {
         self.tabs
-            .items()
-            .iter()
-            .find(|t| t.id == tab)
+            .get(tab)
             .and_then(|t| t.pane.worktree.as_ref())
             .map_or_else(Workflow::default, |worktree| self.workflow.profile(&worktree.repo))
     }
@@ -132,20 +130,14 @@ impl Tidewatch {
     }
 
     pub(super) fn done_check_look(&self, tab: u64) -> Option<Look> {
-        let agent = self.tabs.items().iter().find(|t| t.id == tab)?.pane.agent.as_ref()?;
+        let agent = self.tabs.agent(tab)?;
         applies(agent.meeseeks.is_none(), self.reported_kind(tab))
             .then(|| self.done_check.look(tab))
             .flatten()
     }
 
     pub(super) fn done_check_can_ask(&self, tab: u64) -> Result<(), &'static str> {
-        let status = self
-            .tabs
-            .items()
-            .iter()
-            .find(|t| t.id == tab)
-            .and_then(|t| t.pane.agent.as_ref())
-            .map(|a| a.run.status());
+        let status = self.tabs.agent(tab).map(|a| a.run.status());
         ask_blocked(status).map_or(Ok(()), Err)
     }
 
@@ -187,12 +179,7 @@ impl Tidewatch {
     }
 
     pub(super) fn is_autonomous(&self, tab: u64) -> bool {
-        self.tabs
-            .items()
-            .iter()
-            .find(|t| t.id == tab)
-            .and_then(|t| t.pane.agent.as_ref())
-            .is_some_and(AgentTab::autonomous)
+        self.tabs.agent(tab).is_some_and(AgentTab::autonomous)
     }
 
     pub(super) fn add_done_check_tags(&self, overview: &mut Overview) {
