@@ -12,6 +12,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::events::TabEvent;
+use crate::mcp::problems_error;
 use crate::service_supervisor::Word;
 use crate::services::Service;
 
@@ -134,13 +135,7 @@ pub fn tool_definitions() -> Vec<Value> {
 }
 
 fn refused(tool: &str, problems: &[String]) -> (String, bool) {
-    (
-        format!(
-            "Nothing was changed. Fix these and call {tool} again:\n- {}",
-            problems.join("\n- ")
-        ),
-        true,
-    )
+    problems_error(&format!("Nothing was changed. Fix these and call {tool} again:"), problems)
 }
 
 fn unknown_keys(args: &Map<String, Value>, allowed: &[&str], problems: &mut Vec<String>) {

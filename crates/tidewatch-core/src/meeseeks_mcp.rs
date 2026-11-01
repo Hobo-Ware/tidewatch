@@ -4,6 +4,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::events::TabEvent;
+use crate::mcp::problems_error;
 use crate::meeseeks::MAX_SUMMARY_CHARS;
 
 pub const DONE_TOOL: &str = "meeseeks_done";
@@ -26,10 +27,7 @@ pub fn tool_definition() -> Value {
 }
 
 fn refused(problems: &[String]) -> (String, bool) {
-    (
-        format!("Not recorded. Fix this and call {DONE_TOOL} again:\n- {}", problems.join("\n- ")),
-        true,
-    )
+    problems_error(&format!("Not recorded. Fix this and call {DONE_TOOL} again:"), problems)
 }
 
 pub fn done(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> (String, bool) {

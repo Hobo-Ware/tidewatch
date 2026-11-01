@@ -9,6 +9,7 @@ use serde_json::{Map, Value, json};
 use crate::events::TabEvent;
 use crate::link_board::{Link, MAX_LINKS_PER_CALL, MAX_NOTE_CHARS, MAX_TITLE_CHARS};
 use crate::link_store;
+use crate::mcp::problems_error;
 use crate::paths::links_file_beside;
 use crate::progress::{MAX_LEDGER_BYTES, State};
 use crate::progress_report::{
@@ -181,12 +182,9 @@ pub fn tool_definitions() -> [Value; 2] {
 }
 
 fn not_saved(problems: &[String]) -> (String, bool) {
-    (
-        format!(
-            "The report was not saved. Fix these and call {UPDATE_TOOL} again:\n- {}",
-            problems.join("\n- ")
-        ),
-        true,
+    problems_error(
+        &format!("The report was not saved. Fix these and call {UPDATE_TOOL} again:"),
+        problems,
     )
 }
 

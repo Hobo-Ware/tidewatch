@@ -11,6 +11,7 @@ use crate::avatar_check;
 use crate::avatar_icons;
 use crate::avatar_store;
 use crate::events::TabEvent;
+use crate::mcp::problems_error;
 use crate::paths::avatar_file_beside;
 
 pub const SET_TOOL: &str = "set_avatar";
@@ -36,12 +37,9 @@ pub fn tool_definition() -> Value {
 }
 
 fn not_set(problems: &[String]) -> (String, bool) {
-    (
-        format!(
-            "The avatar was not set. Fix these and call {SET_TOOL} again:\n- {}",
-            problems.join("\n- ")
-        ),
-        true,
+    problems_error(
+        &format!("The avatar was not set. Fix these and call {SET_TOOL} again:"),
+        problems,
     )
 }
 

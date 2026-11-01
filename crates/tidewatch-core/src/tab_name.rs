@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 
 use crate::branch_name;
 use crate::events::TabEvent;
+use crate::mcp::problems_error;
 
 pub const SET_TOOL: &str = "set_name";
 pub const MAX_CHARS: usize = 30;
@@ -59,12 +60,9 @@ pub fn problems(name: &str) -> Vec<String> {
 }
 
 fn refused(problems: &[String]) -> (String, bool) {
-    (
-        format!(
-            "Not recorded. Fix this and call {SET_TOOL} again. The rule: {RULE}.\n- {}",
-            problems.join("\n- ")
-        ),
-        true,
+    problems_error(
+        &format!("Not recorded. Fix this and call {SET_TOOL} again. The rule: {RULE}."),
+        problems,
     )
 }
 

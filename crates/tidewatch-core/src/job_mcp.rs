@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 
 use crate::events::TabEvent;
 use crate::job::{JobState, Report};
+use crate::mcp::problems_error;
 
 pub const REPORT_TOOL: &str = "report_job";
 
@@ -96,12 +97,9 @@ pub fn report(args: &Map<String, Value>, emit: &dyn Fn(TabEvent)) -> (String, bo
             emit(TabEvent::Job { report });
             (text, false)
         }
-        Err(problems) => (
-            format!(
-                "The job was not recorded. Fix these and call {REPORT_TOOL} again:\n- {}",
-                problems.join("\n- ")
-            ),
-            true,
+        Err(problems) => problems_error(
+            &format!("The job was not recorded. Fix these and call {REPORT_TOOL} again:"),
+            &problems,
         ),
     }
 }
