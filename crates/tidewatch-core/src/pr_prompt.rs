@@ -1,6 +1,7 @@
 //! The text Tidewatch pastes into an agent when GitHub has news about its pull request (PLAN.md, D4
 //! follow-up). Pure.
 
+use crate::note_paste::clean;
 use crate::pr_status::{Body, Job, ReviewComment};
 use crate::prefs::{AutoJob, GithubPrefs};
 use crate::workflow_profile::{Fix, Workflow};
@@ -216,12 +217,6 @@ pub fn short_step(step: &str) -> String {
         .take(3)
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// Control characters are stripped like in `note_paste`, because a pull request's comments and CI
-/// logs are other people's text and must never end the bracketed paste early.
-fn clean(text: &str) -> String {
-    text.chars().filter(|c| matches!(c, '\n' | '\t') || !c.is_control()).collect()
 }
 
 fn cap(text: &str) -> String {
