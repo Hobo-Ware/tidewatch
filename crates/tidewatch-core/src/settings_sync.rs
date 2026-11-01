@@ -7,7 +7,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use stdusk_core::sync::{Files, Op, Spec};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::save_toml;
 use crate::paths::TidewatchPaths;
 use crate::tools::{GhError, Tools, run_gh};
 
@@ -50,8 +50,7 @@ impl SyncPrefs {
     }
 
     pub fn save(&self, paths: &TidewatchPaths) -> std::io::Result<()> {
-        let text = toml::to_string(self).map_err(std::io::Error::other)?;
-        write_atomic(&paths.sync_file(), &text)
+        save_toml(&paths.sync_file(), self)
     }
 
     pub fn update(paths: &TidewatchPaths, change: impl FnOnce(&mut Self)) -> std::io::Result<()> {

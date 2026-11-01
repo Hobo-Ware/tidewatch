@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{load_toml_or_default, save_toml_pretty};
 use crate::paths::TidewatchPaths;
 use crate::pr_prompt::Trigger;
 
@@ -55,17 +55,11 @@ impl Store {
     /// A missing or broken file is an empty store; a broken one says so on stderr.
     #[must_use]
     pub fn load(paths: &TidewatchPaths) -> Self {
-        let file = paths.auto_seen_file();
-        let Ok(text) = std::fs::read_to_string(&file) else { return Self::default() };
-        toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("tidewatch: {} is invalid ({e}); Auto asks again", file.display());
-            Self::default()
-        })
+        load_toml_or_default(&paths.auto_seen_file(), "Auto asks again")
     }
 
     pub fn save(&self, paths: &TidewatchPaths) -> std::io::Result<()> {
-        let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
-        write_atomic(&paths.auto_seen_file(), &text)
+        save_toml_pretty(&paths.auto_seen_file(), self)
     }
 
     #[must_use]

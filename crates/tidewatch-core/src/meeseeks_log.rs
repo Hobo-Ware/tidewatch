@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::civil_date::Date;
-use crate::fsutil::write_atomic;
+use crate::fsutil::{load_toml_or_default, save_toml};
 use crate::kind::Kind;
 use crate::meeseeks::CheckLine;
 
@@ -114,11 +114,7 @@ pub struct Log {
 impl Log {
     #[must_use]
     pub fn load(file: &Path) -> Self {
-        let Ok(text) = std::fs::read_to_string(file) else { return Self::default() };
-        toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("tidewatch: {} is invalid ({e}); starting empty", file.display());
-            Self::default()
-        })
+        load_toml_or_default(file, "starting empty")
     }
 
     #[must_use]
@@ -133,13 +129,13 @@ pub fn append(file: &Path, entry: Poofed) -> std::io::Result<()> {
     log.entries.push(entry);
     let extra = log.entries.len().saturating_sub(MAX_ENTRIES);
     log.entries.drain(..extra);
-    let text = toml::to_string(&log).map_err(std::io::Error::other)?;
-    write_atomic(file, &text)
+    save_toml(file, &log)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fsutil::write_atomic;
 
     fn day(d: u8) -> Date {
         Date::new(2026, 10, d).unwrap()

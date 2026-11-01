@@ -4,15 +4,14 @@
 
 use std::path::Path;
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{read_json, save_json};
 
 pub const KEPT: usize = 100;
 
 /// The saved messages, oldest first. A missing or unreadable file is no history.
 #[must_use]
 pub fn load(file: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(file) else { return Vec::new() };
-    let mut entries: Vec<String> = serde_json::from_str(&text).unwrap_or_default();
+    let mut entries: Vec<String> = read_json(file).unwrap_or_default();
     entries.retain(|entry| !entry.trim().is_empty());
     let extra = entries.len().saturating_sub(KEPT);
     entries.drain(..extra);
@@ -36,8 +35,7 @@ pub fn remember(entries: &mut Vec<String>, text: &str) -> bool {
 /// # Errors
 /// When the file cannot be written.
 pub fn save(file: &Path, entries: &[String]) -> std::io::Result<()> {
-    let text = serde_json::to_string(entries).map_err(std::io::Error::other)?;
-    write_atomic(file, &text)
+    save_json(file, entries)
 }
 
 #[cfg(test)]

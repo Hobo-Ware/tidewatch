@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{load_toml_or_default, save_toml_pretty};
 use crate::paths::TidewatchPaths;
 
 pub const MAX_NAME_CHARS: usize = 40;
@@ -91,17 +91,11 @@ impl Store {
     /// A missing or broken file is an empty store; a broken one says so on stderr.
     #[must_use]
     pub fn load(paths: &TidewatchPaths) -> Self {
-        let file = paths.services_file();
-        let Ok(text) = std::fs::read_to_string(&file) else { return Self::default() };
-        toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("tidewatch: {} is invalid ({e}); no services", file.display());
-            Self::default()
-        })
+        load_toml_or_default(&paths.services_file(), "no services")
     }
 
     pub fn save(&self, paths: &TidewatchPaths) -> std::io::Result<()> {
-        let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
-        write_atomic(&paths.services_file(), &text)
+        save_toml_pretty(&paths.services_file(), self)
     }
 
     /// Reads the file afresh, applies `change` and writes it back, so a change made elsewhere

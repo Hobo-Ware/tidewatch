@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::Level;
-use crate::fsutil::write_atomic;
+use crate::fsutil::save_toml;
 use crate::guards::GuardPrefs;
 use crate::meeseeks::Criteria;
 use crate::paths::TidewatchPaths;
@@ -548,8 +548,7 @@ impl Prefs {
     }
 
     pub fn save(&self, paths: &TidewatchPaths) -> std::io::Result<()> {
-        let text = toml::to_string(self).map_err(std::io::Error::other)?;
-        write_atomic(&paths.prefs_file(), &text)
+        save_toml(&paths.prefs_file(), self)
     }
 
     /// Reads the file afresh, applies `change` and writes it back, so a writer holding an older copy

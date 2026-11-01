@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::save_toml;
 use crate::paths::TidewatchPaths;
 
 /// The repo that was in front, and the others that had tabs open next to it.
@@ -75,8 +75,7 @@ pub fn load(paths: &TidewatchPaths) -> Option<Remembered> {
 }
 
 pub fn save(paths: &TidewatchPaths, remembered: &Remembered) -> std::io::Result<()> {
-    let text = toml::to_string(remembered).map_err(std::io::Error::other)?;
-    write_atomic(&paths.last_workspace_file(), &text)
+    save_toml(&paths.last_workspace_file(), remembered)
 }
 
 #[cfg(test)]

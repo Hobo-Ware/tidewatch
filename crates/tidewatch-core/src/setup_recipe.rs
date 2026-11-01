@@ -7,7 +7,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::{load_toml_or_default, save_toml_pretty};
 use crate::launch::shell_quote;
 use crate::limited;
 use crate::paths::TidewatchPaths;
@@ -91,17 +91,11 @@ impl Store {
     /// A missing or broken file is an empty store.
     #[must_use]
     pub fn load(paths: &TidewatchPaths) -> Self {
-        let file = paths.worktree_setup_file();
-        let Ok(text) = std::fs::read_to_string(&file) else { return Self::default() };
-        toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("tidewatch: {} is invalid ({e}); no worktree setup", file.display());
-            Self::default()
-        })
+        load_toml_or_default(&paths.worktree_setup_file(), "no worktree setup")
     }
 
     pub fn save(&self, paths: &TidewatchPaths) -> std::io::Result<()> {
-        let text = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
-        write_atomic(&paths.worktree_setup_file(), &text)
+        save_toml_pretty(&paths.worktree_setup_file(), self)
     }
 
     /// Reads the file afresh, applies `change` and writes it back.
@@ -321,6 +315,7 @@ pub fn with_generator(recipe: &Recipe, setup: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fsutil::write_atomic;
 
     fn recipe(copy: &[&str], link: &[&str], generator: &str) -> Recipe {
         Recipe {

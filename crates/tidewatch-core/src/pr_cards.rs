@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::write_atomic;
+use crate::fsutil::save_json_pretty;
 use crate::pr_noise::is_noise;
 use crate::pr_status::{Body, Seen, Summary};
 use crate::prefs::GithubPrefs;
@@ -71,8 +71,7 @@ impl Cards {
     }
 
     pub fn save(&self, file: &Path) -> std::io::Result<()> {
-        let text = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        write_atomic(file, &text)
+        save_json_pretty(file, self)
     }
 
     #[must_use]
