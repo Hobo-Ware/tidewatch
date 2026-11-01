@@ -174,10 +174,10 @@ impl Locator {
 #[must_use]
 pub fn claude_project_dir_name(cwd: &Path) -> String {
     cwd.to_string_lossy()
-        .chars()
-        .flat_map(|c| {
-            let units = if c.is_ascii_alphanumeric() { 0 } else { c.len_utf16() };
-            if units == 0 { c.to_string() } else { "-".repeat(units) }.chars().collect::<Vec<_>>()
+        .encode_utf16()
+        .map(|unit| match u8::try_from(unit) {
+            Ok(byte) if byte.is_ascii_alphanumeric() => char::from(byte),
+            _ => '-',
         })
         .collect()
 }
