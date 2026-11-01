@@ -47,7 +47,7 @@
 
 <nav><div class="wrap">
   <a class="brand" href="#top"><img src="icon.svg" alt="" width="30" height="30">tidewatch</a>
-  <span class="badge">v0.1.22</span>
+  <span class="badge">v0.1.49</span>
   <div class="navlinks">
     <a href="#features">Features</a>
     <a href="#install">Install</a>
@@ -57,13 +57,13 @@
 
 <header class="hero" id="top"><div class="wrap">
   <img class="mascot" src="mascot/mascot-hero-animated.svg" width="400" height="440" alt="Tidewatch's mascot, a shoggoth in a smiley mask">
-  <a class="pill" href="https://github.com/Hobo-Ware/tidewatch/releases/latest"><b>New</b> since v0.1.21: a Progress panel with four stages and a Last turn summary, a Reader that shows each turn's final answer, outline buttons, a slimmer tab strip and a setting for what Enter does when you close a tab.</a>
+  <a class="pill" href="https://github.com/Hobo-Ware/tidewatch/releases/latest"><b>New</b> since v0.1.47: one send line with held messages and Stop, files and pictures that land inside your sentence, live pull request and issue links, a Progress panel in a new order and token counts for every tab.</a>
   <h1>AI agents side by side,<br><span class="teal">one worktree each.</span></h1>
   <p class="lede">Tidewatch is a desktop app for macOS and Linux that runs AI coding agents in one window per git repo. Every tab is its own git worktree, a separate checkout on its own branch, so several agents can work on the same repo without touching each other's files. You watch them, read what they did, comment on their diffs and decide what ships.</p>
   <div class="install"><span class="p">$</span><span class="txt">brew install hobo-ware/tap/tidewatch</span><button class="copy" type="button" data-copy="brew install hobo-ware/tap/tidewatch">Copy</button></div>
   <div class="ctas"><a href="#install">Install</a><a href="https://github.com/Hobo-Ware/tidewatch">Source on GitHub</a></div>
   <div class="window">
-    <img src="shot-hero.png" width="2200" height="1375" alt="Tidewatch with an agent's finished answer in the Reader on the left (your message above it, a 4 updates chip over the answer and a row of chips for its commands, edits and reads), and on the right the history card of its branch, three commits ahead of main: an uncommitted changes row and one commit opened with its changed files. Along the top, the Overview button with a badge, the repo chip, the main tab as an icon, then agent tabs named by their work (Validate promo codes, Move cart state into a reducer) with avatars and status dots, a Parked pill holding two more tabs, and a status bar along the bottom">
+    <img src="shot-hero.png" width="2200" height="1375" alt="Tidewatch with an agent's finished answer in the Reader on the left (your message above it, a 2 updates chip over the answer, a steps row under it, the reply box and a card saying 3 commits ready with an Ask Builder to open a PR button), and on the right the history card of its branch, three ahead of main, with the agent's three commits on top. Along the top, the Overview button, the repo chip, the main tab as an icon, then agent tabs named by their work with avatars and status dots, a Parked pill holding two more tabs, and a status bar along the bottom">
   </div>
 </div></header>
 
@@ -74,11 +74,11 @@
   <div class="grid">
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9v2a6 6 0 0 1-6 6H6"/></svg>
-      <h3>Worktree tabs, one agent each</h3><p>A new tab makes a worktree and starts Claude Code, Codex, Gemini CLI or Copilot CLI in it. Profiles set the agent, model and permission level. Agent tabs block <code>git push</code>.</p>
+      <h3>Worktree tabs, one agent each</h3><p>A new tab makes a worktree and starts Claude Code, Codex, Gemini CLI or Copilot CLI in it. Profiles set the agent, model and permission level. An agent can push its own branch, never the default branch or a tag.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#8fd16a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>
-      <h3>Reader view</h3><p>An agent tab reads as a chat on top of the live terminal: your messages as formatted text, each finished turn as its final answer with an N updates chip for the notes before it, and links you can click. One shortcut flips to the raw terminal.</p>
+      <h3>Reader view</h3><p>An agent tab reads as a chat on top of the live terminal: your messages as formatted text, each finished turn as its final answer with an N updates chip for the notes before it, and links you can click. A question the agent asks sits above the reply box as numbered answers, and one key picks. One shortcut flips to the raw terminal.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
@@ -86,11 +86,11 @@
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/></svg>
-      <h3>Workflows</h3><p>Chain stages, each with its own agent profile. Nine come built in, from Ship a feature and Fix a bug to Hunt a root cause, Change the UI with proof and Prepare a release, and there is an editor for your own. Gates can send the work back a stage.</p>
+      <h3>Your repo's way of working</h3><p>Tidewatch reads your rules files to learn how a repo works: rebase or merge, fixup commits or new ones, draft or ready pull requests. You confirm it once on a card, and every message Tidewatch sends an agent names only that method.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-      <h3>Delivery</h3><p>When the work is ready, Tidewatch shows the commits and the pull request text. When you approve, it pushes and opens the pull request with <code>gh</code>. A YOLO agent or a Meeseeks needs no approval: it decides and proceeds, and only product design and architecture questions reach you.</p>
+      <h3>Pull requests, asked not pushed</h3><p>When the work is ready, the card says how many commits wait and offers Ask Builder to open a PR. The agent pushes and opens the pull request itself, as a draft unless your repo says otherwise; Tidewatch never does. A YOLO agent or a Meeseeks needs no approval: it decides and proceeds, and only product design and architecture questions reach you.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#f472b6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg>
@@ -110,7 +110,7 @@
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#67e8f9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a3.5 3.5 0 0 1 .5 9.5z"/></svg>
-      <h3>Settings in your own repo</h3><p>Settings, profiles and workflows can sync through a private GitHub repo you own, with your own git login.</p>
+      <h3>Settings in your own repo</h3><p>Settings and profiles can sync through a private GitHub repo you own, with your own git login.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
@@ -122,18 +122,42 @@
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h6"/><circle cx="19" cy="17" r="2"/></svg>
-      <h3>Progress in four stages</h3><p>Every agent keeps a progress report: Understand, Build, PR and Done, with its own steps under each. The Progress panel draws it, with a Last turn section for what was done, what needs you and what is next.</p>
+      <h3>Progress in the agent's own stages</h3><p>Every agent keeps a progress report in two to five stages it names for the task, with its own steps under each. The Progress panel draws it: what waits on you, what the agent is doing now, the steps, what is coming up and what is not verified yet.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/><circle cx="12" cy="12" r="9"/></svg>
-      <h3>A done check</h3><p>When an agent says it is done, Tidewatch looks at what is there: committed, pushed, pull request open, nothing left unverified. A failed check says so, and Ask agent to fix sends it back.</p>
+      <h3>A done check</h3><p>When an agent says it is done, Tidewatch looks at what is there: committed, pushed, pull request open, nothing left unverified, and the repo's tests, which it runs itself in the worktree. A failed check says so, and Ask agent to fix sends it back with the end of the output.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fda4af" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 10l6 4M15 10l-6 4"/></svg>
       <h3>Closing a tab your way</h3><p>Settings, General, Tabs sets which button Enter presses when you close a tab: delete the branch or keep it. A worktree with uncommitted changes always waits for a click.</p>
     </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h12M12 6l6 6-6 6"/></svg>
+      <h3>One send line</h3><p>A reply you type while the agent works is held and typed when its turn ends, one message per turn. Held messages sit under the chat to edit, delete or send now. Up and Down in an empty box bring back what you sent before, a draft is kept, and Stop interrupts the turn.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.4-8.4"/></svg>
+      <h3>Files inside your sentence</h3><p>A picture pasted with Cmd+V, a file dropped on the box and an <code>@</code> pick from the repo's files each land at the cursor as a chip, and the message the agent gets carries each path in that same place.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+      <h3>Live pull request and issue links</h3><p>Links the agent shares stay in a Links card, each with its checks, review, conflicts and comments, kept current from GitHub. Filter chips sort them by type and by what needs action, and a search finds one.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      <h3>Tokens per tab</h3><p>A tab's tooltip and its Overview card say how many tokens the agent has used, how much came from the cache and how many tokens Tidewatch's own messages cost. Claude Code and Codex report them; the other two do not.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>
+      <h3>Meeseeks: one task, then gone</h3><p>Give the new tab one task per line and each gets its own worktree. When a Meeseeks says it is done, Tidewatch checks the work, ends the agent and keeps the branch. One that struggles turns orange and waits for you.</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#f472b6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+      <h3>One profile editor</h3><p>Agent, effort and permission level are one kind of choice, and a line under each says what the selected value does. Every effort and every level the agent supports is there.</p>
+    </div>
   </div>
-  <p class="note">Also new: every button is an outline, the tab strip is slimmer with the repo as a chip, and background task notes show as quiet rows in the Reader.</p>
+  <p class="note">Also new: every message Tidewatch sends an agent shows in the Reader with the reason it was sent and a switch to turn that kind off.</p>
 
   <div class="row" id="overview">
     <div class="text">
@@ -148,7 +172,7 @@
     <div class="text">
       <h3>Read the answer, answer the question.</h3>
       <p>The Reader turns the agent's session into text you can skim: your messages, the final answer of each turn, which tools it ran, and a question when it needs permission. Flip to the raw terminal any time.</p>
-      <ul><li>Allow or deny a permission question from a button (Claude Code today)</li><li>Reply to the agent from a box under the answer</li><li>Each finished turn shows its final answer, with the notes before it folded under an N updates chip</li><li>Your answers to its questions come back as a card, and background task notes as quiet rows</li></ul>
+      <ul><li>Allow or deny a permission question from a button (Claude Code today)</li><li>Reply to the agent from a box under the answer; a reply sent mid-turn is held until the turn ends</li><li>Pick an answer to the agent's question with a digit key</li><li>Each finished turn shows its final answer, with the notes before it folded under an N updates chip</li><li>Your answers to its questions come back as a card, and background task notes as quiet rows</li></ul>
     </div>
     <div class="shot"><img src="shot-needs.png" width="2200" height="1375" loading="lazy" alt="An agent tab asking for permission to install a package, with Allow once, Deny and Switch to terminal outline buttons under the Reader, two earlier turns above it each with an update chip, and the agent's history card beside it"></div>
   </div>
@@ -156,19 +180,19 @@
   <div class="row">
     <div class="text">
       <h3>Know where an agent is.</h3>
-      <p>The Progress panel shows the agent's progress report in four stages: Understand, Build, PR and Done, with the steps the agent wrote for itself. Under the stages, Last turn lists what the last turn did, what needs you and what comes next.</p>
-      <ul><li>A question from the agent as a card, with an Answer button</li><li>Done, Needs you and Next, read from the agent's last message</li><li>Checks on the work: committed, pushed, pull request, nothing unverified</li></ul>
+      <p>The Progress panel reads top to bottom: the question that waits on you, what the agent is doing now, a bar for each of its stages, the steps under them, what is coming up, and what is not verified yet. A step Tidewatch ticked itself says so.</p>
+      <ul><li>A question from the agent, answered above the reply box</li><li>A step marked <span class="mono">checked</span> when Tidewatch ran what it names, <span class="mono">claimed</span> when only the agent says so</li><li>Dated follow-ups under Coming up, and the links the agent shared at the bottom</li></ul>
     </div>
-    <div class="shot"><img src="shot-progress.png" width="2200" height="1375" loading="lazy" alt="The Progress panel of an agent that finished: four stage bars (Understand, Build, PR, Done) under its goal, a Last turn section with Done, Needs you with an Answer button and Next, and the progress report's steps, beside the Reader with a Your answers card, a clickable link and a background task note"></div>
+    <div class="shot"><img src="shot-progress.png" width="2200" height="1375" loading="lazy" alt="An agent tab that waits on the owner. On the left the Reader: your message, the agent's final answer with a 2 updates chip and a steps row under it, and above the reply box a Needs you card asking whether the CI workflow keeps the Node 18 job, with numbered answers Drop it (recommended), Keep it and Something else. On the right the Progress panel: a Waiting on you card, the Now line, four stage bars, the Build steps with claimed and waits on your answer notes, a Coming up date and Decisions"></div>
   </div>
 
   <div class="row flip">
     <div class="text">
       <h3>Pick the agent and how far it may go.</h3>
-      <p>A new tab is the form itself: an agent, a workflow or a plain shell. Pick a profile and its permission level, from read only up to a YOLO level that asks first, name the worktree and the branch it starts from, and write the first message. Start, and the agent begins with it.</p>
-      <ul><li>Claude Code, Codex, Gemini CLI and Copilot CLI</li><li>A fresh worktree and branch for every tab</li><li>Tidewatch pushes for you, on approval</li></ul>
+      <p>A new tab is the form itself: an agent, a Meeseeks or a plain shell. Pick a profile and its permission level, from read only up to YOLO, name the worktree and the branch it starts from, and write the first message in the same box as the Reader's, with pictures, files and <span class="mono">@</span> picks. Start, and the agent begins with it.</p>
+      <ul><li>Claude Code, Codex, Gemini CLI and Copilot CLI</li><li>A fresh worktree and branch for every tab</li><li>Optional remote control, so the Claude app or GitHub mobile can drive the session</li></ul>
     </div>
-    <div class="shot"><img src="shot-newtab.png" width="2200" height="1375" loading="lazy" alt="A new tab as a form: a control to pick Agent, Meeseeks, Workflow or Shell, agent profiles in a lane on the left, the five permission levels, the worktree name and base branch, and the first message, with the branch history on the right"></div>
+    <div class="shot"><img src="shot-newtab.png" width="2200" height="1375" loading="lazy" alt="A new tab as a form: a control to pick Agent, Meeseeks or Shell, agent profiles in a lane on the left with their model and effort, the five permission levels with a line saying what the picked one does, a Remote control switch, the worktree name and start branch, and the first message box with Start Builder under it, with the branch history on the right"></div>
   </div>
 
   <div class="row">
@@ -191,20 +215,20 @@
 
   <div class="row">
     <div class="text">
-      <h3>Chain agents into a workflow.</h3>
-      <p>Write the steps once: work, review, refactor. Each stage has its own agent, model and permissions, and a gate that Tidewatch checks before the next stage starts.</p>
-      <ul><li>Tests pass, no blocking findings, or your approval</li><li>A failed gate sends the work back a stage</li><li>Nine are built in, including Hunt a root cause, Finish with proof and Refactor safely</li></ul>
+      <h3>Every link the agent shares, kept live.</h3>
+      <p>Pull requests, issues, artifacts and documents the agent mentions collect in one card. Each pull request or issue shows its checks, review, conflicts and comments, from GitHub as it happens, and the ones that want you come first.</p>
+      <ul><li>Chips for type (PRs, Issues, Artifacts, Docs and web) and for state (Open, Needs action, Done), each with a count</li><li>A search box once there are four links or more</li><li>The Progress tab shows an orange dot when a link starts to need action</li></ul>
     </div>
-    <div class="shot"><img src="shot-workflows.png" width="2200" height="1375" loading="lazy" alt="The workflow editor showing the Finish with proof workflow with its stages, agent, permissions and gate"></div>
+    <div class="shot"><img src="shot-links.png" width="2200" height="1375" loading="lazy" alt="The Links card at the bottom of the Progress panel with seven links: type chips All, PRs, Issues, Artifacts and Docs and web, state chips Open, Needs action and Done, a search box, and rows for a draft pull request with a conflicts pill, a pull request with checks failing and changes requested pills, and an issue with an open pill, beside the Reader where the agent listed those links"></div>
   </div>
 
   <div class="row flip">
     <div class="text">
       <h3>Everything from the keyboard.</h3>
-      <p>The command palette lists every command, the other open tabs, each agent profile and each workflow. A drop-down window on a hotkey keeps Tidewatch one keystroke away.</p>
+      <p>The command palette lists every command, the other open tabs and each agent profile, under group labels, with the letters you typed marked in each result. A drop-down window on a hotkey keeps Tidewatch one keystroke away.</p>
       <ul><li><span class="mono">Cmd+Shift+P</span> on macOS, <span class="mono">Ctrl+Shift+P</span> on Linux</li><li>A menu-bar item on macOS</li><li>Update checks, notify-only unless installed with Homebrew</li><li><span class="mono">Cmd+=</span> and <span class="mono">Cmd+-</span> set the interface size, 80 to 150 percent</li></ul>
     </div>
-    <div class="shot"><img src="shot-palette.png" width="2200" height="1375" loading="lazy" alt="The command palette open over an agent tab, filtered to Switch, listing the other tabs with their shortcuts"></div>
+    <div class="shot"><img src="shot-palette.png" width="2200" height="1375" loading="lazy" alt="The command palette open over a shell tab with sw typed in the search field and a count of 7 results: an Open tabs group of Switch to tab rows with the typed letters marked and Cmd key caps, an App group with one command, and a hint line for Up, Down, Enter and Esc"></div>
   </div>
 </div></section>
 
@@ -225,7 +249,7 @@
   <div class="steps">
     <div class="step"><div class="num">01</div><h4>Install</h4><p>On macOS, with Homebrew. On Linux, download the AppImage or tarball from the <a href="https://github.com/Hobo-Ware/tidewatch/releases/latest">latest release</a>.</p><pre><span class="p">$</span> brew install hobo-ware/tap/tidewatch</pre></div>
     <div class="step"><div class="num">02</div><h4>Open a repo</h4><p>Pass the git repo you want a window for.</p><pre><span class="p">$</span> tidewatch ~/code/my-repo</pre></div>
-    <div class="step"><div class="num">03</div><h4>Bring an agent</h4><p>Install at least one agent CLI: Claude Code, Codex, Gemini CLI or Copilot CLI. Tidewatch finds the ones on your PATH. Delivery needs <code>gh</code>.</p><pre><span class="p">$</span> claude --version</pre></div>
+    <div class="step"><div class="num">03</div><h4>Bring an agent</h4><p>Install at least one agent CLI: Claude Code, Codex, Gemini CLI or Copilot CLI. Tidewatch finds the ones on your PATH. Pull request cards and live links need <code>gh</code>.</p><pre><span class="p">$</span> claude --version</pre></div>
   </div>
   <p class="note">Builds are not yet signed with an Apple Developer ID: the Homebrew cask clears the download flag, so the app opens without a warning. To build from source instead: <span class="mono">cargo run -p tidewatch -- &lt;repo&gt;</span>. Details are in the <a href="https://github.com/Hobo-Ware/tidewatch#readme">README</a>.</p>
 </div></section>
