@@ -4,9 +4,8 @@
 //! through `Jobs::drain`. `Saver` writes the cards on a thread of its own.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread::JoinHandle;
 
+use tidewatch_core::coalescing_writer::CoalescingWriter;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_gh::{self, Polled};
@@ -126,48 +125,15 @@ pub(crate) fn check_cleanup(
 }
 
 /// Writes cards off the UI thread. A newer copy of the same file replaces one still waiting.
-pub(crate) struct Saver {
-    sender: Option<Sender<(PathBuf, Cards)>>,
-    worker: Option<JoinHandle<()>>,
-}
+pub(crate) struct Saver(CoalescingWriter<Cards>);
 
 impl Saver {
     pub(crate) fn new() -> Self {
-        let (sender, receiver) = channel();
-        let worker = std::thread::spawn(move || write_loop(&receiver));
-        Self { sender: Some(sender), worker: Some(worker) }
+        Self(CoalescingWriter::new(Cards::save))
     }
 
     pub(crate) fn save(&self, file: &Path, cards: Cards) {
-        if let Some(sender) = &self.sender {
-            let _ = sender.send((file.to_path_buf(), cards));
-        }
-    }
-}
-
-impl Drop for Saver {
-    fn drop(&mut self) {
-        self.sender = None;
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-
-fn write_loop(receiver: &Receiver<(PathBuf, Cards)>) {
-    while let Ok(first) = receiver.recv() {
-        let mut latest = vec![first];
-        for (file, cards) in receiver.try_iter() {
-            match latest.iter_mut().find(|(known, _)| *known == file) {
-                Some(slot) => slot.1 = cards,
-                None => latest.push((file, cards)),
-            }
-        }
-        for (file, cards) in latest {
-            if let Err(e) = cards.save(&file) {
-                eprintln!("tidewatch: cannot save {}: {e}", file.display());
-            }
-        }
+        self.0.save(file.to_path_buf(), cards);
     }
 }
 
