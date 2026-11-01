@@ -296,7 +296,7 @@ pub(crate) fn done_check_card(ui: &mut Ui, on: bool) -> Option<bool> {
 }
 
 /// What the Token budget card shows: the save mode switch, and whether any plan limit reading
-/// exists (without one the card says save mode has nothing to watch).
+/// exists (without one the card says where a reading comes from).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BudgetState {
     pub(crate) save_mode: bool,
@@ -316,9 +316,9 @@ pub(crate) fn budget_card(ui: &mut Ui, state: BudgetState) -> Option<bool> {
             state.save_mode,
         );
         let caption = if state.limits_known {
-            "The tokens of each tab show on its tooltip and on the Overview."
+            "The plan limits show in the status bar. The tokens and cost of each tab show on its tooltip and on the Overview."
         } else {
-            "Claude Code does not give its plan limits to other programs yet, so save mode has nothing to watch. The tokens of each tab show on its tooltip and on the Overview."
+            "Plan limits come from the status line of a Claude tab and show in the status bar after its first answer. The tokens and cost of each tab show on its tooltip and on the Overview."
         };
         settings_ui::card_caption(ui, caption);
     });

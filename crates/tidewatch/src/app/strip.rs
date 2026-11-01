@@ -341,7 +341,7 @@ impl Tidewatch {
                     .job_live
                     .board(id)
                     .and_then(|board| tab_job(board, now_ms, self.job_agent(id))),
-                tokens: self.tokens_of(id).map(|tokens| tokens.tip),
+                tokens: self.tab_spend_tip(id),
                 agents: crate::subagents_model::running_line(self.subagent_live.running(id)),
             })),
             avatar: self.avatar_live.get(id).cloned(),
