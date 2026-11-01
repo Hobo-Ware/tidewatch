@@ -65,8 +65,8 @@ Numbers come from a real run, never from memory.
 
 - **Every rule file has frontmatter** (`trigger`, `globs`, `description`) so any agent tool can
   route to it. A new area of code gets a rule file and a row in the `CLAUDE.md` routing table.
-- **The module layout list in `project.md` stays true.** A new module adds its line in the
-  same commit.
+- **The module map in `docs/layout.md` stays true.** A new or moved module adds or fixes its
+  line in the same commit.
 - **Verify, do not assume.** Agent CLIs change often. Before coding against a CLI flag, hook or
   output format, check the installed CLI's `--help` or a real run, and note the version you
   checked in the code's test or in `PLAN.md`.
