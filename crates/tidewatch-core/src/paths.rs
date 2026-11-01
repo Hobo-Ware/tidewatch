@@ -17,6 +17,7 @@ const AVATAR_FILE: &str = "avatar.json";
 const AVATAR_ASKED_FILE: &str = "avatar-asked";
 const PROGRESS_FEED_FILE: &str = "progress-feed.jsonl";
 const SENT_FILE: &str = "tidewatch-sent.jsonl";
+const PLAN_LIMITS_FILE: &str = "plan-limits.json";
 const PANEL_LOG_FILE: &str = "panel-log.jsonl";
 const REPLY_HISTORY_FILE: &str = "reply-history.json";
 const REPLY_DRAFT_FILE: &str = "reply-draft.json";
@@ -61,6 +62,18 @@ pub fn progress_feed_file_beside(notes_file: &Path) -> PathBuf {
 #[must_use]
 pub fn sent_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(SENT_FILE)
+}
+
+/// The plan limits and session cost the tab's status line command saved, beside its `notes.json`.
+#[must_use]
+pub fn plan_limits_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(PLAN_LIMITS_FILE)
+}
+
+/// The same file from the tab's state folder, which is what `--statusline` is given.
+#[must_use]
+pub fn plan_limits_file_in(tab_state_dir: &Path) -> PathBuf {
+    tab_state_dir.join(PLAN_LIMITS_FILE)
 }
 
 /// The messages the owner sent a tab, which sit next to its `notes.json`.
@@ -534,6 +547,16 @@ mod tests {
         assert!(reply_history_file_beside(&notes).ends_with("brave-otter/reply-history.json"));
         assert!(reply_draft_file_beside(&notes).ends_with("brave-otter/reply-draft.json"));
         assert!(sent_file_beside(&notes).ends_with("brave-otter/tidewatch-sent.jsonl"));
+    }
+
+    #[test]
+    fn the_plan_limits_sit_with_the_notes_of_their_tab() {
+        let paths = paths();
+        let repo = Path::new("/work/web");
+        let notes = paths.notes_file(repo, "brave-otter");
+        let beside = plan_limits_file_beside(&notes);
+        assert!(beside.ends_with("brave-otter/plan-limits.json"));
+        assert_eq!(plan_limits_file_in(&paths.tab_state_dir(repo, "brave-otter")), beside);
     }
 
     #[test]

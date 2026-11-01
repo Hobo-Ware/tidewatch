@@ -250,6 +250,7 @@ mod slash_glue;
 mod slash_view;
 mod status_bar;
 mod status_view;
+mod statusline;
 mod step_tick;
 mod stopped_view;
 mod subagents_glue;
@@ -324,6 +325,9 @@ const LINUX_ICON: &[u8] = include_bytes!("../../../assets/icon-512.png");
 fn main() -> eframe::Result<()> {
     if std::env::args_os().nth(1).is_some_and(|flag| flag == guard::FLAG) {
         std::process::exit(guard::run(&std::env::args_os().skip(2).collect::<Vec<_>>()));
+    }
+    if std::env::args_os().nth(1).is_some_and(|flag| flag == statusline::FLAG) {
+        std::process::exit(statusline::run(&std::env::args_os().skip(2).collect::<Vec<_>>()));
     }
     let args = cli::parse(std::env::args_os().skip(1));
     let home = home_dir();
