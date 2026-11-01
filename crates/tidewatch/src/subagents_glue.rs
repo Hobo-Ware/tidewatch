@@ -98,6 +98,10 @@ impl Host {
         }
     }
 
+    pub(crate) fn is_fake(&self) -> bool {
+        self.fake
+    }
+
     pub(crate) fn agents(&self, tab: u64) -> &[Agent] {
         self.tabs.get(&tab).map_or(&[][..], |tab| tab.agents.as_slice())
     }

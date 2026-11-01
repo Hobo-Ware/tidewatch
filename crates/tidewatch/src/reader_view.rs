@@ -39,7 +39,7 @@ use crate::question_card::{Card, Effect};
 use crate::question_view::{self, ChipClick, Live, PermissionClick};
 use crate::quick_reply::{self, Quick};
 use crate::quiet_notes::{self, Entry};
-use crate::reader_chat_view::{self, Queue, Scene};
+use crate::reader_chat_view::{self, Parent, Queue, Scene};
 use crate::reader_keys::{self, Answer};
 use crate::reader_rows::{Kind, Origin, Row, Rows};
 use crate::reader_scroll::{self, Autoscroll, Heights};
@@ -400,6 +400,8 @@ pub(crate) enum Action {
     },
     /// Stop showing the queued message `id`.
     Forget(u64),
+    /// Read the chat of the sub-agent whose id this is.
+    SubAgent(String),
 }
 
 /// The look of an inline item: a card on the window ground.
@@ -657,6 +659,9 @@ pub(crate) fn show(
             match out {
                 subagents_view::Out::Fold => state.agents_folded = !state.agents_folded,
                 subagents_view::Out::Open => state.agents_opened = !state.agents_opened,
+                subagents_view::Out::Read(index) => {
+                    actions.push(Action::SubAgent(list.rows[index].id.clone()));
+                }
             }
         }
     }
@@ -698,6 +703,7 @@ pub(crate) fn show(
         facts.review.as_ref(),
         (live_seq, &quick, facts.profile),
         (facts.face, facts.turn == Turn::Running, facts.prompt == Some(Prompt::Permission)),
+        None,
         &mut actions,
     );
     match chips {
@@ -766,6 +772,48 @@ pub(crate) fn show(
     actions
 }
 
+/// What a sub-agent's chat is drawn with.
+pub(crate) struct ChatFacts<'a> {
+    /// Keeps this chat's scroll place apart from every tab's Reader.
+    pub(crate) key: u64,
+    /// What the sub-agent's own turns are signed with.
+    pub(crate) agent: &'a str,
+    /// The agent that wrote the sub-agent's prompt.
+    pub(crate) parent: Parent<'a>,
+    pub(crate) running: bool,
+}
+
+/// The rows of a transcript alone, in `body`: the Reader's own bubbles, tool chips and markdown,
+/// with no reply box, question card or review card, and nothing a click on them could send.
+pub(crate) fn show_chat(
+    ui: &mut Ui,
+    body: Rect,
+    rows: &Rows,
+    state: &mut ViewState,
+    facts: &ChatFacts<'_>,
+) {
+    ui.painter().rect_filled(body, 0.0, brand::GROUND);
+    let pass = ui.ctx().cumulative_pass_nr();
+    if reader_scroll::returned(state.last_pass, pass) && state.scroll.following() {
+        state.stick_pending = true;
+    }
+    state.last_pass = Some(pass);
+    let face = Face::of(facts.agent, "claude", None);
+    let mut unsent = Vec::new();
+    transcript(
+        ui,
+        body,
+        rows,
+        state,
+        (facts.key, None, None),
+        None,
+        (None, &[], facts.agent),
+        (Some(&face), facts.running, false),
+        Some(facts.parent),
+        &mut unsent,
+    );
+}
+
 /// The part of `body` the rows scroll in and, while the view is not following, the slot of the
 /// "Jump to latest" pill. The pill gets a strip of its own under the rows, so it never covers the
 /// last row; a body too short to spare the strip lets the pill float over it.
@@ -796,6 +844,7 @@ fn transcript(
     review: Option<&ReviewFacts<'_>>,
     (live_seq, quick, profile): (Option<u64>, &[Quick], &str),
     (face, running, waiting): (Option<&Face>, bool, bool),
+    parent: Option<Parent<'_>>,
     actions: &mut Vec<Action>,
 ) -> Option<ChipClick> {
     let mut chip_click = None;
@@ -865,6 +914,7 @@ fn transcript(
         fresh_after_ms: *fresh_after_ms,
         running,
         waiting,
+        parent,
     };
     let mut bubbles: Vec<(BubbleAction, String, Option<u64>)> = Vec::new();
     let mut body_ui = ui.new_child(UiBuilder::new().max_rect(view));
@@ -1018,6 +1068,7 @@ fn transcript(
                                             scene.zone,
                                             shown,
                                             fresh,
+                                            scene.parent,
                                         );
                                         if let Some(click) = click {
                                             bubbles.push((click, row.text.clone(), None));
@@ -2937,6 +2988,95 @@ mod tests {
         assert!(head.top() > 350.0, "{head:?}");
         let row = find(&shown, "Reading file 0.rs").expect("a row is drawn");
         assert!(row.top() > head.bottom());
+    }
+
+    #[test]
+    fn a_click_on_an_agents_row_opens_that_agents_chat_over_the_tab_and_escape_closes_it() {
+        use crate::subagent_chat::{Host, Open, Source};
+        use crate::subagent_chat_view::{self, Out};
+        use tidewatch_core::subagents::{Agent, Phase};
+        let ctx = crate::fonts::test_context();
+        let mut state = ViewState::default();
+        let list = agents_list();
+        let rows = conversation(6, 30);
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0));
+        let mut run = |events: Vec<Event>| -> (Vec<Action>, Vec<(String, Rect)>) {
+            let raw = RawInput {
+                screen_rect: Some(screen),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let facts = Facts { agents: Some(&list), ..facts(None, Turn::Finished) };
+            let mut actions = Vec::new();
+            let output = ctx.run_ui(raw, |ui| {
+                actions = show(ui, screen, &rows, &mut state, &facts);
+            });
+            let mut texts = Vec::new();
+            for shape in &output.shapes {
+                crate::test_support::painted_text_rects_nonblank(&shape.shape, &mut texts);
+            }
+            (actions, texts)
+        };
+        for _ in 0..3 {
+            run(Vec::new());
+        }
+        let (_, texts) = run(Vec::new());
+        let row =
+            texts.iter().find(|(text, _)| text == "Reading file 1.rs").expect("row").1.center();
+        let button = |pressed| Event::PointerButton {
+            pos: row,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        run(vec![Event::PointerMoved(row)]);
+        let (pressed, _) = run(vec![button(true)]);
+        let (released, _) = run(vec![button(false)]);
+        assert_eq!(pressed, Vec::<Action>::new());
+        assert_eq!(released, [Action::SubAgent("a1".into())]);
+
+        let agent = Agent {
+            id: "a1".into(),
+            description: "Task 1".into(),
+            model: None,
+            effort: None,
+            started_ms: 750_000,
+            phase: Phase::Running,
+            now: "Reading file 1.rs".into(),
+            tokens: 0,
+        };
+        let mut host = Host::default();
+        host.open(Open::new(7, agent, Source::Fake { finished: false }, &ctx));
+        assert_eq!(host.id_over(7), Some("a1"));
+        let face = Face::of("Builder", "claude", None);
+        let escape = |pressed| Event::Key {
+            key: egui::Key::Escape,
+            physical_key: Some(egui::Key::Escape),
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let raw = RawInput {
+            screen_rect: Some(screen),
+            events: vec![escape(true), escape(false)],
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut out = None;
+        let _ = ctx.run_ui(raw, |ui| {
+            let chat = host.chat_mut(7).unwrap();
+            let facts = subagent_chat_view::Facts {
+                chat,
+                parent: ("Builder", &face),
+                now_ms: 1_000_000,
+                keys_free: true,
+            };
+            out = subagent_chat_view::show(ui, screen, facts);
+        });
+        assert_eq!(out, Some(Out::Back));
+        host.close();
+        assert_eq!(host.id_over(7), None);
     }
 
     #[test]

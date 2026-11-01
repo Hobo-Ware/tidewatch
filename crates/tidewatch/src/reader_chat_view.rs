@@ -92,6 +92,8 @@ pub(crate) struct Scene<'a> {
     pub(crate) running: bool,
     /// A tool call waits for the user's permission.
     pub(crate) waiting: bool,
+    /// Set in a sub-agent's chat: who wrote its prompt.
+    pub(crate) parent: Option<Parent<'a>>,
 }
 
 /// Whether a message stamped `at_ms` came in after the tab started (`after_ms`), not from history.
@@ -192,8 +194,17 @@ fn stamped(who: &str, at_ms: Option<i64>, zone: &TimeZone) -> String {
     }
 }
 
+/// Who wrote a prompt that is not the owner's: the agent that started the sub-agent reading it.
+#[derive(Clone, Copy)]
+pub(crate) struct Parent<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) face: &'a Face,
+}
+
 /// A user message: a bubble at the right with the owner's face beside it, `You · 16:02` over it.
 /// The text inside is markdown, left-aligned, in a bubble as wide as its text up to its share.
+/// With a `parent` the owner did not write it: its name replaces `You`, its face the owner's, and
+/// no actions sit under the bubble.
 pub(crate) fn user(
     ui: &mut Ui,
     row: &Row,
@@ -201,8 +212,9 @@ pub(crate) fn user(
     zone: &TimeZone,
     (width, pastes): (f32, Option<&Path>),
     fresh: bool,
+    parent: Option<Parent<'_>>,
 ) -> Option<BubbleAction> {
-    user_bubble(ui, row, Meta::Stamp(at_ms, zone), (width, pastes), fresh)
+    user_bubble(ui, row, Meta::Stamp(at_ms, zone), (width, pastes), (fresh, parent))
 }
 
 /// Where a message the transcript does not have yet stands.
@@ -227,7 +239,7 @@ pub(crate) fn queued(
         Queue::Waiting(time) => Meta::Queued(time),
         Queue::NotSeen => Meta::NotSeen,
     };
-    user_bubble(ui, &row, meta_line, (width, None), false)
+    user_bubble(ui, &row, meta_line, (width, None), (false, None))
 }
 
 #[derive(Clone, Copy)]
@@ -270,7 +282,7 @@ fn user_bubble(
     row: &Row,
     meta_line: Meta<'_>,
     (width, pastes): (f32, Option<&Path>),
-    fresh: bool,
+    (fresh, parent): (bool, Option<Parent<'_>>),
 ) -> Option<BubbleAction> {
     ui.add_space(OUTER);
     let max_w = user_width(width);
@@ -290,7 +302,7 @@ fn user_bubble(
         Meta::Stamp(..) => 1.0,
         Meta::Queued(_) | Meta::NotSeen => QUEUED_OPACITY,
     };
-    let actionable = question::parse_answers(&row.text).is_none();
+    let actionable = parent.is_none() && question::parse_answers(&row.text).is_none();
     let mut asked = None;
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         let right = ui.max_rect().right();
@@ -299,7 +311,10 @@ fn user_bubble(
             ui.allocate_ui_with_layout(vec2(max_w, 0.0), Layout::top_down(Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 match meta_line {
-                    Meta::Stamp(at_ms, zone) => meta(ui, &stamped("You", at_ms, zone), Align::Max),
+                    Meta::Stamp(at_ms, zone) => {
+                        let who = parent.map_or("You", |parent| parent.name);
+                        meta(ui, &stamped(who, at_ms, zone), Align::Max);
+                    }
                     Meta::Queued(time) => queued_meta(ui, time),
                     Meta::NotSeen => not_seen_meta(ui),
                 }
@@ -396,7 +411,13 @@ fn user_bubble(
             });
         let mut painter = ui.painter().clone();
         painter.set_opacity(dim);
-        me_face::paint(ui.ctx(), &painter, user_face_rect(right, column.inner.bottom()));
+        let face_rect = user_face_rect(right, column.inner.bottom());
+        match parent {
+            Some(parent) => {
+                paint_face(ui.ctx(), &painter, face_rect, parent.face);
+            }
+            None => me_face::paint(ui.ctx(), &painter, face_rect),
+        }
     });
     let room = if actionable && !matches!(meta_line, Meta::Queued(_)) {
         bubble_toolbar::ROOM
@@ -1151,7 +1172,7 @@ mod tests {
                 ..RawInput::default()
             };
             let out = ctx.run_ui(raw, |ui| {
-                user(ui, &row, None, &zone, (800.0, None), false);
+                user(ui, &row, None, &zone, (800.0, None), false, None);
             });
             texts = out
                 .shapes
@@ -1163,6 +1184,49 @@ mod tests {
                 .collect();
         }
         texts
+    }
+
+    #[test]
+    fn a_prompt_written_by_the_parent_agent_is_signed_with_its_name_and_takes_no_action_room() {
+        let ctx = crate::fonts::test_context();
+        let row = Row {
+            seq: 1,
+            kind: Kind::User,
+            text: "Read the hover toolbar code.".to_owned(),
+            pictures: Vec::new(),
+        };
+        let zone = TimeZone::UTC;
+        let face = Face::of("Builder", "claude", None);
+        let measured = |parent: Option<Parent<'_>>| {
+            let mut texts = Vec::new();
+            let mut height = 0.0;
+            for _ in 0..2 {
+                let raw = RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 600.0))),
+                    ..RawInput::default()
+                };
+                let out = ctx.run_ui(raw, |ui| {
+                    let top = ui.next_widget_position().y;
+                    user(ui, &row, Some(1_700_000_000_000), &zone, (800.0, None), false, parent);
+                    height = ui.next_widget_position().y - top;
+                });
+                texts = out
+                    .shapes
+                    .iter()
+                    .filter_map(|clipped| match &clipped.shape {
+                        Shape::Text(text) => Some(text.galley.text().to_owned()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+            }
+            (texts, height)
+        };
+        let (own, own_h) = measured(None);
+        let (theirs, theirs_h) = measured(Some(Parent { name: "Builder", face: &face }));
+        assert!(own.iter().any(|text| text.starts_with("You")), "{own:?}");
+        assert!(theirs.iter().any(|text| text.starts_with("Builder")), "{theirs:?}");
+        assert!(theirs.iter().all(|text| !text.starts_with("You")), "{theirs:?}");
+        assert!((own_h - theirs_h - bubble_toolbar::ROOM).abs() < 0.5, "{own_h} {theirs_h}");
     }
 
     #[test]
@@ -1320,7 +1384,7 @@ mod tests {
             };
             let out = ctx.run_ui(raw, |ui| {
                 ui.set_max_width(pane);
-                user(ui, &row, None, &zone, (pane, None), false);
+                user(ui, &row, None, &zone, (pane, None), false, None);
             });
             shapes = out.shapes.into_iter().map(|clipped| clipped.shape).collect();
         }
@@ -1393,7 +1457,7 @@ mod tests {
             };
             let out = ctx.run_ui(raw, |ui| {
                 ui.set_max_width(pane);
-                user(ui, &row, None, &zone, (pane, None), false);
+                user(ui, &row, None, &zone, (pane, None), false, None);
             });
             let shapes: Vec<Shape> = out.shapes.into_iter().map(|clipped| clipped.shape).collect();
             found = sunken_chips(&shapes);
@@ -1514,7 +1578,7 @@ mod tests {
                 if queued {
                     super::queued(ui, &row.text, 1, Queue::Waiting(0.0), 600.0);
                 } else {
-                    user(ui, &row, Some(1_700_000_000_000), &zone, (600.0, None), false);
+                    user(ui, &row, Some(1_700_000_000_000), &zone, (600.0, None), false, None);
                 }
             });
             shapes.clear();
@@ -1630,7 +1694,7 @@ mod tests {
             ..RawInput::default()
         };
         let out = ctx.run_ui(raw, |ui| {
-            user(ui, &row, None, &TimeZone::UTC, (800.0, None), fresh);
+            user(ui, &row, None, &TimeZone::UTC, (800.0, None), fresh, None);
         });
         out.shapes
             .iter()

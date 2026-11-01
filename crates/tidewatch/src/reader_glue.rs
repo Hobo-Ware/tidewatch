@@ -490,6 +490,20 @@ pub(crate) fn take_picks(actions: &mut Vec<Action>) -> Vec<String> {
     picks
 }
 
+/// Takes the clicks on the rows of the running agents list out of the Reader's actions: the ids
+/// of the agents whose chat to read.
+pub(crate) fn take_agent_reads(actions: &mut Vec<Action>) -> Vec<String> {
+    let mut reads = Vec::new();
+    actions.retain(|action| match action {
+        Action::SubAgent(id) => {
+            reads.push(id.clone());
+            false
+        }
+        _ => true,
+    });
+    reads
+}
+
 /// Takes the clicks on the Due today card out of the Reader's actions; the app handles them.
 pub(crate) fn take_due_clicks(actions: &mut Vec<Action>) -> Vec<due_view::Action> {
     let mut clicks = Vec::new();
@@ -611,6 +625,7 @@ pub(crate) fn apply(
             | Action::Tidewatch(_)
             | Action::Due(_)
             | Action::Pick(_)
+            | Action::SubAgent(_)
             | Action::Reply(_)
             | Action::SendAgain { .. }
             | Action::Forget(_)

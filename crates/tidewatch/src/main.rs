@@ -253,6 +253,8 @@ mod status_view;
 mod statusline;
 mod step_tick;
 mod stopped_view;
+mod subagent_chat;
+mod subagent_chat_view;
 mod subagents_glue;
 mod subagents_model;
 mod subagents_view;

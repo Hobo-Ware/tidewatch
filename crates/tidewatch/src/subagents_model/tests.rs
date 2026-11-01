@@ -126,3 +126,27 @@ fn six_rows_show_and_the_rest_wait_behind_a_more_line_that_opens_them_in_place()
     let few = self::list(&agents[..4], 1_100_000).unwrap();
     assert_eq!(few.plan(true, 99), Plan { rows: 4, more: 0, can_fold_back: false });
 }
+
+#[test]
+fn the_chat_header_reads_the_description_and_what_the_agent_spent_running_or_done() {
+    let running = agent("a", Phase::Running, 281_400);
+    let finished = agent("b", Phase::Finished(1_253_000), 190_000);
+    let silent = agent("c", Phase::Running, 0);
+    let cases = [
+        (&running, "Task a", "4m 13s \u{b7} 281k"),
+        (&finished, "Task b", "done 4m 13s \u{b7} 190k"),
+        (&silent, "Task c", "4m 13s"),
+    ];
+    for (agent, what, right) in cases {
+        let line = head(agent, 1_253_000);
+        assert_eq!((line.what.as_str(), line.right.as_str()), (what, right), "{}", agent.id);
+        assert_eq!(line.tag.as_deref(), Some("sonnet \u{b7} high"));
+    }
+}
+
+#[test]
+fn the_chat_header_falls_back_to_what_the_agent_does_without_a_description() {
+    let mut nameless = agent("a", Phase::Running, 0);
+    nameless.description.clear();
+    assert_eq!(head(&nameless, 1_000_000).what, "Reading a.rs");
+}

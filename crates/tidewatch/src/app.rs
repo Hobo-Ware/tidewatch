@@ -207,6 +207,7 @@ pub(crate) struct Tidewatch {
     panel: panel_host::Host,
     link_live: link_glue::Host,
     subagent_live: subagents_glue::Host,
+    subagent_chat: crate::subagent_chat::Host,
     dev_links: Option<crate::link_view::LinkView>,
     me: me_glue::Host,
     avatar_live: avatar_glue::Host,
@@ -344,6 +345,7 @@ impl Tidewatch {
         let job_live = job_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let link_live = link_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let subagent_live = subagents_glue::Host::from_env();
+        let subagent_chat = crate::subagent_chat::Host::from_env();
         let avatar_live = avatar_glue::Host::from_env(paths.is_some() && screenshot.is_none());
         let me = me_glue::Host::start(
             &cc.egui_ctx,
@@ -469,6 +471,7 @@ impl Tidewatch {
             panel,
             link_live,
             subagent_live,
+            subagent_chat,
             dev_links: crate::link_view::LinkView::from_dev(
                 std::env::var("TIDEWATCH_DEV_LINKS").ok().as_deref(),
             ),
