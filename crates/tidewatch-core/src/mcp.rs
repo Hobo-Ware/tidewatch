@@ -8,9 +8,8 @@
 //! the repo service tools of `services_mcp.rs`. A tab is offered the ones its [`Offer`] allows
 //! (`meeseeks_done` only to a Meeseeks, `report_finding` to neither a Meeseeks,
 //! `ask_user` only to a CLI without a question tool Tidewatch reads); a call to one it is not
-//! offered is answered with a tool error that says where it works. `set_avatar` stays listed, because
-//! a session that listed its tools at start never hears of a new one, but a call is refused until the
-//! owner clicked Draw avatar for the tab. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools
+//! offered is answered with a tool error that says where it works. `set_avatar` is listed and works
+//! whenever it is called. Calls that matter to the app become [`TabEvent`]s through `emit`; the note tools
 //! read and write the tab's `notes.json` through `notes.rs`. `ask_user` holds its reply until the user
 //! answers (or [`AskWait::timeout`] runs out, or the client hangs up): the listener serves each
 //! connection on its own thread, so a held call blocks nothing else.
@@ -50,9 +49,6 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 const SUPPORTED_VERSIONS: [&str; 3] = [PROTOCOL_VERSION, "2025-03-26", "2024-11-05"];
 /// Longest text argument accepted, in characters.
 pub const MAX_TEXT_CHARS: usize = 20_000;
-
-const AVATAR_NOT_ASKED: &str =
-    "The owner has not asked for an icon for this tab. Wait until they click Draw avatar.";
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -125,8 +121,6 @@ pub struct ToolCtx<'a> {
     /// The agent id (`claude`, `gemini`, ...). It signs replies in the notes.
     pub agent: &'a str,
     pub role: TabRole,
-    /// Whether the owner clicked Draw avatar for this tab, which is what lets `set_avatar` through.
-    pub avatar: bool,
     pub notes_file: &'a Path,
     /// Serializes read-modify-write of `notes_file` between concurrent calls.
     pub notes_lock: &'a Mutex<()>,
@@ -351,9 +345,6 @@ fn call_tool(
         return Ok(tool_result(&text, is_error));
     }
     if name == avatar_mcp::SET_TOOL {
-        if !ctx.avatar {
-            return Ok(tool_result(AVATAR_NOT_ASKED, true));
-        }
         let (text, is_error) = avatar_mcp::set(args, ctx.notes_file, emit);
         return Ok(tool_result(&text, is_error));
     }
@@ -538,7 +529,6 @@ mod tests {
         events: RefCell<Vec<TabEvent>>,
         role: TabRole,
         agent: &'static str,
-        avatar: bool,
         workflow: Workflow,
     }
 
@@ -554,13 +544,8 @@ mod tests {
                 events: RefCell::new(vec![]),
                 role,
                 agent: "claude",
-                avatar: false,
                 workflow: Workflow::default(),
             }
-        }
-
-        fn drawing(self) -> Self {
-            Self { avatar: true, ..self }
         }
 
         fn running(self, agent: &'static str) -> Self {
@@ -583,7 +568,6 @@ mod tests {
             let ctx = ToolCtx {
                 agent: self.agent,
                 role: self.role,
-                avatar: self.avatar,
                 notes_file: &notes_file,
                 notes_lock: &self.lock,
                 progress_file: &progress_file,
@@ -801,23 +785,14 @@ mod tests {
     }
 
     #[test]
-    fn set_avatar_stays_listed_but_a_call_is_refused_until_the_owner_clicked_draw_avatar() {
+    fn set_avatar_is_listed_and_a_fresh_tab_with_no_click_can_call_it() {
         let args = json!({"svg": "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/></svg>", "reason": "a dot"});
         for role in [TabRole::Agent, TabRole::Meeseeks] {
             assert!(offered(role).iter().any(|name| name == "set_avatar"), "{role:?}");
         }
-        let before = Harness::new();
-        let reply = before.call("set_avatar", &args);
-        assert_eq!(reply["result"]["isError"], true);
-        assert_eq!(
-            text_of(&reply),
-            "The owner has not asked for an icon for this tab. Wait until they click Draw avatar."
-        );
-        assert_eq!(*before.events.borrow(), Vec::<TabEvent>::new());
-
-        let after = Harness::new().drawing();
-        assert_eq!(after.call("set_avatar", &args)["result"]["isError"], false);
-        assert_eq!(after.events.borrow().len(), 1);
+        let h = Harness::new();
+        assert_eq!(h.call("set_avatar", &args)["result"]["isError"], false);
+        assert_eq!(h.events.borrow().len(), 1);
     }
 
     #[test]
@@ -1015,7 +990,7 @@ mod tests {
 
     #[test]
     fn set_avatar_over_rpc_saves_beside_the_notes_and_shows_it_without_the_script() {
-        let h = Harness::new().drawing();
+        let h = Harness::new();
         let svg = "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/><script>1</script></svg>";
         let reply = h.call("set_avatar", &json!({"svg": svg, "reason": "a teal dot"}));
         assert_eq!(reply["result"]["isError"], false, "{reply}");
@@ -1039,7 +1014,6 @@ mod tests {
         let ctx = ToolCtx {
             agent: "claude",
             role: TabRole::Agent,
-            avatar: false,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: &progress_file,
@@ -1192,7 +1166,6 @@ mod tests {
         let ctx = ToolCtx {
             agent: "codex",
             role: TabRole::Agent,
-            avatar: false,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: Path::new("/none/progress.md"),
@@ -1302,7 +1275,6 @@ mod tests {
         let ctx = ToolCtx {
             agent: "codex",
             role: TabRole::Agent,
-            avatar: false,
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: Path::new("/none/progress.md"),
@@ -1524,7 +1496,6 @@ mod tests {
             &ToolCtx {
                 agent: "a",
                 role: TabRole::Agent,
-                avatar: false,
                 notes_file: Path::new("/none"),
                 notes_lock: &h.lock,
                 progress_file: Path::new("/none/progress.md"),
@@ -1568,7 +1539,6 @@ mod tests {
                     let ctx = ToolCtx {
                         agent: "claude",
                         role: TabRole::Agent,
-                        avatar: false,
                         notes_file,
                         notes_lock: lock,
                         progress_file: Path::new("/none/progress.md"),

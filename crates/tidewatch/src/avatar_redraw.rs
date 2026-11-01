@@ -55,10 +55,6 @@ impl Waiting {
         }
     }
 
-    pub(crate) fn held(&self) -> impl Iterator<Item = u64> + '_ {
-        self.tabs.iter().copied()
-    }
-
     pub(crate) fn holds(&self, tab: u64) -> bool {
         self.tabs.contains(&tab)
     }
