@@ -43,7 +43,6 @@ impl Catalog {
         self.table.get(id)
     }
 
-    #[cfg(test)]
     pub(crate) fn table(&self) -> &AgentTable {
         &self.table
     }
