@@ -110,14 +110,6 @@ impl Tidewatch {
     pub(super) fn drive_avatar_choice(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
         let choice = agent_avatar::take_choice(ctx);
-        if let Some(listener) = self.hooks.listener() {
-            let asked = choice
-                .filter(|(_, picked)| *picked != agent_avatar::Choice::UseLetter)
-                .map(|(tab, _)| tab);
-            for tab in asked.into_iter().chain(self.avatar_redraws.held()) {
-                listener.allow_avatar(tab);
-            }
-        }
         if let Some((tab, agent_avatar::Choice::Redraw)) = choice {
             self.avatar_redraws.add(tab);
         }

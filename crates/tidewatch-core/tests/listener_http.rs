@@ -379,35 +379,19 @@ fn mcp_over_http_runs_the_handshake_and_the_event_tools() {
 }
 
 #[test]
-fn set_avatar_is_refused_for_a_tab_until_allow_avatar_and_a_new_process_keeps_it() {
+fn set_avatar_saves_for_a_fresh_tab_with_no_click() {
     let h = Harness::start();
     let hook = h.register(5, "tab-p");
-    let other = h.register(6, "tab-q");
     let mut client = h.client();
     let svg =
         "<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#2dd4bf\"/></svg>";
     let args = json!({"svg": svg, "reason": "a dot"});
-    let refused = |client: &mut Client, token: &str| -> bool {
-        let reply = client.request("POST", "/mcp", Some(token), &call(2, "set_avatar", &args));
-        reply.json()["result"]["isError"] == true
-    };
     let list = client.request("POST", "/mcp", Some(&hook.token), &rpc(1, "tools/list", &json!({})));
     let listed = list.json()["result"]["tools"].as_array().unwrap().clone();
-    assert!(listed.iter().any(|tool| tool["name"] == "set_avatar"), "listed before the click");
-    assert!(refused(&mut client, &hook.token));
-
-    h.listener.allow_avatar(5);
-    assert!(refused(&mut client, &other.token), "another tab is still refused");
-    let credential = h.listener.credential_of(5).unwrap();
-    assert!(credential.avatar);
-    let port = h.listener.port();
-    let paths = h.paths.clone();
-    drop(h.listener);
-    let (listener, _events) =
-        Listener::start_on_port(port, paths, Box::new(|| {}), Duration::from_secs(5)).unwrap();
-    listener.adopt_tab(9, &credential);
-    let mut client = Client::connect(format!("127.0.0.1:{port}").parse().unwrap());
-    assert!(!refused(&mut client, &credential.token));
+    assert!(listed.iter().any(|tool| tool["name"] == "set_avatar"));
+    let reply = client.request("POST", "/mcp", Some(&hook.token), &call(2, "set_avatar", &args));
+    assert_eq!(reply.json()["result"]["isError"], false, "{}", reply.body);
+    assert!(h.notes_file("tab-p").with_file_name("avatar.json").exists());
 }
 
 #[test]
@@ -799,7 +783,6 @@ fn adopting_a_credential_replaces_the_tabs_earlier_token() {
         role: TabRole::Agent,
         notes_file: h.notes_file("a"),
         repo: PathBuf::new(),
-        avatar: false,
     };
     h.listener.adopt_tab(1, &credential);
     let status = |token: &str| h.client().request("POST", "/hook/claude", Some(token), "{}").status;

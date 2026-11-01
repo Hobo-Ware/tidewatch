@@ -94,9 +94,6 @@ pub struct Credential {
     /// Missing in a credential an older version saved: `get_workflow` then reads the defaults.
     #[serde(default)]
     pub repo: PathBuf,
-    /// Whether the owner clicked Draw avatar for the tab, which is what offers `set_avatar`.
-    #[serde(default)]
-    pub avatar: bool,
 }
 
 struct Entry {
@@ -106,7 +103,6 @@ struct Entry {
     role: TabRole,
     notes_file: PathBuf,
     repo: PathBuf,
-    avatar: AtomicBool,
 }
 
 struct Shared {
@@ -269,7 +265,6 @@ impl Listener {
             role: registration.role,
             notes_file: self.paths.notes_file(&registration.repo, &registration.tab),
             repo: registration.repo,
-            avatar: AtomicBool::new(false),
         });
         let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
         tabs.retain(|_, existing| existing.tab_id != entry.tab_id);
@@ -288,16 +283,7 @@ impl Listener {
             role: entry.role,
             notes_file: entry.notes_file.clone(),
             repo: entry.repo.clone(),
-            avatar: entry.avatar.load(Ordering::SeqCst),
         })
-    }
-
-    /// Offers `set_avatar` to the tab from now on: the owner clicked Draw avatar for it.
-    pub fn allow_avatar(&self, tab_id: u64) {
-        let tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
-        for entry in tabs.values().filter(|entry| entry.tab_id == tab_id) {
-            entry.avatar.store(true, Ordering::SeqCst);
-        }
     }
 
     /// Honours another process's credential for `tab_id`, so the agent that holds the token keeps
@@ -310,7 +296,6 @@ impl Listener {
             role: credential.role,
             notes_file: credential.notes_file.clone(),
             repo: credential.repo.clone(),
-            avatar: AtomicBool::new(credential.avatar),
         });
         let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
         tabs.retain(|_, existing| existing.tab_id != tab_id);
@@ -558,7 +543,6 @@ fn prompt_reply(
     let ledger = progress_store::load(&progress_file_beside(&entry.notes_file));
     let has_goal = ledger.as_ref().is_some_and(|ledger| !ledger.goal.trim().is_empty());
     if avatar_due(shared, entry, has_goal) {
-        entry.avatar.store(true, Ordering::SeqCst);
         contexts.push(avatar_ask::CONTEXT.to_owned());
         tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
     }
@@ -644,7 +628,6 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
     let ctx = ToolCtx {
         agent: &entry.agent,
         role: entry.role,
-        avatar: entry.avatar.load(Ordering::SeqCst),
         notes_file: &entry.notes_file,
         notes_lock: &shared.notes_lock,
         progress_file: &progress_file,
@@ -948,7 +931,6 @@ mod tests {
                 role: TabRole::default(),
                 notes_file: self.paths.notes_file(Path::new("/work/web"), tab),
                 repo: PathBuf::from("/work/web"),
-                avatar: AtomicBool::new(false),
             });
             self.shared.tabs.lock().unwrap().insert(token.clone(), entry);
             token
@@ -1063,18 +1045,27 @@ mod tests {
     }
 
     #[test]
-    fn the_icon_ask_arms_set_avatar_for_the_tab_and_for_no_other() {
+    fn the_icon_ask_goes_once_after_a_goal_and_to_no_other_tab() {
         let f = fixture();
         let token = f.register(1, "a");
         let other = f.register(2, "b");
         save_ledger(&f, &token, CALM);
         save_ledger(&f, &other, NO_GOAL);
-        let armed = |token: &str| f.shared.entry(token).unwrap().avatar.load(Ordering::SeqCst);
-        assert!(!armed(&token));
-        f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        f.send("POST", "/hook/claude", Some(&other), PROMPT);
-        assert!(armed(&token));
-        assert!(!armed(&other));
+        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        let again = f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        let none = f.send("POST", "/hook/claude", Some(&other), PROMPT);
+        assert_eq!(
+            (asks_for_an_icon(&first), asks_for_an_icon(&again), asks_for_an_icon(&none)),
+            (true, false, false)
+        );
+    }
+
+    #[test]
+    fn a_credential_an_older_version_saved_with_avatar_still_loads() {
+        let old = r#"{"token":"t","generation":2,"agent":"claude","role":"Agent","notes_file":"/n/notes.json","repo":"/r","avatar":true}"#;
+        let credential: Credential = serde_json::from_str(old).unwrap();
+        assert_eq!((credential.token.as_str(), credential.generation), ("t", 2));
+        assert!(!serde_json::to_string(&credential).unwrap().contains("avatar"));
     }
 
     #[test]
@@ -1097,7 +1088,6 @@ mod tests {
             save_ledger(&f, token, CALM);
             let response = f.send("POST", "/hook/claude", Some(token), PROMPT);
             assert_eq!(response.body, "{}", "{what}");
-            assert!(!f.shared.entry(token).unwrap().avatar.load(Ordering::SeqCst), "{what}");
         }
         assert!(!fixed_marker.exists(), "an exempt tab leaves no marker");
     }
@@ -1133,7 +1123,6 @@ mod tests {
         std::fs::write(state_dir, "not a folder").unwrap();
         let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert!(!asks_for_an_icon(&response), "{}", response.body);
-        assert!(!f.shared.entry(&token).unwrap().avatar.load(Ordering::SeqCst));
     }
 
     #[test]
