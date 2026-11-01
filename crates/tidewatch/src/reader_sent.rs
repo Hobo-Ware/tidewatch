@@ -13,18 +13,26 @@ const KEPT: usize = 200;
 const LOOSE_PREFIX_CHARS: usize = 120;
 const PASTE_NOTE: &str = "[Pasted text #";
 const PASTE_NOTE_MAX_CHARS: usize = 60;
+/// Characters that sat in the agent's input box before Tidewatch typed a message, such as a stray
+/// `1` (seen 2026-11-01: `1You push it please.`).
+const STRAY_PREFIX_CHARS: usize = 2;
+const STRAY_MIN_CHARS: usize = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Queued {
     pub(crate) id: u64,
     pub(crate) text: String,
     pub(crate) at_ms: i64,
+    /// A user line written well after this message reached the transcript, and this one did not:
+    /// the agent took its prompts past it, so it will not show up any more.
+    passed: bool,
 }
 
 impl Queued {
-    /// Whether the agent still has not shown this message after `NOT_SEEN_MS`.
+    /// Whether the agent still has not shown this message after `NOT_SEEN_MS`, or has already
+    /// taken a later one.
     pub(crate) fn not_seen(&self, now_ms: i64) -> bool {
-        now_ms - self.at_ms >= NOT_SEEN_MS
+        self.passed || now_ms - self.at_ms >= NOT_SEEN_MS
     }
 }
 
@@ -51,7 +59,16 @@ fn same_queued(queued: &Queued, seen: &str, at: Option<i64>) -> bool {
     let inside = at.is_none_or(|at| at <= queued.at_ms + WINDOW_MS);
     same_text(&queued.text, seen)
         || same_pictured(&queued.text, seen)
-        || (inside && same_paste(&queued.text, seen))
+        || (inside && (same_paste(&queued.text, seen) || after_stray(&queued.text, seen)))
+}
+
+/// Whether `seen` is `sent` with up to `STRAY_PREFIX_CHARS` characters in front of it.
+fn after_stray(sent: &str, seen: &str) -> bool {
+    let (sent, seen) = (squash(sent), squash(seen));
+    let Some(stray) = seen.strip_suffix(sent.as_str()) else { return false };
+    sent.chars().count() >= STRAY_MIN_CHARS
+        && !stray.is_empty()
+        && stray.chars().count() <= STRAY_PREFIX_CHARS
 }
 
 /// Like `same_text`, and also true when the agent kept only the start of a long paste or wrote a
@@ -112,7 +129,12 @@ impl Sent {
 
     pub(crate) fn queue(&mut self, text: &str, at_ms: i64) {
         self.next_queued += 1;
-        self.queued.push(Queued { id: self.next_queued, text: text.to_owned(), at_ms });
+        self.queued.push(Queued {
+            id: self.next_queued,
+            text: text.to_owned(),
+            at_ms,
+            passed: false,
+        });
     }
 
     /// Stops showing queued message `id`, as when the owner sends it again.
@@ -168,6 +190,10 @@ impl Sent {
                 None => true,
             }
         });
+        for queued in &mut self.queued {
+            queued.passed =
+                lines.iter().any(|(_, _, at)| at.is_some_and(|at| at > queued.at_ms + SLACK_MS));
+        }
     }
 
     pub(crate) fn records(&self) -> &[Record] {
@@ -415,6 +441,34 @@ mod tests {
         sent.queue(&long, 1_000);
         sent.settle(&lines(&[("[Pasted text #1 +40 lines]", Some(1_000 + WINDOW_MS + 1))]));
         assert_eq!(sent.waiting_len(), 1, "a placeholder long after does not count");
+    }
+
+    #[test]
+    fn a_queued_message_matches_its_line_with_a_stray_character_or_two_in_front() {
+        let cases = [
+            ("You push it please.", "1You push it please.", 0),
+            ("You push it please.", "12You push it please.", 0),
+            ("You push it please.", "abcYou push it please.", 1),
+            ("ok", "1ok", 1),
+            ("You push it please.", "You push it please.!", 1),
+        ];
+        for (typed, seen, left) in cases {
+            let mut sent = Sent::default();
+            sent.queue(typed, 1_000);
+            sent.settle(&lines(&[(seen, Some(5_000))]));
+            assert_eq!(sent.waiting_len(), left, "{typed:?} vs {seen:?}");
+        }
+    }
+
+    #[test]
+    fn a_queued_message_reads_not_seen_at_once_when_a_later_line_reached_the_transcript() {
+        let mut sent = Sent::default();
+        sent.queue("lost one", 1_000);
+        sent.settle(&lines(&[("something else", Some(1_000 + SLACK_MS))]));
+        assert!(!sent.waiting().all(|queued| queued.not_seen(1_001)));
+        sent.settle(&lines(&[("a later one", Some(1_000 + SLACK_MS + 1))]));
+        assert!(sent.waiting().all(|queued| queued.not_seen(1_001)));
+        assert_eq!(sent.waiting_len(), 1);
     }
 
     #[test]
