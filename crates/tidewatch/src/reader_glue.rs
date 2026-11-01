@@ -396,6 +396,11 @@ pub(crate) fn draw(
             });
         }
     }
+    if dev.take_ask() {
+        reader
+            .rows
+            .push_ask(crate::dev_reader::stand_in_questions(), crate::dev_reader::held_reply());
+    }
     let ctx = ui.ctx().clone();
     if let Some(sentence) = dev.take_sentence() {
         reader.view.set_sentence(&ctx, &sentence);

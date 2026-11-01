@@ -26,7 +26,9 @@
 //! - `TIDEWATCH_DEV_ROWS=1`: put a short stand-in conversation in the Reader once.
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
-//!   `all` (Go with your picks), `type:<text>` ("Something else" with that text), `send`, `skip`.
+//!   `all` (Go with your picks), `open` and `fold` (the card opens folded), `type:<text>` ("Something else" with that text), `send`, `skip`.
+//! - `TIDEWATCH_DEV_ASK=1`: put a stand-in question with three options in the Reader once, as an
+//!   `ask_user` call that nobody answers.
 //! - `TIDEWATCH_DEV_SEE=rows,confirm`: give the first agent tab a short chat with Tidewatch's own rows
 //!   (an Auto fix with its why and switch, a live reminder, an old reminder that must not show) and,
 //!   with `confirm`, a conflict message waiting for the first Send of its kind, for captures.
@@ -39,7 +41,7 @@ const BOX_FOCUS_SECS: f64 = 4.0;
 use std::path::PathBuf;
 
 use egui::Context;
-use tidewatch_core::question::Reply;
+use tidewatch_core::question::{AskReply, Question, QuestionOption, Reply, Select};
 
 use crate::commands::{self, Command};
 use crate::question_card::{CardKey, Effect, Row};
@@ -48,6 +50,44 @@ use crate::reader_keys::Answer;
 use crate::reader_view::{Action, Blocked, Prompt};
 
 const QUESTION_STEP_S: f64 = 0.4;
+
+/// The question `TIDEWATCH_DEV_ASK=1` shows.
+pub(crate) fn stand_in_questions() -> Vec<Question> {
+    let option = |label: &str, description: &str, top_pick: bool| QuestionOption {
+        description: Some(description.to_owned()),
+        top_pick,
+        ..QuestionOption::new(label)
+    };
+    vec![Question {
+        text: "The show merge refuses 146682 into 60968 because their seasons do not match. How \
+               should we finish the show-level part (7 ratings, 60 list entries, hidden items, \
+               dropped state, collected progress)?"
+            .to_owned(),
+        header: Some("Show merge".to_owned()),
+        decision: None,
+        select: Select::Single,
+        options: vec![
+            option(
+                "Small PR + hand fixes",
+                "Allow a show merge when the loser has no episodes left. The rest is fixed by hand.",
+                true,
+            ),
+            option("All by hand SQL", "No code change. Guarded SQL with an undo file.", false),
+            option(
+                "Also fix the merge gaps in code",
+                "The PR also moves hidden items and the drop state. A bigger change.",
+                false,
+            ),
+        ],
+    }]
+}
+
+/// A held `ask_user` reply whose call never ends, so the stand-in question stays pending.
+pub(crate) fn held_reply() -> AskReply {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::mem::forget(receiver);
+    AskReply::new(sender)
+}
 
 /// How long an unanswered question waits in a tab that runs on its own, read once.
 pub(crate) fn autopick_wait() -> f64 {
@@ -70,6 +110,8 @@ pub(crate) fn pretend_working() -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CardStep {
     Key(CardKey),
+    Open,
+    Fold,
     Back,
     Type(String),
     Send,
@@ -94,6 +136,8 @@ fn card_steps(text: &str) -> VecDeque<CardStep> {
                 "down" => Some(CardStep::Key(CardKey::Down)),
                 "all" => Some(CardStep::Key(CardKey::Picks)),
                 "back" => Some(CardStep::Back),
+                "open" => Some(CardStep::Open),
+                "fold" => Some(CardStep::Fold),
                 "send" => Some(CardStep::Send),
                 "skip" => Some(CardStep::Skip),
                 other => other.strip_prefix("type:").map(|text| CardStep::Type(text.to_owned())),
@@ -124,6 +168,7 @@ pub(crate) struct DevReader {
     not_seen: Option<String>,
     queued: Option<String>,
     rows: bool,
+    ask: bool,
     edit_held: bool,
     pub(crate) blocked: Option<Blocked>,
     pub(crate) working: bool,
@@ -173,6 +218,7 @@ impl DevReader {
             not_seen: var("TIDEWATCH_DEV_NOT_SEEN"),
             queued: var("TIDEWATCH_DEV_QUEUED"),
             rows: var("TIDEWATCH_DEV_ROWS").is_some_and(|value| value == "1"),
+            ask: var("TIDEWATCH_DEV_ASK").is_some_and(|value| value == "1"),
             blocked: match var("TIDEWATCH_DEV_BLOCKED").as_deref() {
                 Some("stopped") => Some(Blocked::Stopped),
                 Some("failed") => Some(Blocked::Failed),
@@ -210,6 +256,7 @@ impl DevReader {
             not_seen: None,
             queued: None,
             rows: false,
+            ask: false,
             edit_held: false,
             blocked: None,
             working: false,
@@ -251,6 +298,7 @@ impl DevReader {
             && self.not_seen.is_none()
             && self.queued.is_none()
             && !self.rows
+            && !self.ask
             && !self.edit_held
     }
 
@@ -260,6 +308,10 @@ impl DevReader {
 
     pub(crate) fn take_rows(&mut self) -> bool {
         std::mem::take(&mut self.rows)
+    }
+
+    pub(crate) fn take_ask(&mut self) -> bool {
+        std::mem::take(&mut self.ask)
     }
 
     pub(crate) fn take_held(&mut self) -> Vec<String> {
@@ -359,9 +411,18 @@ impl DevReader {
         self.question_at = now + QUESTION_STEP_S;
         let seq = live.seq;
         let effect = match step {
+            CardStep::Key(_) if live.is_folded() => Effect::Nothing,
             CardStep::Key(key) => live.card.key(key),
             CardStep::Back => {
                 live.card.back();
+                Effect::Nothing
+            }
+            CardStep::Open => {
+                live.open();
+                Effect::Nothing
+            }
+            CardStep::Fold => {
+                live.fold();
                 Effect::Nothing
             }
             CardStep::Type(text) => {
@@ -406,6 +467,22 @@ mod tests {
     #[test]
     fn no_switches_means_idle() {
         assert!(DevReader::parse(None, None, None, None, None, None).is_idle());
+    }
+
+    #[test]
+    fn open_and_fold_are_steps_and_keys_wait_for_an_open_card() {
+        assert_eq!(
+            card_steps("open,pick1,fold"),
+            [CardStep::Open, CardStep::Key(CardKey::Digit(1)), CardStep::Fold]
+        );
+        let mut dev = DevReader::parse(None, None, None, None, None, Some("pick2,open,pick2"));
+        let mut live = Live::new(1, crate::question_card::Card::new(stand_in_questions()));
+        assert_eq!(dev.drive_card(0.0, Some(&mut live)), None);
+        assert!(!live.card.is_picked(1) && live.is_folded());
+        assert_eq!(dev.drive_card(1.0, Some(&mut live)), None);
+        assert!(!live.is_folded());
+        assert_eq!(dev.drive_card(2.0, Some(&mut live)), None);
+        assert!(live.card.is_picked(1));
     }
 
     #[test]

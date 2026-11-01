@@ -2338,6 +2338,35 @@ mod tests {
     }
 
     #[test]
+    fn a_question_opens_folded_stays_as_the_owner_left_it_and_the_next_one_opens_folded_again() {
+        use crate::reader_rows::Asked;
+        use tidewatch_core::transcript::ToolPhase;
+        let mut rows = Rows::default();
+        rows.push(question_entry(ToolPhase::Call));
+        let mut state = ViewState::default();
+        let running = facts(Some(Prompt::Question), Turn::Running);
+        draw(&rows, &mut state, &running);
+        draw(&rows, &mut state, &running);
+        let folded = state.live.as_ref().expect("the card");
+        assert!(folded.is_folded());
+        assert_eq!(folded.height(), question_view::FOLDED_H + 8.0);
+        state.live.as_mut().expect("the card").open();
+        draw(&rows, &mut state, &running);
+        draw(&rows, &mut state, &running);
+        let open = state.live.as_ref().expect("the card");
+        assert!(!open.is_folded());
+        assert!(open.height() > question_view::FOLDED_H + 8.0);
+        rows.set_asked(0, Asked::Declined);
+        let mut second = question_entry(ToolPhase::Call);
+        second.tool.as_mut().expect("a tool call").id = Some("q2".into());
+        rows.push(second);
+        draw(&rows, &mut state, &running);
+        let next = state.live.as_ref().expect("the next card");
+        assert_eq!(next.seq, 1);
+        assert!(next.is_folded());
+    }
+
+    #[test]
     fn the_card_goes_away_when_the_question_is_answered_and_the_reply_box_asks_for_the_keyboard() {
         use crate::reader_rows::Asked;
         let mut rows = Rows::default();
