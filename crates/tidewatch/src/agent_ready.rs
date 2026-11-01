@@ -366,6 +366,7 @@ mod tests {
                     turn: Turn::Finished,
                     working: false,
                     reply_blocked: None,
+                    agents: None,
                 };
                 crate::reader_view::show(
                     ui,

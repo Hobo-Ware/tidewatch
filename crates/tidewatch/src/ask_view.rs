@@ -219,6 +219,7 @@ mod tests {
                     turn: Turn::Finished,
                     working: false,
                     reply_blocked: None,
+                    agents: None,
                 };
                 let rect = ui.max_rect();
                 actions = show_reader(ui, rect, &Rows::default(), state, &facts);

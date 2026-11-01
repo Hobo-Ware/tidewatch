@@ -267,6 +267,7 @@ impl Tidewatch {
                     (data, first),
                     ask.as_ref(),
                     avatar,
+                    self.subagent_live.agents(active_id),
                 );
                 let clicks = reader_glue::take_pr_clicks(&mut asked);
                 let due_clicks = reader_glue::take_due_clicks(&mut asked);

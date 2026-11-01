@@ -52,6 +52,7 @@ use crate::review_view::{self, ReviewAction};
 use crate::screen_kit::{Size, body, primary_button, quiet_button};
 use crate::send_line::SendLine;
 use crate::slash::Entry as SlashEntry;
+use crate::subagents_view;
 use crate::tidewatch_view::{self, Click, Clicked};
 use crate::tokens;
 use tidewatch_core::sent::Record;
@@ -62,6 +63,7 @@ const CARD_RADIUS: u8 = 8;
 const OVERSCAN: f32 = 600.0;
 const QUEUED_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
 const STRIP_H: f32 = 48.0;
+const AGENTS_SHARE: f32 = 0.4;
 const BAR_W: f32 = 2.0;
 const BAR_INSET: f32 = 7.0;
 const JUMP_W: f32 = 140.0;
@@ -86,6 +88,8 @@ pub(crate) struct ViewState {
     pub(crate) pastes: Option<PathBuf>,
     pub(crate) ghost: Ghost,
     review: review_view::CardState,
+    agents_folded: bool,
+    agents_opened: bool,
     focus_reply: bool,
     pub(crate) commands: Arc<Vec<SlashEntry>>,
     content_h: f32,
@@ -128,6 +132,8 @@ impl Default for ViewState {
             pastes: None,
             ghost: Ghost::default(),
             review: review_view::CardState::default(),
+            agents_folded: crate::subagents_glue::fake_folded(),
+            agents_opened: false,
             focus_reply: true,
             commands: Arc::default(),
             content_h: 0.0,
@@ -339,6 +345,8 @@ pub(crate) struct Facts<'a> {
     pub(crate) working: bool,
     /// Why the reply box is shut because the agent is not at its prompt.
     pub(crate) reply_blocked: Option<Blocked>,
+    /// The agents this session runs, listed above the reply box.
+    pub(crate) agents: Option<&'a crate::subagents_model::List>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -527,6 +535,13 @@ fn permission_tool(rows: &Rows, root: Option<&Path>) -> Option<(String, String)>
     Some((line.name.to_owned(), format!("{}{}", line.dir, line.leaf)))
 }
 
+fn agents_facts<'a>(
+    list: &'a crate::subagents_model::List,
+    state: &ViewState,
+) -> subagents_view::Facts<'a> {
+    subagents_view::Facts { list, folded: state.agents_folded, opened: state.agents_opened }
+}
+
 fn dock_height(facts: &Facts<'_>, rows: &Rows, live: Option<&Live>) -> f32 {
     match (facts.prompt, live) {
         (_, Some(live)) => live.height(),
@@ -602,7 +617,15 @@ pub(crate) fn show(
         pos2(rect.left(), due_band.top() - held_h),
         pos2(rect.right(), due_band.top()),
     );
-    let body = Rect::from_min_max(rect.min, pos2(rect.right(), held_band.top()));
+    let agents_h = facts.agents.filter(|_| composing.is_none()).map_or(0.0, |list| {
+        let room = (free_h - held_h).max(0.0) * AGENTS_SHARE;
+        subagents_view::height(agents_facts(list, state), room)
+    });
+    let agents_band = Rect::from_min_max(
+        pos2(rect.left(), held_band.top() - agents_h),
+        pos2(rect.right(), held_band.top()),
+    );
+    let body = Rect::from_min_max(rect.min, pos2(rect.right(), agents_band.top()));
     if let Some(blocked) = reason {
         let band = Rect::from_min_max(pos2(rect.left(), above), pos2(rect.right(), input.top()));
         if reply_reason::show(ui, band, blocked) {
@@ -625,6 +648,14 @@ pub(crate) fn show(
         };
         for out in held_view::show(ui, held_band, shown) {
             state.apply_held(out, &mut actions);
+        }
+    }
+    if let Some(list) = facts.agents.filter(|_| agents_h > 0.0) {
+        for out in subagents_view::show(ui, agents_band, agents_facts(list, state)) {
+            match out {
+                subagents_view::Out::Fold => state.agents_folded = !state.agents_folded,
+                subagents_view::Out::Open => state.agents_opened = !state.agents_opened,
+            }
         }
     }
     if let Some(due) = facts.due.filter(|_| due_h > 0.0) {
@@ -1850,6 +1881,7 @@ mod tests {
                         turn: Turn::Finished,
                         working: false,
                         reply_blocked: None,
+                        agents: None,
                     },
                 );
             });
@@ -1923,6 +1955,7 @@ mod tests {
                     turn: Turn::Running,
                     working: false,
                     reply_blocked: None,
+                    agents: None,
                 };
                 let actions = show(ui, rect, &rows, &mut state, &facts);
                 assert_eq!(actions, Vec::<Action>::new());
@@ -2009,6 +2042,7 @@ mod tests {
                         turn: Turn::Finished,
                         working: false,
                         reply_blocked: None,
+                        agents: None,
                     };
                     let rect = ui.max_rect();
                     actions = show(ui, rect, rows, &mut state, &facts);
@@ -2250,6 +2284,7 @@ mod tests {
                     turn: Turn::Finished,
                     working: false,
                     reply_blocked: None,
+                    agents: None,
                 };
                 let rect = ui.max_rect();
                 show(ui, rect, &rows, &mut state, &facts);
@@ -2278,6 +2313,7 @@ mod tests {
             turn,
             working: false,
             reply_blocked: None,
+            agents: None,
         }
     }
 
@@ -2831,6 +2867,102 @@ mod tests {
     fn at_bottom(state: &ViewState) -> bool {
         let (offset, max) = state.settled_at;
         max > 0.0 && (max - offset).abs() < 1.0
+    }
+
+    fn agents_list() -> crate::subagents_model::List {
+        use tidewatch_core::subagents::{Agent, Phase};
+        let agent = |index: u64, phase| Agent {
+            id: format!("a{index}"),
+            description: format!("Task {index}"),
+            model: Some("sonnet".into()),
+            effort: Some("high".into()),
+            started_ms: 1_000_000 - 250_000,
+            phase,
+            now: format!("Reading file {index}.rs"),
+            tokens: 281_000,
+        };
+        let agents = [
+            agent(0, Phase::Running),
+            agent(1, Phase::Running),
+            agent(2, Phase::Finished(995_000)),
+        ];
+        crate::subagents_model::list(&agents, 1_000_000).unwrap()
+    }
+
+    fn agents_frame(
+        ctx: &egui::Context,
+        state: &mut ViewState,
+        list: Option<&crate::subagents_model::List>,
+        events: Vec<Event>,
+    ) -> Vec<(String, Rect)> {
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
+            events,
+            focused: true,
+            ..RawInput::default()
+        };
+        let facts = Facts { agents: list, ..facts(None, Turn::Finished) };
+        let rows = conversation(6, 30);
+        let output = ctx.run_ui(raw, |ui| {
+            let rect = ui.max_rect();
+            let _ = show(ui, rect, &rows, state, &facts);
+        });
+        let mut texts = Vec::new();
+        for shape in &output.shapes {
+            crate::test_support::painted_text_rects_nonblank(&shape.shape, &mut texts);
+        }
+        texts
+    }
+
+    #[test]
+    fn the_agents_list_sits_in_a_band_of_its_own_in_the_lower_part_of_the_column() {
+        let ctx = crate::fonts::test_context();
+        let (mut with, mut without) = (ViewState::default(), ViewState::default());
+        let list = agents_list();
+        for _ in 0..3 {
+            agents_frame(&ctx, &mut with, Some(&list), Vec::new());
+            agents_frame(&ctx, &mut without, None, Vec::new());
+        }
+        let shown = agents_frame(&ctx, &mut with, Some(&list), Vec::new());
+        let plain = agents_frame(&ctx, &mut without, None, Vec::new());
+        let find = |texts: &[(String, Rect)], text: &str| {
+            texts.iter().find(|(drawn, _)| drawn == text).map(|(_, rect)| *rect)
+        };
+        let head = find(&shown, "2 agents running").expect("the header is drawn");
+        assert_eq!(find(&plain, "2 agents running"), None);
+        assert!(head.top() > 350.0, "{head:?}");
+        let row = find(&shown, "Reading file 0.rs").expect("a row is drawn");
+        assert!(row.top() > head.bottom());
+    }
+
+    #[test]
+    fn hide_folds_the_list_for_this_tab_only_and_show_brings_it_back() {
+        let ctx = crate::fonts::test_context();
+        let (mut state, mut other) = (ViewState::default(), ViewState::default());
+        let list = agents_list();
+        for _ in 0..3 {
+            agents_frame(&ctx, &mut state, Some(&list), Vec::new());
+        }
+        let hide = agents_frame(&ctx, &mut state, Some(&list), Vec::new())
+            .into_iter()
+            .find(|(text, _)| text == "Hide")
+            .expect("Hide")
+            .1
+            .center();
+        let button = |pressed| Event::PointerButton {
+            pos: hide,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        agents_frame(&ctx, &mut state, Some(&list), vec![Event::PointerMoved(hide)]);
+        agents_frame(&ctx, &mut state, Some(&list), vec![button(true)]);
+        agents_frame(&ctx, &mut state, Some(&list), vec![button(false)]);
+        let folded = agents_frame(&ctx, &mut state, Some(&list), Vec::new());
+        assert!(folded.iter().any(|(text, _)| text == "Show"));
+        assert!(!folded.iter().any(|(text, _)| text == "Reading file 0.rs"));
+        let elsewhere = agents_frame(&ctx, &mut other, Some(&list), Vec::new());
+        assert!(elsewhere.iter().any(|(text, _)| text == "Hide"));
     }
 
     #[test]

@@ -95,6 +95,8 @@ pub(crate) struct Row {
     pub(crate) look: Option<Look>,
     /// The tab's leading job as `21% \u{b7} 1h 52m`, when it has one.
     pub(crate) job_line: Option<String>,
+    /// How many subagents the tab's agent runs now.
+    pub(crate) agents_running: usize,
     /// The tab's tokens: the short form for the card, the lines for its tooltip.
     pub(crate) tokens: Option<crate::token_budget::TabTokens>,
     /// The picture the agent drew for the tab, shown at the card's corner.
@@ -225,6 +227,7 @@ pub(crate) fn collect<T>(
                 done_check: None,
                 look: None,
                 job_line: None,
+                agents_running: 0,
                 tokens: crate::token_budget::tab_tokens(
                     agent.reader.tokens(),
                     agent.reader.token_share(),
@@ -265,6 +268,9 @@ pub(crate) fn card_view(row: &Row) -> CardView {
     if let Some(line) = &row.job_line {
         view.line.clone_from(line);
         view.line_ink = crate::brand::TEAL;
+    }
+    if let Some(agents) = crate::subagents_model::running_line(row.agents_running) {
+        view.line = format!("{agents} \u{b7} {}", view.line);
     }
     view
 }
@@ -634,6 +640,7 @@ mod tests {
             done_check: None,
             look: None,
             job_line: None,
+            agents_running: 0,
             tokens: None,
             avatar: None,
             kind: AgentKind::Cli("claude".into()),
@@ -1071,6 +1078,22 @@ mod tests {
         let view = card_view(&working);
         assert_eq!((view.line.as_str(), view.line_ink), ("21% \u{b7} 1h 52m", crate::brand::TEAL));
         assert_eq!((view.tag, view.fraction), (plain.tag, plain.fraction));
+    }
+
+    #[test]
+    fn running_agents_lead_the_card_line_and_a_card_without_any_is_unchanged() {
+        let mut working = row(1, "a", AgentStatus::Working);
+        working.detail = Some("thinking".into());
+        assert_eq!(card_view(&working).line, "thinking");
+        working.agents_running = 4;
+        assert_eq!(card_view(&working).line, "4 agents running \u{b7} thinking");
+        working.agents_running = 1;
+        working.job_line = Some("21%".into());
+        let view = card_view(&working);
+        assert_eq!(
+            (view.line.as_str(), view.line_ink),
+            ("1 agent running \u{b7} 21%", crate::brand::TEAL)
+        );
     }
 
     fn two_repos() -> Overview {

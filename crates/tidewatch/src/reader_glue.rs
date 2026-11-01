@@ -314,6 +314,7 @@ pub(crate) fn draw(
     (pr, due): (Option<PrData<'_>>, Option<(&Due, usize)>),
     ask: Option<&Ask>,
     avatar: Option<Arc<Avatar>>,
+    agents: &[tidewatch_core::subagents::Agent],
 ) -> Vec<Action> {
     let Some(agent) = pane.agent.as_mut() else { return Vec::new() };
     let prompt = prompt_waiting(agent);
@@ -331,6 +332,7 @@ pub(crate) fn draw(
         blocked: ask_blocked(Some(agent.run.status())),
     });
     let face = Face::of(&agent.profile_name, &agent.run.agent_id, avatar);
+    let agents = crate::subagents_model::list(agents, now_ms());
     agent.reader.view.pastes = agent
         .run
         .notes_file
@@ -352,6 +354,7 @@ pub(crate) fn draw(
         turn,
         working: *agent.run.status() == AgentStatus::Working || dev.working,
         reply_blocked: dev.blocked.or_else(|| reply_blocked(agent).filter(|_| !dev.working)),
+        agents: agents.as_ref(),
     };
     let reader = &mut agent.reader;
     let reads_screen = reader.source() == Some(Source::Claude)

@@ -63,6 +63,8 @@ pub(crate) struct TabTip {
     pub(crate) job: Option<TabJob>,
     /// The tab's tokens and what Tidewatch cost, as the lines of its tooltip.
     pub(crate) tokens: Option<String>,
+    /// `4 agents running`, while the tab's agent has subagents going.
+    pub(crate) agents: Option<String>,
 }
 
 /// What an agent tab keeps besides its title. `tip` is only called while the tab is hovered.
@@ -340,6 +342,7 @@ impl Tidewatch {
                     .board(id)
                     .and_then(|board| tab_job(board, now_ms, self.job_agent(id))),
                 tokens: self.tokens_of(id).map(|tokens| tokens.tip),
+                agents: crate::subagents_model::running_line(self.subagent_live.running(id)),
             })),
             avatar: self.avatar_live.get(id).cloned(),
             can_draw: can_draw(id),
@@ -502,14 +505,11 @@ fn tab_row<'a, T>(
         let resp = if agent.is_some() {
             resp.on_hover_ui(|ui| {
                 let second = crate::tab_title::subtitle(agent, &tab.title);
-                let TabTip { ring, job, tokens } = tip.map_or_else(TabTip::default, |tip| tip());
-                let mut tip = tab_tip(&label, &second, position + 1, job.as_ref());
-                if let Some(ring) = &ring {
-                    tip = format!("{tip}\n{}", ring.tip);
-                }
-                if let Some(tokens) = &tokens {
-                    tip = format!("{tip}\n{tokens}");
-                }
+                let TabTip { ring, job, tokens, agents } =
+                    tip.map_or_else(TabTip::default, |tip| tip());
+                let tip = tab_tip(&label, &second, position + 1, job.as_ref());
+                let ring = ring.as_ref().map(|ring| ring.tip.as_str());
+                let tip = tip_lines(&tip, [ring, agents.as_deref(), tokens.as_deref()]);
                 ui.set_max_width(ui.spacing().tooltip_width);
                 ui.add(egui::Label::new(tip));
             })
@@ -568,6 +568,11 @@ fn tab_row<'a, T>(
         }
     }
     slots.iter().map(|slot| slot.rect).collect()
+}
+
+/// `tip` followed by each of `lines` that is there, one to a line.
+fn tip_lines(tip: &str, lines: [Option<&str>; 3]) -> String {
+    lines.into_iter().flatten().fold(tip.to_owned(), |all, line| format!("{all}\n{line}"))
 }
 
 fn tab_tip(label: &str, name: &str, number: usize, job: Option<&TabJob>) -> String {
