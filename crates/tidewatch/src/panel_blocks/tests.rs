@@ -127,9 +127,9 @@ fn only_a_report_the_facts_contradict_drops_its_question() {
         ("a question the owner answered", Some(answered.state.view(3 * MIN)), true),
     ];
     for (name, view, want) in cases {
-        assert_eq!(contradicted(view.as_ref()), want, "{name}");
+        assert_eq!(contradicted(view.and_then(|view| view.report)), want, "{name}");
     }
-    assert!(!contradicted(Some(&Story::new().state.view(0))), "no report at all");
+    assert!(!contradicted(Story::new().state.view(0).report), "no report at all");
 }
 
 #[test]
