@@ -4,8 +4,9 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::folder_repos;
 use tidewatch_core::link_board::Link as Shared;
 use tidewatch_core::link_scan;
@@ -30,14 +31,6 @@ const ROLLOUT_START_SLACK: Duration = Duration::from_secs(5);
 
 fn file_len(file: &Path) -> u64 {
     std::fs::metadata(file).map_or(0, |meta| meta.len())
-}
-
-fn unix_ms_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|since| i64::try_from(since.as_millis()).ok())
-        .unwrap_or_default()
 }
 
 /// Why a tab can never show the Reader.
@@ -192,7 +185,7 @@ impl Reader {
     pub(crate) fn for_agent(agent_id: &str, session_id: Option<String>, cwd: PathBuf) -> Self {
         let source = Source::from_agent_id(agent_id);
         let link = Self::first_link(source);
-        let started_ms = unix_ms_now();
+        let started_ms = now_ms();
         Self {
             source,
             session_id,
@@ -423,7 +416,7 @@ impl Reader {
 
     /// The user sent `text` while the agent was busy: it shows as queued until the transcript has it.
     pub(crate) fn queue_user(&mut self, text: &str) {
-        self.rows.queue_user(text, unix_ms_now());
+        self.rows.queue_user(text, now_ms());
     }
 
     /// Types `steps` into the agent one after the other, starting at `now`.
@@ -489,7 +482,7 @@ impl Reader {
                 .find(|entry| entry.role == Role::User)
                 .map(|entry| entry.text.clone());
         }
-        self.found_links.extend(link_scan::found(&entries, unix_ms_now()));
+        self.found_links.extend(link_scan::found(&entries, now_ms()));
         folder_repos::remember_edits(&mut self.edits, folder_repos::edited_paths(&entries));
         self.rows.push_all(entries);
         self.save_claims();

@@ -3,18 +3,14 @@
 //! through the restore path like a taken-over session).
 
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use tidewatch_core::clock::now_secs;
 use tidewatch_core::closed_tabs::Tab;
 use tidewatch_core::restore::RealDisk;
 
 use super::Tidewatch;
 use crate::closed_jobs::{self, Done, Landed, ReviveSpec};
 use crate::closed_state::{Card, CardAction, fake_card, fake_requested};
-
-fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
-}
 
 impl Tidewatch {
     pub(super) fn closed_facts(&self, id: u64) -> Option<Tab> {

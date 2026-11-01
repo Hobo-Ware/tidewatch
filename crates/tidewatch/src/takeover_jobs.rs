@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidewatch_core::agents::AgentTable;
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::elsewhere::Key;
 use tidewatch_core::elsewhere_scan::{
     EndRequest, Ended, Held, RealSystem, Refusal, ScanEnv, System, TitleCache, end_session,
@@ -163,12 +164,6 @@ fn run_move(system: &dyn System, env: &ScanEnv, job: &MoveJob) -> Done {
         workspace: Workspace::open_in_main_repo(folder),
         worktree: made,
     }))
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
 }
 
 #[cfg(test)]

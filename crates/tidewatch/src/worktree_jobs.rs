@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
@@ -46,12 +47,6 @@ pub(crate) struct OpenSpec {
     pub(crate) listener: Option<Arc<Listener>>,
     /// Set after the user agreed to folder trust (D14).
     pub(crate) trust: Option<Grant>,
-}
-
-fn unix_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0))
 }
 
 /// Makes the worktree (when asked) and gets the agent ready, off the UI thread.
@@ -99,7 +94,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         start_head: worktree
             .as_ref()
             .and_then(|made| meeseeks_check::head(&Tools::system(), &made.path)),
-        ..Meeseeks::summon(&request.task, criteria, unix_ms())
+        ..Meeseeks::summon(&request.task, criteria, now_ms())
     });
     let prepared = prepare(&PrepareInput {
         paths: &spec.paths,

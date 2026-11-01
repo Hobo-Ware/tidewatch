@@ -23,7 +23,7 @@
 use std::path::Path;
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use kelp_core::review::Comment;
 use serde::{Deserialize, Serialize};
@@ -506,9 +506,7 @@ fn text_arg(args: &Map<String, Value>, key: &str) -> Result<String, RpcError> {
 }
 
 fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
+    i64::try_from(crate::clock::now_secs()).unwrap_or(0)
 }
 
 #[cfg(test)]

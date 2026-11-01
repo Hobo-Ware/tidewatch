@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{BranchOutcome, Leftover};
@@ -12,14 +13,6 @@ use crate::jobs::Jobs;
 use crate::leftover_jobs::{self, Done};
 use crate::leftover_view::{self, Answer};
 use crate::leftovers::Cleanup;
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|since| i64::try_from(since.as_millis()).ok())
-        .unwrap_or(0)
-}
 
 /// `found` joined into `known` by path, sorted by path.
 pub(crate) fn merge(known: &mut Vec<Leftover>, found: Vec<Leftover>) {

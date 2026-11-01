@@ -5,9 +5,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use egui::Context;
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::folder_repos::{self, FolderRepo, Scan, Target};
 
 use crate::jobs::Jobs;
@@ -58,11 +59,6 @@ pub(crate) enum Shown<'a> {
     Folder(&'a Scan),
 }
 
-fn unix_ms() -> i64 {
-    let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-}
-
 impl Folders {
     pub(crate) fn new() -> Self {
         Self {
@@ -101,7 +97,7 @@ impl Folders {
             entry.asked_at = Some(Instant::now());
             let folder = folder.to_path_buf();
             self.jobs
-                .spawn(ctx, move || Scanned { tab, scan: folder_repos::scan(&folder, unix_ms()) });
+                .spawn(ctx, move || Scanned { tab, scan: folder_repos::scan(&folder, now_ms()) });
         }
         ctx.request_repaint_after(REFRESH);
     }

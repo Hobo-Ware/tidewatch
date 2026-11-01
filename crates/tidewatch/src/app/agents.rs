@@ -81,9 +81,7 @@ impl Tidewatch {
         match follow {
             Follow::Finding { tab, notes_file, dir, author, finding } => {
                 let dir = dir.unwrap_or_else(|| self.workspace_of_tab(tab).dir().to_path_buf());
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs() as i64);
+                let now = crate::flow_glue::unix_now();
                 pane_jobs::add_finding(
                     &self.pane_jobs,
                     ctx,

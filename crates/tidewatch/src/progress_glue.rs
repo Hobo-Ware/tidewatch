@@ -45,10 +45,7 @@ impl Dev {
 
 /// Today's date by the UTC clock.
 pub(crate) fn today() -> Date {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
-    Date::from_unix_secs(secs)
+    Date::from_unix_secs(i64::try_from(tidewatch_core::clock::now_secs()).unwrap_or(0))
 }
 
 pub(crate) struct Host {

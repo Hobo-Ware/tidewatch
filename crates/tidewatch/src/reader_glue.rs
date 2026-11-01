@@ -8,6 +8,7 @@ use std::time::Duration;
 use egui::{Context, Rect, RichText, Ui, UiBuilder, pos2, vec2};
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::avatar::Avatar;
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::paths::sent_file_beside;
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::question_words;
@@ -379,7 +380,7 @@ pub(crate) fn draw(
     }
     if dev.take_rows() {
         use tidewatch_core::transcript::{Entry, Role};
-        let now = unix_ms();
+        let now = now_ms();
         for (role, text, ago) in [
             (Role::User, "Add a greeting to the README and run the tests", 240_000),
             (
@@ -422,7 +423,7 @@ pub(crate) fn draw(
         });
     }
     for text in dev.take_held() {
-        let _ = reader.view.line.hold(&text, unix_ms());
+        let _ = reader.view.line.hold(&text, now_ms());
     }
     if dev.take_edit_held()
         && let Some(id) = reader.view.line.newest_id()
@@ -430,10 +431,10 @@ pub(crate) fn draw(
         reader.view.begin_edit_held(id);
     }
     if let Some(text) = dev.take_not_seen() {
-        reader.rows.queue_user(&text, unix_ms() - 3 * 60_000);
+        reader.rows.queue_user(&text, now_ms() - 3 * 60_000);
     }
     if let Some(text) = dev.take_queued() {
-        reader.rows.queue_user(&text, unix_ms());
+        reader.rows.queue_user(&text, now_ms());
     }
     if let Some(pixels) = dev.take_scroll_up(now) {
         reader.view.scroll_up_by(pixels);
@@ -626,12 +627,6 @@ fn agent_of(tabs: &mut Tabs<Pane<PtyTerm>>, tab: u64) -> Option<&mut AgentTab> {
     tabs.get_mut(tab)?.pane.agent.as_mut()
 }
 
-fn unix_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
-}
-
 /// Types one of the owner's messages into the agent through the one send line, and shows it as
 /// queued until the transcript has it. False when the tab has no terminal to type into.
 fn type_reply(
@@ -689,7 +684,7 @@ fn reply(
     }
     let agent = agent_of(tabs, tab)?;
     ctx.request_repaint_after(Duration::from_secs_f64(0.5));
-    if agent.reader.view.line.hold(text, unix_ms()).is_err() {
+    if agent.reader.view.line.hold(text, now_ms()).is_err() {
         agent.reader.view.keep_in_box(text);
         return Some(LINE_FULL_TOAST.to_owned());
     }

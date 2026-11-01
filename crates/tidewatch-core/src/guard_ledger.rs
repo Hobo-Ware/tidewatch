@@ -3,7 +3,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use serde_json::Value;
 
@@ -93,10 +93,6 @@ pub fn used_tools(tail: &str) -> Option<bool> {
     None
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
-}
-
 /// Whether the report saved beside `file` still says `working`.
 #[must_use]
 pub fn ledger_says_working(file: &Path) -> bool {
@@ -164,7 +160,7 @@ impl Reminders {
 /// Notes that a turn began now.
 pub fn note_turn(tab: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(tab)?;
-    std::fs::write(tab.join(TURN_FILE), now_ms().to_string())
+    std::fs::write(tab.join(TURN_FILE), crate::clock::now_ms().to_string())
 }
 
 fn facts_of(stdin: &str, tab: &Path) -> Option<Facts> {

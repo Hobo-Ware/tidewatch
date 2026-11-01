@@ -297,9 +297,7 @@ impl Tidewatch {
             self.open_review();
         }
         self.apply_progress_action(active_id, shown.progress, ctx);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs() as i64);
+        let now = flow_glue::unix_now();
         if notes_changed || self.apply_dev_panes(active_id, now) {
             self.save_notes(active_id);
             ctx.request_repaint();

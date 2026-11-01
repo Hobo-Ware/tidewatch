@@ -91,9 +91,7 @@ pub(crate) struct Host {
 }
 
 pub(crate) fn wall_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
+    i64::try_from(tidewatch_core::clock::now_secs()).unwrap_or(0)
 }
 
 fn first_line(error: &str) -> String {
