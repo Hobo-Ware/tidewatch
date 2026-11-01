@@ -231,7 +231,7 @@ mod tests {
     use super::*;
     use crate::pane::{Body, ClosePolicy, finish_open};
     use crate::tabs::Tabs;
-    use std::process::Command;
+    use crate::test_support::git;
     use std::time::{Duration, Instant};
     use tidewatch_core::agents::Level;
     use tidewatch_core::profiles::{Profile, Profiles};
@@ -246,19 +246,6 @@ mod tests {
             recorded: false,
             modified_ms: None,
         }
-    }
-
-    fn git(dir: &std::path::Path, args: &[&str]) -> String {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["-c", "user.email=t@example.com", "-c", "user.name=T"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     fn next(jobs: &Jobs<Done>) -> Done {

@@ -7,6 +7,7 @@ use tidewatch_core::elsewhere_scan::{Held, TitleCache};
 
 use super::*;
 use crate::takeover::status_of;
+use crate::test_support::git;
 
 const ID: &str = "7d198e16-6157-439f-a389-34a4951f5dd8";
 const ID_B: &str = "79fdd8f6-5176-4a47-a46f-8db10ec660b5";
@@ -119,17 +120,6 @@ fn job(spec: MoveSpec) -> MoveJob {
 
 fn spec(session: tidewatch_core::elsewhere::Session, worktree: bool) -> MoveSpec {
     MoveSpec { session, worktree, allow_quiet: false }
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
 }
 
 fn throwaway_repo(home: &Path) -> PathBuf {

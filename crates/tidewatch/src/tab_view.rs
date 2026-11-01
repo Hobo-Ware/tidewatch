@@ -737,7 +737,7 @@ impl TabView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
+    use crate::test_support::git;
     use std::time::{Duration, Instant};
 
     fn id(n: u8) -> ObjectId {
@@ -890,24 +890,6 @@ mod tests {
             resolve_pick(Some(Pick::Commit(id(9))), true, Some(id(2)), none_known),
             Some(Pick::WorkTree)
         );
-    }
-
-    fn git(dir: &std::path::Path, args: &[&str]) {
-        let out = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args([
-                "-c",
-                "user.email=t@example.com",
-                "-c",
-                "user.name=T",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
     }
 
     fn repo() -> (tempfile::TempDir, PathBuf) {

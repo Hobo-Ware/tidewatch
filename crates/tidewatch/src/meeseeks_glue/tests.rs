@@ -8,20 +8,10 @@ use tidewatch_core::meeseeks::Struggle;
 use tidewatch_core::workflow_profile::Workflow;
 
 use super::*;
+use crate::test_support::git;
 
 fn day(d: u8) -> Date {
     Date::new(2026, 10, d).unwrap()
-}
-
-fn git(dir: &std::path::Path, args: &[&str]) {
-    let out = Process::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
 }
 
 struct Repo {
