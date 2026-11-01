@@ -1152,6 +1152,9 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":"why does <command-name> show up here?"}}"#,
             r#"{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<summary>Monitor event: \"pull\"</summary>\n<event>33% 104/314</event>\n</task-notification>"}}"#,
             r#"{"type":"user","message":{"role":"user","content":"why does <task-notification> show up here?"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<bash-input> pscale branch list db</bash-input>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<bash-stdout>\u001b[1mmain\u001b[22m</bash-stdout><bash-stderr></bash-stderr>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<bash-stdout></bash-stdout><bash-stderr></bash-stderr>"}}"#,
         ];
         let mut parser = Parser::new(Source::Claude);
         let entries: Vec<Entry> = lines.iter().flat_map(|l| parser.feed_line(l)).collect();
@@ -1173,6 +1176,8 @@ mod tests {
                     None
                 ),
                 (Role::User, "why does <task-notification> show up here?".into(), None),
+                (Role::Command, "! pscale branch list db".into(), None),
+                (Role::CommandOutput, "main".into(), None),
             ]
         );
     }

@@ -3,7 +3,11 @@
 //! `<task-notification>` records and `[Image #1]` markers. Pure text functions.
 
 const COMMAND_TAGS: [&str; 3] = ["command-name", "command-message", "command-args"];
-const OUTPUT_TAGS: [&str; 2] = ["local-command-stdout", "local-command-stderr"];
+const OUTPUT_TAGS: [&str; 4] =
+    ["local-command-stdout", "local-command-stderr", "bash-stdout", "bash-stderr"];
+const BASH_INPUT_TAG: [&str; 1] = ["bash-input"];
+/// What a `!` shell command starts with, in the owner's message and in the command row.
+pub const BASH_PREFIX: &str = "! ";
 const HIDDEN_PREFIXES: [&str; 2] = ["<local-command-caveat>", "<system-reminder>"];
 const PASTE_TAG: &str = "pasted_content";
 const TASK_TAG: &str = "task-notification";
@@ -14,7 +18,8 @@ const COMPACTED_OPENING: &str = "This session is being continued from a previous
 /// What one user text of a Claude transcript is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Record {
-    /// A slash command the user ran: `/rate-limit-options`, with its arguments after a space.
+    /// A slash command the user ran: `/rate-limit-options`, with its arguments after a space, or a
+    /// `! command` the shell ran.
     Command(String),
     /// What a local command printed, tags and terminal colors removed.
     Output(String),
@@ -45,6 +50,9 @@ pub fn classify(text: &str) -> Record {
     }
     if let Some(parts) = tag_sequence(text, &COMMAND_TAGS) {
         return command(&parts);
+    }
+    if let Some(parts) = tag_sequence(text, &BASH_INPUT_TAG) {
+        return bash_command(&parts);
     }
     if let Some(parts) = tag_sequence(text, &OUTPUT_TAGS) {
         return output(&parts);
@@ -170,6 +178,14 @@ fn command(parts: &[(&str, &str)]) -> Record {
         line.push_str(&args);
     }
     Record::Command(line)
+}
+
+fn bash_command(parts: &[(&str, &str)]) -> Record {
+    let command = parts.iter().map(|(_, inner)| inner.trim()).collect::<Vec<_>>().join(" ");
+    if command.is_empty() {
+        return Record::Hidden;
+    }
+    Record::Command(format!("{BASH_PREFIX}{command}"))
 }
 
 fn output(parts: &[(&str, &str)]) -> Record {
@@ -379,6 +395,20 @@ mod tests {
                 Record::Output("oops".into()),
             ),
             ("<local-command-stdout>  \n </local-command-stdout>", Record::Hidden),
+            (
+                "<bash-input> pscale branch create trakt_production media-merge-pairs</bash-input>",
+                Record::Command("! pscale branch create trakt_production media-merge-pairs".into()),
+            ),
+            ("<bash-input>  </bash-input>", Record::Hidden),
+            (
+                "<bash-stdout>\u{1b}[32mBranch\u{1b}[39m created\n</bash-stdout><bash-stderr></bash-stderr>",
+                Record::Output("Branch created".into()),
+            ),
+            (
+                "<bash-stdout></bash-stdout><bash-stderr>Error: no such branch</bash-stderr>",
+                Record::Output("Error: no such branch".into()),
+            ),
+            ("<bash-stdout></bash-stdout><bash-stderr></bash-stderr>", Record::Hidden),
             ("<local-command-caveat>Caveat: ignore this</local-command-caveat>", Record::Hidden),
             ("<system-reminder>Remember x</system-reminder>", Record::Hidden),
             ("fix the bug", text("fix the bug")),
