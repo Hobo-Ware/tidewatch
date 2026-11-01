@@ -783,7 +783,10 @@ impl Tail {
             return Vec::new();
         }
         self.offset += fresh.len() as u64;
-        self.head = read_prefix(&mut file, HEAD_BYTES.min(self.offset as usize));
+        let head_len = HEAD_BYTES.min(self.offset as usize);
+        if self.head.len() < head_len {
+            self.head = read_prefix(&mut file, head_len);
+        }
         self.base = self.parser.entries_seen();
         self.take_lines(fresh)
     }
@@ -1506,6 +1509,26 @@ mod tests {
         assert_eq!(texts(&tail.poll()), ["aaa"]);
         write_file(&file, &(user_line("zzz") + &user_line("yyy") + &user_line("xxx")));
         assert_eq!(texts(&tail.poll()), ["zzz", "yyy", "xxx"]);
+    }
+
+    #[test]
+    fn tail_keeps_noticing_in_place_rewrites_once_its_head_is_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("s.jsonl");
+        let long = |word: &str| user_line(&word.repeat(40));
+        write_file(&file, &long("a"));
+        let mut tail = Tail::new(Source::Claude, &file);
+        assert_eq!(tail.poll().len(), 1);
+        assert_eq!(tail.head.len(), HEAD_BYTES);
+        assert_eq!(tail.poll(), []);
+        append(&file, long("b").as_bytes());
+        assert_eq!(tail.poll().len(), 1);
+        write_file(&file, &(long("c") + &long("d") + &long("e")));
+        assert_eq!(tail.poll().len(), 3);
+        assert_eq!(tail.poll(), []);
+        write_file(&file, &(long("f") + &long("g") + &long("h") + &long("i")));
+        assert_eq!(tail.poll().len(), 4);
+        assert_eq!(tail.poll(), []);
     }
 
     #[test]
