@@ -2,7 +2,6 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::agents::Level;
@@ -14,20 +13,9 @@ use tidewatch_core::transcript_locate::claude_project_dir_name;
 use tidewatch_core::worktree::{BranchChoice, RemoveMode};
 
 use super::*;
+use crate::test_support::git;
 
 const SESSION_ID: &str = "0c2cbc96-1111-4222-8333-444455556666";
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T"])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-}
 
 struct Fixture {
     _dir: tempfile::TempDir,

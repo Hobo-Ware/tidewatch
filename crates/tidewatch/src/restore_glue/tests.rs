@@ -1,7 +1,6 @@
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::agents::Level;
@@ -16,22 +15,11 @@ use tidewatch_core::worktree::Worktree;
 use super::*;
 use crate::agent_run::TermSnapshot;
 use crate::tabs::Action;
+use crate::test_support::git;
 use tidewatch_core::status::AgentStatus;
 
 const SESSION_A: &str = "0c2cbc96-1111-4222-8333-444455556666";
 const SESSION_B: &str = "1d3dcd07-2222-4333-8444-555566667777";
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T"])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-}
 
 fn web(repo: &Path) -> Workspace {
     Workspace::Repo(crate::repo::Repo { root: repo.to_path_buf(), label: "web".into() })

@@ -1,6 +1,5 @@
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::agents::Level;
@@ -11,6 +10,7 @@ use tidewatch_core::worktree::{BranchChoice, RemoveMode, Terms, Why};
 use tidewatch_core::worktree_safety::Owner;
 
 use super::*;
+use crate::test_support::git;
 
 const SESSION: &str = "0c2cbc96-1111-4222-8333-444455556666";
 
@@ -20,19 +20,6 @@ struct Fixture {
     repo: PathBuf,
     paths: TidewatchPaths,
     path_var: OsString,
-}
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T"])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 fn fixture() -> Fixture {

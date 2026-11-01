@@ -1,7 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use tidewatch_core::agents::Level;
 use tidewatch_core::prefs::StartFrom;
@@ -13,6 +12,7 @@ use crate::pane::{Body, Pane};
 use crate::restore_glue::{Spawn, reopened};
 use crate::retarget::Window;
 use crate::tabs::Tabs;
+use crate::test_support::git;
 
 const ID: &str = "7d198e16-6157-439f-a389-34a4951f5dd8";
 const START: &str = "Fri Oct 16 13:23:31 2026";
@@ -98,17 +98,6 @@ struct World {
     worktree: tidewatch_core::worktree::Worktree,
     other: tidewatch_core::worktree::Worktree,
     path_var: OsString,
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
 }
 
 fn world() -> World {

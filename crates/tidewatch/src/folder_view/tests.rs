@@ -1,5 +1,4 @@
 use std::fs;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, pos2, vec2};
@@ -12,18 +11,8 @@ use crate::jobs::Jobs;
 use crate::pane_jobs::Done;
 use crate::progress_view::TabState;
 use crate::tab_view::{TabView, ViewSpec};
+use crate::test_support::git;
 use crate::test_support::painted_text_rects;
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-}
 
 fn make_repo(parent: &Path, name: &str, branch: &str, message: &str) {
     let root = parent.join(name);

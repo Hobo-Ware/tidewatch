@@ -1,4 +1,7 @@
-//! Test only: walkers the view tests share to read back what a frame painted.
+//! Test only: the walkers the view tests share to read back what a frame painted, and a git runner.
+
+use std::path::Path;
+use std::process::Command;
 
 use egui::epaint::TextShape;
 use egui::{Rect, Shape};
@@ -32,6 +35,18 @@ pub(crate) fn painted_text_rects_nonblank(shape: &Shape, out: &mut Vec<(String, 
     });
 }
 
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use egui::{Color32, FontId, RawInput, pos2, vec2};
@@ -59,6 +74,20 @@ mod tests {
             ]));
         })
         .shapes
+    }
+
+    #[test]
+    fn git_commits_with_its_own_identity_and_returns_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        git(dir.path(), &["commit", "-q", "--allow-empty", "-m", "first"]);
+        assert_eq!(git(dir.path(), &["log", "-1", "--format=%an <%ae>"]), "T <t@example.com>\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "git [\"no-such-subcommand\"]")]
+    fn git_panics_with_the_arguments_when_it_fails() {
+        git(Path::new("."), &["no-such-subcommand"]);
     }
 
     #[test]

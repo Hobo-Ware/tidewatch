@@ -1,5 +1,3 @@
-use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::paths::TidewatchPaths;
@@ -13,18 +11,7 @@ use tidewatch_core::worktree::{self, Worktree};
 
 use super::*;
 use crate::pr_watch::Facts;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T", "-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
+use crate::test_support::git;
 
 struct Merged {
     _home: tempfile::TempDir,

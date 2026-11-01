@@ -1,24 +1,10 @@
-use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use tidewatch_core::worktree::{BranchChoice, RemoveMode};
 use tidewatch_core::worktree_safety::Risk;
 
 use super::*;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.email=t@example.com", "-c", "user.name=T"])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
+use crate::test_support::git;
 
 struct Fixture {
     _dir: tempfile::TempDir,
