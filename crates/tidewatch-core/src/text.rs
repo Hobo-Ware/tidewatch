@@ -6,6 +6,12 @@ pub fn squash(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// `count` and the noun that fits it: `1 file`, `2 files`.
+#[must_use]
+pub fn plural(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -24,5 +30,14 @@ mod tests {
         for (input, want) in cases {
             assert_eq!(squash(input), want, "input {input:?}");
         }
+    }
+
+    #[test]
+    fn plural_picks_the_noun_by_count() {
+        let cases = [(0, "0 files"), (1, "1 file"), (2, "2 files"), (11, "11 files")];
+        for (count, want) in cases {
+            assert_eq!(plural(count, "file", "files"), want, "count {count}");
+        }
+        assert_eq!(plural(3, "is", "are"), "3 are");
     }
 }

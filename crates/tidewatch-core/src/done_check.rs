@@ -15,6 +15,7 @@ use crate::pr_status::{
 use crate::progress::{Ledger, Mark, State as LedgerState, real};
 use crate::progress_report::WaitingOn;
 use crate::test_command::{self, Gate};
+use crate::text::plural;
 use crate::tools::{GhError, Tools, run_gh};
 use crate::workflow_profile::{Checks, Workflow};
 
@@ -338,10 +339,6 @@ enum Look {
     Absent,
     Found(Box<Snapshot>),
     Failed(GhError),
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 fn short(sha: &str) -> &str {

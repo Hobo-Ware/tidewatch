@@ -8,6 +8,7 @@ use jiff::tz::TimeZone;
 
 use crate::job_model::clock_label;
 use crate::reader_rows::{Kind, Row, Rows, Tool, ToolKind};
+use tidewatch_core::text::plural;
 
 /// One chip of the summary row: how many calls of a kind, and how many of them failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,10 +320,6 @@ pub(crate) struct Section {
     pub(crate) kind: ToolKind,
     pub(crate) head: String,
     pub(crate) body: Body,
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 /// The open list of a turn: a section per kind of call, in the order Read, Edit, Command, Search,

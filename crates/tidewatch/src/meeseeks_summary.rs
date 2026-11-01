@@ -9,6 +9,7 @@ use tidewatch_core::meeseeks::{CheckLine, Step, Verdict, blocked_reason_of, elap
 use tidewatch_core::meeseeks_branch::{Branch, Changed};
 use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::meeseeks_target::Target;
+use tidewatch_core::text::plural;
 
 use crate::job_model::clock_label;
 use crate::meeseeks_model::{Card, Look, Span};
@@ -69,10 +70,6 @@ pub(crate) struct Summary {
     pub(crate) done: Vec<String>,
     pub(crate) next: Vec<String>,
     pub(crate) stages: Vec<StageRow>,
-}
-
-fn plural(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 fn look_of(verdict: Verdict) -> Look {
