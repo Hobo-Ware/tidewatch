@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use tidewatch_core::agents::AgentTable;
 use tidewatch_core::prepare::Prepared;
-use tidewatch_core::profiles::Profiles;
 
 use super::{Tidewatch, WAKE_SLACK_S};
 use crate::catalog::Availability;
@@ -31,17 +30,17 @@ fn now_ms() -> i64 {
 }
 
 impl Tidewatch {
-    pub(super) fn agent_table(&self) -> AgentTable {
-        self.catalog.profiles().map_or_else(AgentTable::builtin, Profiles::agent_table)
+    pub(super) fn agent_table(&self) -> &AgentTable {
+        self.catalog.table()
     }
 
     fn with_takeover<R>(&mut self, f: impl FnOnce(&mut Takeover, &Env) -> R) -> R {
-        let agents = self.agent_table();
         let catalog = &self.catalog;
+        let agents = catalog.table();
         let installed = |id: &str| matches!(catalog.availability(id), Availability::Found(_));
         let home = self.paths.as_ref().and_then(|paths| paths.root().parent());
         let env = Env {
-            agents: &agents,
+            agents,
             profiles: catalog.profiles(),
             installed: &installed,
             now_ms: now_ms(),
@@ -87,7 +86,7 @@ impl Tidewatch {
             self.workspaces.iter().map(|workspace| workspace.dir().to_path_buf()).collect()
         };
         let spec = ScanSpec {
-            agents: self.agent_table(),
+            agents: self.agent_table().clone(),
             folders,
             held: self.takeover.held().clone(),
             titles: self.takeover.titles().clone(),
@@ -136,7 +135,7 @@ impl Tidewatch {
         for (spec, group) in specs.into_iter().zip(groups) {
             let root = self.takeover.root_of(&spec.session).map(Path::to_path_buf);
             let wait = Duration::from_secs(END_WAIT_S);
-            let agents = self.agent_table();
+            let agents = self.agent_table().clone();
             let job = MoveJob { spec, agents, paths: self.paths.clone(), root, group, wait };
             takeover_jobs::start_move(&self.takeover_jobs, ctx, job);
         }
@@ -151,7 +150,7 @@ impl Tidewatch {
         let dir = workspace.dir().to_path_buf();
         let other = matches!(workspace, crate::repo::Workspace::Other { .. });
         let plan = window_plan(
-            &self.agent_table(),
+            self.agent_table(),
             self.catalog.profiles(),
             &spec,
             (&dir, other),
