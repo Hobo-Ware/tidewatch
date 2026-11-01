@@ -86,19 +86,22 @@ pub(crate) struct Filter {
 }
 
 impl Filter {
-    fn searched(&self, link: &Link) -> bool {
-        let query = self.search.trim().to_lowercase();
-        query.is_empty()
-            || [link.title.as_str(), link.url.as_str(), link.note.as_deref().unwrap_or_default()]
-                .iter()
-                .any(|text| text.to_lowercase().contains(&query))
+    fn query(&self) -> String {
+        self.search.trim().to_lowercase()
     }
 
-    fn keeps(&self, link: &Link) -> bool {
+    fn keeps(&self, query: &str, link: &Link) -> bool {
         self.kind.keeps(link.kind())
             && self.bucket.is_none_or(|b| b.keeps(link))
-            && self.searched(link)
+            && searched(query, link)
     }
+}
+
+fn searched(query: &str, link: &Link) -> bool {
+    query.is_empty()
+        || [link.title.as_str(), link.url.as_str(), link.note.as_deref().unwrap_or_default()]
+            .iter()
+            .any(|text| text.to_lowercase().contains(query))
 }
 
 /// The number on each chip: a type chip counts the links that pass the state chip and the search,
@@ -119,28 +122,28 @@ impl Counts {
 }
 
 pub(crate) fn counts(board: &LinkBoard, filter: &Filter) -> Counts {
-    let count = |keep: &dyn Fn(&Link) -> bool| board.links.iter().filter(|link| keep(link)).count();
-    Counts {
-        kinds: Type::ALL.map(|kind| {
-            count(&|link| {
-                kind.keeps(link.kind())
-                    && filter.bucket.is_none_or(|b| b.keeps(link))
-                    && filter.searched(link)
-            })
-        }),
-        buckets: Bucket::ALL.map(|bucket| {
-            count(&|link| {
-                bucket.keeps(link) && filter.kind.keeps(link.kind()) && filter.searched(link)
-            })
-        }),
+    let query = filter.query();
+    let mut counts = Counts { kinds: [0; 5], buckets: [0; 3] };
+    for link in board.links.iter().filter(|link| searched(&query, link)) {
+        let kind = link.kind();
+        let in_bucket = filter.bucket.is_none_or(|b| b.keeps(link));
+        let in_kind = filter.kind.keeps(kind);
+        for (count, chip) in counts.kinds.iter_mut().zip(Type::ALL) {
+            *count += usize::from(chip.keeps(kind) && in_bucket);
+        }
+        for (count, chip) in counts.buckets.iter_mut().zip(Bucket::ALL) {
+            *count += usize::from(chip.keeps(link) && in_kind);
+        }
     }
+    counts
 }
 
 /// The links the filter keeps: the ones that want an action first, then the open ones, then the
 /// done ones, each group by the time of its last change, the newest first.
 pub(crate) fn shown<'a>(board: &'a LinkBoard, filter: &Filter) -> Vec<&'a Link> {
+    let query = filter.query();
     let mut links: Vec<&Link> =
-        board.newest_first().into_iter().filter(|link| filter.keeps(link)).collect();
+        board.newest_first().into_iter().filter(|link| filter.keeps(&query, link)).collect();
     links.sort_by_key(|link| (rank(link), std::cmp::Reverse(link.changed_ms())));
     links
 }
