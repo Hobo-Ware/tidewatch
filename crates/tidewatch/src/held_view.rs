@@ -14,6 +14,7 @@ use crate::screen_kit::{
     Glyph, Size, TEXT_BODY, TEXT_TAG, body, button_width, glyph_button, quiet_button,
 };
 use crate::send_line::{Held, Way};
+use tidewatch_core::text::squash;
 
 const PAD: f32 = 12.0;
 const HEAD_H: f32 = 28.0;
@@ -70,10 +71,6 @@ pub(crate) fn height(ui: &Ui, band_w: f32, (count, editing): (usize, bool)) -> f
     let rows = count.min(MAX_ROWS) as f32 * each;
     let extra = if editing { EDIT_H - each } else { 0.0 };
     HEAD_H + rows + extra + PAD / 2.0 + 2.0 * OUTER
-}
-
-fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn edit_id(id: u64) -> Id {
@@ -172,7 +169,7 @@ fn row(
     };
     let galley = ellipsized(
         ui.painter(),
-        &one_line(&held.text),
+        &squash(&held.text),
         egui::FontId::proportional(TEXT_BODY),
         brand::TEXT,
         text_w,

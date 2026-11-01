@@ -2,6 +2,8 @@
 //! 2.1.3xx transcripts): slash commands, local command output, caveats, `<pasted_content id>` wrappers
 //! `<task-notification>` records and `[Image #1]` markers. Pure text functions.
 
+use crate::text::squash;
+
 const COMMAND_TAGS: [&str; 3] = ["command-name", "command-message", "command-args"];
 const OUTPUT_TAGS: [&str; 4] =
     ["local-command-stdout", "local-command-stderr", "bash-stdout", "bash-stderr"];
@@ -135,7 +137,7 @@ fn background(text: &str) -> Option<String> {
     if !after.is_empty() && !after.starts_with("<system-reminder>") {
         return None;
     }
-    let summary = one_line(child(inner, "summary")?);
+    let summary = squash(child(inner, "summary")?);
     if summary.is_empty() {
         return None;
     }
@@ -144,7 +146,7 @@ fn background(text: &str) -> Option<String> {
         child(inner, "event").and_then(|event| event.lines().find(|l| !l.trim().is_empty()));
     if let Some(event) = event {
         note.push('\n');
-        note.push_str(&cut(&one_line(event), TASK_EVENT_CHARS));
+        note.push_str(&cut(&squash(event), TASK_EVENT_CHARS));
     }
     Some(note)
 }
@@ -172,7 +174,7 @@ fn command(parts: &[(&str, &str)]) -> Record {
         return Record::Hidden;
     };
     let mut line = if name.starts_with('/') { name.to_owned() } else { format!("/{name}") };
-    let args = one_line(find("command-args"));
+    let args = squash(find("command-args"));
     if !args.is_empty() {
         line.push(' ');
         line.push_str(&args);
@@ -195,10 +197,6 @@ fn output(parts: &[(&str, &str)]) -> Record {
         .filter(|inner| !inner.is_empty())
         .collect();
     if shown.is_empty() { Record::Hidden } else { Record::Output(shown.join("\n")) }
-}
-
-fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn tag_sequence<'a>(text: &'a str, known: &[&'static str]) -> Option<Vec<(&'static str, &'a str)>> {

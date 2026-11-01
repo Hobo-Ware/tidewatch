@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::folder_repos::tilde;
 use crate::paths::TidewatchPaths;
 use crate::prefs::Prefs;
+use crate::text::squash;
 use crate::workflow_profile::{CatchUp, Fixes, PullRequests, Store, Workflow};
 
 const MAX_FILE_BYTES: u64 = 128 * 1024;
@@ -341,7 +342,7 @@ fn quote_around(line: &str, from: usize) -> String {
     let capped = tail[..stop].chars().count() > QUOTE_LEN;
     let text: String =
         tail[..stop].chars().take(QUOTE_LEN).filter(|c| !matches!(c, '`' | '*')).collect();
-    let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let words = squash(&text);
     format!("{words}{}", if capped { "..." } else { "" })
 }
 

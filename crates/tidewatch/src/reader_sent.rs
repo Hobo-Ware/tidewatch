@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use tidewatch_core::sent::{Reason, Record};
+use tidewatch_core::text::squash;
 
 const SLACK_MS: i64 = 60_000;
 const WINDOW_MS: i64 = 10 * 60_000;
@@ -38,10 +39,6 @@ impl Queued {
 
 /// One user line of the transcript: its row, its text and when it was written.
 pub(crate) type Line<'a> = (u64, &'a str, Option<i64>);
-
-fn squash(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
 
 /// Whether `seen`, a user line of the transcript, is the same message as `sent` up to spacing.
 pub(crate) fn same_text(sent: &str, seen: &str) -> bool {

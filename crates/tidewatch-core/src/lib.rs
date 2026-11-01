@@ -144,6 +144,7 @@ pub mod start_base;
 pub mod status;
 pub mod tab_name;
 pub mod test_command;
+pub mod text;
 pub mod token_usage;
 pub mod tools;
 pub mod transcript;

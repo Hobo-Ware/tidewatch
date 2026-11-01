@@ -10,6 +10,7 @@ use crate::done_check::Status;
 use crate::limited;
 use crate::meeseeks::tail_of;
 use crate::test_command::TestRun;
+use crate::text::squash;
 use crate::workflow_profile::{Fix, Workflow};
 
 /// What Tidewatch ran itself and what it left behind.
@@ -159,15 +160,11 @@ pub fn command_in(item: &Verified) -> Option<String> {
     spans.chain(bare).find(|text| looks_like_command(text)).map(|text| text.trim().to_owned())
 }
 
-fn squeeze(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 /// Whether a verified command is the one Tidewatch ran itself and saw pass.
 #[must_use]
 pub fn ran_by_tidewatch(command: &str, ran: Option<&TestsRun>) -> bool {
     let Some(run) = ran.filter(|run| run.passed()) else { return false };
-    let (item, ours) = (squeeze(command), squeeze(&run.command));
+    let (item, ours) = (squash(command), squash(&run.command));
     item.contains(&ours) || ours.contains(&item)
 }
 

@@ -1,5 +1,6 @@
 //! Background Bash calls of Claude Code (hook shape checked on 2.1.310): an idle agent cannot call `report_job`, so the script writes the feed itself.
 
+use crate::text::squash;
 use serde_json::Value;
 
 pub const QUIET_MS: i64 = 90_000;
@@ -55,7 +56,7 @@ fn tag<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn short_command(command: &str) -> String {
-    let line = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = squash(command);
     if line.chars().count() <= COMMAND_CHARS {
         return line;
     }

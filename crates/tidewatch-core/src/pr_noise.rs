@@ -3,6 +3,8 @@
 //! the status posts of deploy, coverage and CI bots. A bot comment that carries a suggestion is not
 //! noise. Pure.
 
+use crate::text::squash;
+
 /// The hidden markers of Codex's own posts that only report progress: the receipt of a review that
 /// found nothing, and the summary comment it edits as a review starts, runs and ends.
 const STATUS_MARKERS: [&str; 3] =
@@ -86,7 +88,7 @@ fn words_of(text: &str) -> String {
         .chars()
         .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' })
         .collect();
-    spaced.split_whitespace().collect::<Vec<_>>().join(" ")
+    squash(&spaced)
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use std::collections::{HashSet, VecDeque};
 use serde_json::Value;
 
 use crate::sent::Record;
+use crate::text::squash;
 use crate::transcript::Source;
 
 const TURNS_KEPT: usize = 400;
@@ -210,7 +211,7 @@ impl Counter {
 /// be compared without keeping a pasted wall of text.
 #[must_use]
 pub fn fingerprint(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(FINGERPRINT_CHARS).collect()
+    squash(text).chars().take(FINGERPRINT_CHARS).collect()
 }
 
 /// What the messages Tidewatch typed into the agent cost: the turns they started.
