@@ -9,8 +9,6 @@ use tidewatch_core::panel_view::{Age, Ages, PanelView, Quiet, ReportMark, Revs, 
 use tidewatch_core::progress::State;
 use tidewatch_core::status::AgentStatus;
 
-use crate::panel_blocks::age_text;
-
 const MINUTE_MS: i64 = 60_000;
 
 /// The step `since` shows as ticked by Tidewatch; a ledger with a done step of this text shows it.
@@ -46,7 +44,7 @@ impl Fake {
     pub(crate) fn view(self, now_ms: i64) -> PanelView {
         let ago = |minutes: i64| {
             let at_ms = now_ms - minutes * MINUTE_MS;
-            Some(Age { at_ms, text: age_text(now_ms, at_ms) })
+            Some(Age { at_ms })
         };
         let working = !matches!(self, Self::Outdated);
         let (reported, tone, status) = if working {

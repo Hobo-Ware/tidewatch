@@ -89,18 +89,6 @@ pub fn fresh(ledger: &Ledger, stale: bool) -> Cow<'_, Ledger> {
     Cow::Owned(working)
 }
 
-/// `just now`, `4 min ago`, `2 h ago`, `3 d ago`.
-#[must_use]
-pub fn ago(now_ms: i64, then_ms: i64) -> String {
-    let secs = (now_ms - then_ms).max(0) / 1000;
-    match secs {
-        0..45 => "just now".to_owned(),
-        45..3600 => format!("{} min ago", (secs / 60).max(1)),
-        3600..86_400 => format!("{} h ago", secs / 3600),
-        _ => format!("{} d ago", secs / 86_400),
-    }
-}
-
 /// What a card says of the thing the agent waits on, and when it falls due.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Waiting {
@@ -387,25 +375,6 @@ mod tests {
     fn a_ledger_that_is_not_stale_is_not_copied() {
         let ledger = asks();
         assert!(matches!(fresh(&ledger, false), Cow::Borrowed(_)));
-    }
-
-    #[test]
-    fn ago_steps_from_now_to_days() {
-        let cases = [
-            (0, "just now"),
-            (44_000, "just now"),
-            (45_000, "1 min ago"),
-            (240_000, "4 min ago"),
-            (3_599_000, "59 min ago"),
-            (3_600_000, "1 h ago"),
-            (7_300_000, "2 h ago"),
-            (86_400_000, "1 d ago"),
-            (3 * 86_400_000, "3 d ago"),
-            (-5_000, "just now"),
-        ];
-        for (diff, want) in cases {
-            assert_eq!(ago(1_000_000_000 + diff, 1_000_000_000), want, "{diff}");
-        }
     }
 
     #[test]
