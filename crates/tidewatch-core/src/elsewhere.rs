@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::agents::AgentTable;
+use crate::civil_date::days_from_civil;
 use crate::elsewhere_flags::{Flags, basename, parse_command_line};
 use crate::text::squash;
 use crate::transcript::Source;
@@ -392,13 +393,7 @@ pub fn parse_lstart_ms(text: &str) -> Option<i64> {
     let (day, year): (i64, i64) = (day.parse().ok()?, year.parse().ok()?);
     let mut parts = clock.split(':').map(str::parse::<i64>);
     let (h, m, s) = (parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?);
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year.rem_euclid(400);
-    let shifted = (month + 9) % 12;
-    let day_of_year = (153 * shifted + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
+    let days = days_from_civil(year, month, day);
     Some(((days * 24 + h) * 60 + m) * 60_000 + s * 1000)
 }
 

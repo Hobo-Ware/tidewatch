@@ -55,6 +55,18 @@ fn days_in_month(year: i32, month: u8) -> u8 {
     }
 }
 
+/// Days since 1970-01-01 of a proleptic Gregorian date. Does not check that the date exists, so a
+/// caller holding an unvalidated month or day still gets the arithmetic.
+pub(crate) fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month_from_march = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 impl Date {
     #[must_use]
     pub fn new(year: i32, month: u8, day: u8) -> Option<Self> {
@@ -100,13 +112,7 @@ impl Date {
     /// Days since 1970-01-01, negative before it.
     #[must_use]
     pub fn day_number(self) -> i64 {
-        let year = i64::from(self.year) - i64::from(self.month <= 2);
-        let era = year.div_euclid(400);
-        let year_of_era = year - era * 400;
-        let shifted_month = i64::from((self.month + 9) % 12);
-        let day_of_year = (153 * shifted_month + 2) / 5 + i64::from(self.day) - 1;
-        let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-        era * 146_097 + day_of_era - 719_468
+        days_from_civil(i64::from(self.year), i64::from(self.month), i64::from(self.day))
     }
 
     #[must_use]
@@ -189,6 +195,21 @@ mod tests {
         for (text, want) in cases {
             let got = Date::parse(text).map(|d| (d.year(), d.month(), d.day()));
             assert_eq!(got, want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn days_from_civil_counts_from_the_epoch_without_validating() {
+        let cases = [
+            ((1970, 1, 1), 0),
+            ((1969, 12, 31), -1),
+            ((2000, 3, 1), 11_017),
+            ((2024, 2, 29), 19_782),
+            ((1900, 1, 1), -25_567),
+            ((2026, 13, 1), 20_819),
+        ];
+        for ((year, month, day), want) in cases {
+            assert_eq!(days_from_civil(year, month, day), want, "{year}-{month}-{day}");
         }
     }
 
