@@ -153,6 +153,8 @@ pub(crate) fn page(
 
 pub(crate) const EMOJI_CREDIT: &str =
     "Emoji pictures are Google Noto Emoji, used under the Apache 2.0 license.";
+pub(crate) const ICON_CREDIT: &str =
+    "Tab icons agents pick are Lucide, used under the ISC license.";
 
 fn chat_card(ui: &mut Ui, on: bool) -> Option<bool> {
     let mut changed = None;
@@ -170,6 +172,7 @@ fn chat_card(ui: &mut Ui, on: bool) -> Option<bool> {
 fn about_card(ui: &mut Ui, on_time: &OnTime) {
     section(ui, "About", |ui| {
         settings_ui::row(ui, "Emoji", EMOJI_CREDIT, Control::NONE, |_| {});
+        settings_ui::row(ui, "Icons", ICON_CREDIT, Control::NONE, |_| {});
         let value = match on_time.late.as_deref() {
             Some(late) => format!("{}. {late}", on_time.line),
             None => on_time.line.clone(),
@@ -631,6 +634,12 @@ mod about_tests {
             texts.iter().any(|text| text == EMOJI_CREDIT
                 && text.contains("Google Noto Emoji")
                 && text.contains("Apache 2.0")),
+            "{texts:?}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|text| text == ICON_CREDIT && text.contains("Lucide") && text.contains("ISC")),
             "{texts:?}"
         );
     }

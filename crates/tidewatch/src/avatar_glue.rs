@@ -5,13 +5,15 @@
 //! its file is removed and the tab is queued once for a Redraw ask.
 //!
 //! `TIDEWATCH_FAKE_AVATARS=1` gives the agent tabs the mockup icons in turn, one of them too dark to
-//! read so its tab shows the letter, and writes nothing.
+//! read so its tab shows the letter, and writes nothing. `TIDEWATCH_FAKE_AVATARS=icons` gives them
+//! icons from the bundled Lucide set in different colors instead.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tidewatch_core::avatar::{Avatar, clean};
 use tidewatch_core::avatar_check;
+use tidewatch_core::avatar_icons;
 use tidewatch_core::avatar_store;
 use tidewatch_core::paths::avatar_file_beside;
 
@@ -49,12 +51,53 @@ pub(crate) const FAKE: [(&str, &str); 7] = [
     ),
 ];
 
-pub(crate) fn fake_requested() -> bool {
-    std::env::var_os("TIDEWATCH_FAKE_AVATARS").is_some_and(|v| !v.is_empty() && v != "0")
+pub(crate) const FAKE_ICONS: [(&str, &str, &str); 7] = [
+    ("music", "teal", "Syncing the playlists: a music note."),
+    ("shield", "blue", "Fixing the login flow: a shield."),
+    ("refresh-cw", "green", "Retrying the media sync: two arrows in a loop."),
+    ("database", "amber", "Migrating the orders table: a database."),
+    ("bug", "red", "Chasing the flaky test: a bug."),
+    ("rocket", "orange", "Shipping the release: a rocket."),
+    ("book-open", "purple", "Writing the guide: an open book."),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fake {
+    Off,
+    Mockups,
+    Icons,
 }
 
-/// The `n`th mockup icon through the same checks a real avatar passes: `None` for the dark one.
+pub(crate) fn fake_mode_of(value: Option<&str>) -> Fake {
+    match value {
+        None | Some("" | "0") => Fake::Off,
+        Some("icons") => Fake::Icons,
+        Some(_) => Fake::Mockups,
+    }
+}
+
+fn fake_mode() -> Fake {
+    fake_mode_of(std::env::var("TIDEWATCH_FAKE_AVATARS").ok().as_deref())
+}
+
+pub(crate) fn fake_requested() -> bool {
+    fake_mode() != Fake::Off
+}
+
+/// The `n`th stand-in icon of the bundled set, in its color, through the same checks a real avatar
+/// passes.
+pub(crate) fn fake_icon_face(n: usize) -> Option<Arc<Avatar>> {
+    let (icon, color, reason) = FAKE_ICONS[n % FAKE_ICONS.len()];
+    let svg = avatar_icons::svg(icon, &avatar_icons::color_hex(color)?)?;
+    clean(&svg, reason).ok().filter(|avatar| avatar_check::check(&avatar.svg).is_ok()).map(Arc::new)
+}
+
+/// The `n`th stand-in icon through the same checks a real avatar passes: for the mockups `None`
+/// for the dark one.
 pub(crate) fn fake_face(n: usize) -> Option<Arc<Avatar>> {
+    if fake_mode() == Fake::Icons {
+        return fake_icon_face(n);
+    }
     let (svg, reason) = FAKE[n % FAKE.len()];
     clean(svg, reason).ok().filter(|avatar| avatar_check::check(&avatar.svg).is_ok()).map(Arc::new)
 }
