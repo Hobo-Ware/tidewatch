@@ -293,6 +293,7 @@ impl Tidewatch {
 
     pub(super) fn finish_frame(&mut self, ctx: &egui::Context, now: f64) {
         crate::screen_kit::remember_focus(ctx);
+        self.subagent_chat.end_frame();
         self.dev_session.tick(ctx, &mut self.tabs, now);
         if self.dev_session.restart_due(now) {
             self.restart_to_update(ctx);

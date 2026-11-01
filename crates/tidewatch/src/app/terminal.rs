@@ -269,6 +269,7 @@ impl Tidewatch {
                     avatar,
                     self.subagent_live.agents(active_id),
                 );
+                let agent_reads = reader_glue::take_agent_reads(&mut asked);
                 let clicks = reader_glue::take_pr_clicks(&mut asked);
                 let due_clicks = reader_glue::take_due_clicks(&mut asked);
                 let picks = reader_glue::take_picks(&mut asked);
@@ -293,6 +294,9 @@ impl Tidewatch {
                 self.apply_due_clicks(active_id, due_clicks, ctx, now);
                 for text in picks {
                     self.answer_ask(active_id, text, ctx, now);
+                }
+                for id in agent_reads {
+                    self.open_subagent_chat(active_id, &id, ctx);
                 }
             }
             Some(Shown::Terminal(Some(note))) => {

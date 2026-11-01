@@ -71,6 +71,23 @@ fn row(agent: &Agent, now_ms: i64) -> Row {
     Row { id: agent.id.clone(), what, tag: tag(agent), right, running: agent.is_running() }
 }
 
+/// The header of one agent's chat: what it is, its model and effort, and how long it has run and
+/// what it has spent.
+pub(crate) fn head(agent: &Agent, now_ms: i64) -> Row {
+    let time = clock(agent.elapsed_ms(now_ms));
+    let spent = if agent.tokens == 0 { None } else { Some(compact(agent.tokens)) };
+    let time = if agent.is_running() { time } else { format!("done {time}") };
+    let right = spent.map_or_else(|| time.clone(), |spent| format!("{time} \u{b7} {spent}"));
+    let what = if agent.description.is_empty() { &agent.now } else { &agent.description };
+    Row {
+        id: agent.id.clone(),
+        what: what.clone(),
+        tag: tag(agent),
+        right,
+        running: agent.is_running(),
+    }
+}
+
 /// The list at `now_ms`: running agents and those finished within the last minute. None when
 /// there is nothing to show.
 pub(crate) fn list(agents: &[Agent], now_ms: i64) -> Option<List> {

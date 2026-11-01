@@ -41,6 +41,7 @@ struct Card {
     texts: Vec<(String, Rect)>,
     band: Rect,
     repaint: std::time::Duration,
+    cursor: egui::CursorIcon,
 }
 
 impl Card {
@@ -55,6 +56,7 @@ impl Card {
             texts: Vec::new(),
             band: Rect::NOTHING,
             repaint: std::time::Duration::MAX,
+            cursor: egui::CursorIcon::Default,
         };
         card.frame(Vec::new());
         card.frame(Vec::new());
@@ -83,6 +85,7 @@ impl Card {
             .viewport_output
             .get(&egui::ViewportId::ROOT)
             .map_or(std::time::Duration::MAX, |viewport| viewport.repaint_delay);
+        self.cursor = output.platform_output.cursor_icon;
         self.texts.clear();
         for shape in &output.shapes {
             painted_text_rects_nonblank(&shape.shape, &mut self.texts);
@@ -218,4 +221,28 @@ fn a_list_with_something_running_asks_for_a_frame_each_second_and_a_finished_one
     let done = Card::new(&agents(0, 2), 700.0);
     assert!(done.drawn("2 agents finished"));
     assert_eq!(done.repaint, std::time::Duration::MAX);
+}
+
+#[test]
+fn a_click_on_a_row_asks_to_read_that_agent_and_a_click_beside_the_rows_asks_nothing() {
+    let mut card = Card::new(&agents(3, 1), 700.0);
+    let second = card.at(&card.list.rows[1].what.clone());
+    assert_eq!(card.click(second), [Out::Read(1)]);
+    let finished = card.at("Finished task 3");
+    assert_eq!(card.click(finished), [Out::Read(3)]);
+    let header = card.at("3 agents running");
+    assert_eq!(card.click(header), Vec::<Out>::new());
+}
+
+#[test]
+fn a_row_shows_a_pointing_hand_and_a_tint_under_the_pointer() {
+    let mut card = Card::new(&agents(2, 0), 700.0);
+    let row = card.at(&card.list.rows[0].what.clone());
+    card.frame(vec![Event::PointerMoved(row)]);
+    card.frame(vec![Event::PointerMoved(row)]);
+    assert_eq!(card.cursor, egui::CursorIcon::PointingHand);
+    let off = pos2(5.0, 690.0);
+    card.frame(vec![Event::PointerMoved(off)]);
+    card.frame(vec![Event::PointerMoved(off)]);
+    assert_eq!(card.cursor, egui::CursorIcon::Default);
 }

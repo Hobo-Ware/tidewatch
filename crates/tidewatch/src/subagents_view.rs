@@ -6,7 +6,9 @@ use egui::{Align2, CornerRadius, CursorIcon, Id, Rect, Sense, Stroke, StrokeKind
 
 use crate::brand;
 use crate::reader_view::{INSET, ellipsized};
-use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG, TagFill, body, mono, paint_tag, tag_width};
+use crate::screen_kit::{
+    TEXT_SECONDARY, TEXT_TAG, TagFill, body, mono, paint_tag, selection_row, tag_width,
+};
 use crate::subagents_model::{List, Plan};
 
 const PAD: f32 = 12.0;
@@ -18,6 +20,7 @@ const GAP: f32 = 10.0;
 const DOT_BOX: f32 = 14.0;
 const MIN_WHAT_W: f32 = 96.0;
 const RADIUS: u8 = 10;
+const ROW_BLEED: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Facts<'a> {
@@ -30,6 +33,8 @@ pub(crate) struct Facts<'a> {
 pub(crate) enum Out {
     Fold,
     Open,
+    /// A click on the row at this index: read that agent's chat.
+    Read(usize),
 }
 
 fn chrome() -> f32 {
@@ -140,7 +145,16 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, facts: Facts<'_>) -> Vec<Out> {
     let columns = columns(ui, inner, facts, plan.rows);
     for (index, row) in facts.list.rows[..plan.rows].iter().enumerate() {
         let top = card.top() + OUTER + HEAD_H + index as f32 * ROW_H;
+        let hit = Rect::from_min_size(
+            pos2(inner.left() - ROW_BLEED, top),
+            vec2(inner.width() + 2.0 * ROW_BLEED, ROW_H),
+        );
+        let response = ui.interact(hit, Id::new(("agents-row", &row.id)), Sense::click());
+        selection_row(ui.painter(), hit, false, response.hovered());
         paint_row(ui, inner, top, row, &columns);
+        if response.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+            out.push(Out::Read(index));
+        }
     }
     if more_line(plan) {
         let top = card.top() + OUTER + HEAD_H + plan.rows as f32 * ROW_H;

@@ -288,6 +288,14 @@ impl Tidewatch {
             self.show_toast_pill(ui);
             return;
         }
+        if !self.active_is_draft() && self.show_subagent_chat(ui, areas.terminal, active_id, frame)
+        {
+            if panels {
+                self.show_panes(ui, &areas, ctx);
+            }
+            self.show_toast_pill(ui);
+            return;
+        }
         if self.active_is_draft() {
             self.show_draft(ui, areas.terminal, ctx, frame);
             if panels {
