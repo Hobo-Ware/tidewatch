@@ -4,7 +4,7 @@
 use crate::agents::Wiring;
 
 /// The line pasted into an idle agent when the owner clicks Draw avatar.
-pub const ASK: &str = "Call set_avatar once with an icon for this task: a round icon, bright colors, no ring, frame or background (Tidewatch draws the dark plate), nothing near the edge.";
+pub const ASK: &str = "Call set_avatar once for this task: pick the Lucide icon of the one object the goal is about, send its name as icon with a color, and name the object in reason. Draw an svg only when no icon fits.";
 
 /// Whether the CLI gets the `set_avatar` tool: the two whose MCP config Tidewatch writes.
 #[must_use]
@@ -31,11 +31,15 @@ mod tests {
     }
 
     #[test]
-    fn the_line_names_the_tool_and_asks_for_a_round_bright_icon_with_nothing_near_the_edge() {
+    fn the_line_names_the_tool_and_asks_for_an_icon_picked_from_the_goal() {
         assert!(ASK.contains(crate::avatar_mcp::SET_TOOL));
-        for want in
-            ["round icon", "bright colors, no ring, frame or background", "nothing near the edge"]
-        {
+        for want in [
+            "Lucide icon",
+            "the one object the goal is about",
+            "as icon with a color",
+            "name the object in reason",
+            "svg only when no icon fits",
+        ] {
             assert!(ASK.contains(want), "{want} in {ASK}");
         }
     }
