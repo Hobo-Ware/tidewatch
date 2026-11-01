@@ -13,6 +13,8 @@ AGENTS.md; domain rules load on demand):
 - Graph, diff and review internals: they live in `../kelp` (`kelp-core`, `kelp-ui`); read
   `../kelp/.agents/rules/project.md` and change them there
 - Tests: testing.md (already loaded as core)
+- What a module owns: grep `docs/layout.md` for its file
+- Dev switches, screenshot and live checks: read `docs/dev-switches.md`
 - All other code: project.md, workflow.md, code-principles.md, implementation.md (always on)
 
 @AGENTS.md
