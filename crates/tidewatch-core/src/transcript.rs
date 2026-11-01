@@ -139,6 +139,7 @@ pub struct Parser {
     marker: Marker,
     usage: Counter,
     seen: usize,
+    keep_sidechain: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -183,7 +184,19 @@ impl Parser {
             marker: Marker::default(),
             usage: Counter::default(),
             seen: 0,
+            keep_sidechain: false,
         }
+    }
+
+    /// A parser for a sub-agent's own file, whose every line is a sidechain line of the session
+    /// that started it: the main transcript's parser drops those.
+    #[must_use]
+    pub fn subagent() -> Self {
+        Self { keep_sidechain: true, ..Self::new(Source::Claude) }
+    }
+
+    fn fresh(&self) -> Self {
+        Self { keep_sidechain: self.keep_sidechain, ..Self::new(self.source) }
     }
 
     /// The turn boundaries the lines fed since the last call held, each placed by the number of
@@ -264,7 +277,8 @@ impl Parser {
     }
 
     fn claude(&mut self, line: &Value) -> Vec<Entry> {
-        if line["isSidechain"].as_bool() == Some(true) || line["isMeta"].as_bool() == Some(true) {
+        let sidechain = line["isSidechain"].as_bool() == Some(true) && !self.keep_sidechain;
+        if sidechain || line["isMeta"].as_bool() == Some(true) {
             return Vec::new();
         }
         let ts = timestamp(&line["timestamp"]);
@@ -516,6 +530,13 @@ pub fn parse_all(source: Source, text: &str) -> Vec<Entry> {
     text.lines().flat_map(|line| parser.feed_line(line)).collect()
 }
 
+/// Every entry of a sub-agent's file (`agent-<id>.jsonl`), sidechain lines included.
+#[must_use]
+pub fn parse_subagent(text: &str) -> Vec<Entry> {
+    let mut parser = Parser::subagent();
+    text.lines().flat_map(|line| parser.feed_line(line)).collect()
+}
+
 fn blocks(content: &Value) -> impl Iterator<Item = &Value> {
     content.as_array().into_iter().flatten()
 }
@@ -731,9 +752,19 @@ pub struct Tail {
 impl Tail {
     #[must_use]
     pub fn new(source: Source, path: impl Into<PathBuf>) -> Self {
+        Self::with(Parser::new(source), path.into())
+    }
+
+    /// A tail over a sub-agent's file, kept with its sidechain lines (see [`Parser::subagent`]).
+    #[must_use]
+    pub fn subagent(path: impl Into<PathBuf>) -> Self {
+        Self::with(Parser::subagent(), path.into())
+    }
+
+    fn with(parser: Parser, path: PathBuf) -> Self {
         Self {
-            path: path.into(),
-            parser: Parser::new(source),
+            path,
+            parser,
             offset: 0,
             partial: Vec::new(),
             head: Vec::new(),
@@ -840,7 +871,7 @@ impl Tail {
     }
 
     fn restart(&mut self) {
-        self.parser = Parser::new(self.parser.source);
+        self.parser = self.parser.fresh();
         self.offset = 0;
         self.partial.clear();
         self.head.clear();
@@ -921,6 +952,9 @@ mod tests {
     const CLAUDE_TITLES: &str = include_str!("../tests/fixtures/claude_titles.jsonl");
     const CLAUDE_IMAGES: &str = include_str!("../tests/fixtures/claude_images.jsonl");
 
+    const SUBAGENT_RUNNING: &str = include_str!("../tests/fixtures/subagent_running.jsonl");
+    const SUBAGENT_FINISHED: &str = include_str!("../tests/fixtures/subagent_finished.jsonl");
+
     type ToolShape = (String, String, ToolPhase);
     type Shaped = (Role, String, Option<ToolShape>);
 
@@ -963,6 +997,62 @@ mod tests {
             entries[1].tool.as_ref().and_then(|t| t.id.as_deref()),
             Some("toolu_01CJPLN1Vrsb8mQ2XYzmCoXm")
         );
+    }
+
+    #[test]
+    fn the_main_transcript_parser_still_drops_every_sidechain_line() {
+        assert_eq!(parse_all(Source::Claude, SUBAGENT_RUNNING), []);
+        assert_eq!(parse_all(Source::Claude, SUBAGENT_FINISHED), []);
+    }
+
+    #[test]
+    fn a_subagent_file_keeps_its_prompt_texts_and_tool_calls_with_their_results() {
+        let entries = parse_subagent(SUBAGENT_FINISHED);
+        let shaped = shape(&entries);
+        assert_eq!(
+            shaped[..3],
+            [
+                (Role::User, "Read the hover toolbar code and fold the fix.".into(), None),
+                (
+                    Role::Tool,
+                    String::new(),
+                    Some(call("Read", "/Users/dev/.claude/ledgers/tidewatch/acts-brief.md"))
+                ),
+                (
+                    Role::Tool,
+                    "ok".into(),
+                    Some(result(
+                        "Read",
+                        "/Users/dev/.claude/ledgers/tidewatch/acts-brief.md",
+                        false
+                    ))
+                ),
+            ]
+        );
+        let last = shaped.last().unwrap();
+        assert_eq!(last.0, Role::Assistant);
+        assert!(last.1.starts_with("The hovered toolbar no longer covers"), "{last:?}");
+        let calls = entries
+            .iter()
+            .filter(|entry| entry.tool.as_ref().is_some_and(|tool| tool.phase == ToolPhase::Call))
+            .count();
+        assert_eq!(calls, 5);
+    }
+
+    #[test]
+    fn a_subagent_tail_reads_sidechain_lines_and_keeps_doing_so_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agent-a1.jsonl");
+        let line = |text: &str| {
+            format!(
+                "{{\"isSidechain\":true,\"type\":\"user\",\"message\":{{\"content\":\"{text}\"}}}}\n"
+            )
+        };
+        write_file(&file, &(line("one") + &line("two")));
+        let mut tail = Tail::subagent(&file);
+        assert_eq!(texts(&tail.poll()), ["one", "two"]);
+        write_file(&file, &line("three"));
+        assert_eq!(texts(&tail.poll()), ["three"]);
     }
 
     fn asks(entries: &[Entry]) -> Vec<(ToolPhase, Option<AskPart>)> {
