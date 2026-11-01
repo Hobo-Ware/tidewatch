@@ -23,7 +23,7 @@ use tidewatch_core::panel_log::{CAP_EVENTS, Log};
 use tidewatch_core::panel_rules::ReportDigest;
 use tidewatch_core::panel_state::{AnswerSeen, Applied, CheckSeen, MarkSeen, PanelState};
 use tidewatch_core::panel_store::{self, Writer};
-use tidewatch_core::panel_view::PanelView;
+use tidewatch_core::panel_view::{PanelView, ReportMark};
 use tidewatch_core::paths::panel_log_file_beside;
 use tidewatch_core::progress::State;
 use tidewatch_core::status::{AgentStatus, HookEvent, HookKind, ProgressSignal, TerminalSignal};
@@ -251,14 +251,27 @@ impl Host {
         now_ms: i64,
         unlogged: impl FnOnce() -> Option<(Option<i64>, ReportDigest)>,
     ) -> Option<State> {
-        let view = self.view(tab, now_ms)?;
-        if view.report.is_some() {
-            return view.reported;
+        let (reported, mark) = self.standing(tab, now_ms)?;
+        if mark.is_some() {
+            return reported;
         }
-        let Some((saved_ms, digest)) = unlogged() else { return view.reported };
+        let Some((saved_ms, digest)) = unlogged() else { return reported };
         let fact = Fact::ReportSaved { saved_ms: saved_ms.unwrap_or(now_ms), digest };
         self.push(tab, Source::Report, fact, now_ms);
-        self.view(tab, now_ms)?.reported
+        self.standing(tab, now_ms)?.0
+    }
+
+    /// The mark of the tab's report at `now_ms`, as `view` would give it.
+    pub(crate) fn report_mark(&self, tab: u64, now_ms: i64) -> Option<ReportMark> {
+        self.standing(tab, now_ms)?.1
+    }
+
+    fn standing(&self, tab: u64, now_ms: i64) -> Option<(Option<State>, Option<ReportMark>)> {
+        if let Some(fake) = self.fake {
+            let view = fake.view(now_ms);
+            return Some((view.reported, view.report));
+        }
+        Some(self.tabs.get(&tab)?.ready.as_ref()?.state.standing_at(now_ms))
     }
 
     /// The steps Tidewatch ticked itself, from the tab's log.
@@ -524,7 +537,10 @@ impl Host {
     }
 
     fn end_block(&self, tab: u64, now_ms: i64) -> Option<EndBlock> {
-        self.view(tab, now_ms)?.end_block
+        if let Some(fake) = self.fake {
+            return fake.view(now_ms).end_block;
+        }
+        self.tabs.get(&tab)?.ready.as_ref()?.state.end_block().cloned()
     }
 
     fn question_ended(&mut self, tab: u64, asking: bool, now_ms: i64) {

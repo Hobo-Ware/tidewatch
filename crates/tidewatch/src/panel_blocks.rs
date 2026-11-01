@@ -117,8 +117,8 @@ impl Blocks {
 }
 
 /// Whether the facts contradict the tab's report, so its question and its wait are dropped.
-pub(crate) fn contradicted(view: Option<&PanelView>) -> bool {
-    view.is_some_and(|view| matches!(view.report, Some(ReportMark::OutOfDate(_))))
+pub(crate) fn contradicted(mark: Option<ReportMark>) -> bool {
+    matches!(mark, Some(ReportMark::OutOfDate(_)))
 }
 
 /// The mark a step is drawn with: a step the agent's report leaves open (or blocked on the owner)

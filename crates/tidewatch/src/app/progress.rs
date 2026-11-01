@@ -456,7 +456,8 @@ impl Tidewatch {
     /// Whether the tab's report no longer holds: the facts contradict it, so the screens drop its
     /// question and its wait and mark it out of date.
     pub(super) fn ledger_stale(&self, tab: u64) -> bool {
-        self.progress.ledger(tab).is_some() && contradicted(self.panel_view_of(tab).as_ref())
+        self.progress.ledger(tab).is_some()
+            && contradicted(self.panel.report_mark(tab, wall_ms() as i64))
     }
 
     /// Ticks, on every tab, the open step of the report that each question answered since the

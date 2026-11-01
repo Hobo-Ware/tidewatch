@@ -560,6 +560,20 @@ impl PanelState {
         (Some(state), Some(mark))
     }
 
+    /// The state the report stands for and its mark at `now_ms`: the `reported` and `report`
+    /// fields of `view`, without building the rest of it.
+    #[must_use]
+    pub fn standing_at(&self, now_ms: i64) -> (Option<State>, Option<ReportMark>) {
+        let now = now_ms.max(self.clock_ms);
+        let (status, asked) = self.status_at(now);
+        self.standing(&status, asked, now)
+    }
+
+    #[must_use]
+    pub fn end_block(&self) -> Option<&EndBlock> {
+        self.end_block.as_ref()
+    }
+
     /// What the panel shows at `now_ms`. A `now_ms` before the last event folded reads as that event.
     #[must_use]
     pub fn view(&self, now_ms: i64) -> PanelView {

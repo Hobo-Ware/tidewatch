@@ -58,6 +58,12 @@ fn digest(state: &str, needs: &str) -> ReportDigest {
     )))
 }
 
+fn assert_accessors_match_view(state: &PanelState, now: i64, name: &str) {
+    let view = state.view(now);
+    assert_eq!(state.standing_at(now), (view.reported, view.report), "{name}");
+    assert_eq!(state.end_block(), view.end_block.as_ref(), "{name}");
+}
+
 const NO_QUESTION: &str = "- Nothing";
 const A_QUESTION: &str = "- Yes or changes on the board?";
 
@@ -144,6 +150,7 @@ fn a_report_the_facts_contradict_is_overruled_and_marked_out_of_date() {
                 at,
             );
         }
+        assert_accessors_match_view(&tape.state, case.now, case.name);
         let view = tape.state.view(case.now);
         assert_eq!(view.tone, case.tone, "{}", case.name);
         assert_eq!(view.report, Some(case.mark), "{}", case.name);
@@ -160,6 +167,7 @@ fn a_done_report_is_overruled_by_a_turn_that_started_after_it() {
     assert_eq!(tape.state.view(2_100).tone, Tone::Done);
     tape.hook(HookKind::TurnStarted, 5_000);
     tape.busy(5_000);
+    assert_accessors_match_view(&tape.state, 5_500, "a turn started after the report");
     let view = tape.state.view(5_500);
     assert_eq!(view.tone, Tone::Working);
     assert_eq!(view.reported, Some(State::Working));
@@ -178,6 +186,7 @@ fn a_question_saved_before_the_turn_that_followed_it_is_stale_and_so_is_one_the_
     tape.hook(HookKind::TurnDone, 2_000);
     assert_eq!(tape.state.view(2_100).tone, Tone::Needs);
     tape.put(Source::App, Fact::Answered { kind: AskKind::Question }, 2_500);
+    assert_accessors_match_view(&tape.state, 2_600, "answered");
     let answered = tape.state.view(2_600);
     assert_eq!(answered.report, Some(ReportMark::OutOfDate(Why::QuestionAnswered)));
     assert_eq!(answered.reported, Some(State::Working));
@@ -195,6 +204,7 @@ fn no_report_means_no_mark() {
     let mut tape = Tape::new();
     tape.started();
     tape.hook(HookKind::TurnStarted, 1_000);
+    assert_accessors_match_view(&tape.state, 1_100, "no report");
     let view = tape.state.view(1_100);
     assert_eq!(view.report, None);
     assert_eq!(view.reported, None);
@@ -347,10 +357,12 @@ fn the_hook_message_of_a_finished_turn_becomes_the_end_block_and_the_next_turn_c
     tape.started();
     tape.hook(HookKind::TurnStarted, 1_000);
     tape.hook_saying(HookKind::TurnDone, Some(message), 2_000);
+    assert_accessors_match_view(&tape.state, 2_100, "end block");
     let block = tape.state.view(2_100).end_block.expect("a complete block parses");
     assert_eq!(block.done, ["the fix"]);
     assert_eq!(block.next, ["merge"]);
     tape.hook(HookKind::TurnStarted, 3_000);
+    assert_accessors_match_view(&tape.state, 3_100, "block cleared");
     assert_eq!(tape.state.view(3_100).end_block, None);
 }
 
