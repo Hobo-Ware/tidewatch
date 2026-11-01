@@ -158,11 +158,17 @@ fn ellipsize_to(measure: impl Fn(&str) -> f32, text: &str, room: f32) -> String 
         return text.to_owned();
     }
     let chars: Vec<char> = text.chars().collect();
-    (0..chars.len())
-        .rev()
-        .map(|keep| format!("{}...", chars[..keep].iter().collect::<String>().trim_end()))
-        .find(|cut| measure(cut) <= room)
-        .unwrap_or_default()
+    let cut = |keep: usize| format!("{}...", chars[..keep].iter().collect::<String>().trim_end());
+    let (mut fitting, mut end) = (0, chars.len());
+    while fitting < end {
+        let mid = fitting + (end - fitting) / 2;
+        if measure(&cut(mid)) <= room {
+            fitting = mid + 1;
+        } else {
+            end = mid;
+        }
+    }
+    fitting.checked_sub(1).map(cut).unwrap_or_default()
 }
 
 fn text_width(painter: &egui::Painter, text: &str, font: &FontId) -> f32 {
@@ -366,6 +372,52 @@ mod tests {
             "Looks off by..."
         );
         assert_eq!(ellipsize_to(width, "anything", 2.0), "");
+    }
+
+    fn ellipsize_linear(measure: impl Fn(&str) -> f32, text: &str, room: f32) -> String {
+        if measure(text) <= room {
+            return text.to_owned();
+        }
+        let chars: Vec<char> = text.chars().collect();
+        (0..chars.len())
+            .rev()
+            .map(|keep| format!("{}...", chars[..keep].iter().collect::<String>().trim_end()))
+            .find(|cut| measure(cut) <= room)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn ellipsize_to_picks_the_cut_the_linear_scan_picked() {
+        let width = |text: &str| {
+            text.chars()
+                .map(|c| match c {
+                    'i' | 'l' | ' ' | '.' => 1.0,
+                    'W' | 'M' => 3.0,
+                    _ => 2.0,
+                })
+                .sum::<f32>()
+        };
+        let texts = [
+            "",
+            "a",
+            "short",
+            "Looks off by one on the boundary",
+            "trailing spaces   before the cut   ",
+            "Wide WMWM letters and iiii ll narrow ones",
+            "      leading spaces then text",
+            "no_spaces_in_this_one_at_all_really_long",
+            "caf\u{e9} and na\u{ef}ve text with accents",
+            "   ",
+        ];
+        for text in texts {
+            for room in (0..140).map(|n| n as f32 * 0.5) {
+                assert_eq!(
+                    ellipsize_to(width, text, room),
+                    ellipsize_linear(width, text, room),
+                    "{text:?} in {room}"
+                );
+            }
+        }
     }
 
     #[test]
