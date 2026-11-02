@@ -203,6 +203,8 @@ pub(crate) struct Watch {
     ended: bool,
     pub(crate) pause: Option<Pause>,
     pub(crate) pending: Vec<Pending>,
+    /// The note that the pull request merged or closed, until the agent is idle to read it.
+    ending: Option<String>,
     pub(crate) autonomous: bool,
     pub(crate) workflow: Workflow,
     /// The kinds of Auto message this repo's owner has already read once.
@@ -234,6 +236,7 @@ impl Watch {
             ended: false,
             pause: None,
             pending: Vec::new(),
+            ending: None,
             autonomous: false,
             workflow: Workflow::default(),
             shown: Shown::default(),
@@ -506,6 +509,9 @@ impl Watch {
         let mut outs = Vec::new();
         for event in polled.events {
             self.cards.add(event.at_ms, event.body.clone());
+            if let Some(text) = pr_prompt::ended_text(&event.body) {
+                self.ending = Some(text);
+            }
             if let Some(notice) = notice(&event.body, number, tab_title) {
                 outs.push(Out::Notify(notice));
             }
@@ -556,8 +562,9 @@ impl Watch {
     /// Sends the waiting message when the agent is idle and the last send has had its turn (the hook
     /// that says the agent started may arrive a moment after the paste). Call every frame.
     pub(crate) fn flush(&mut self, default: GithubPrefs, now: f64, now_ms: i64) -> Vec<Out> {
-        let mut outs = Vec::new();
-        if self.pending.is_empty() || self.policy(default).mode != PrMode::Auto {
+        let mut outs = self.flush_ending(now, now_ms);
+        if !outs.is_empty() || self.pending.is_empty() || self.policy(default).mode != PrMode::Auto
+        {
             return outs;
         }
         if self.cards.auto_sends >= self.cap() {
@@ -568,9 +575,7 @@ impl Watch {
             self.fall_back_to_asking(default);
             return vec![Out::Toast(fall_back_text()), Out::Save];
         }
-        let idle =
-            self.status == AgentStatus::Done && self.hold_until.is_none_or(|until| now >= until);
-        if !idle {
+        if !self.idle(now) {
             return outs;
         }
         let Some(at) = self.pending.iter().position(|pending| !pending.confirm) else {
@@ -584,6 +589,32 @@ impl Watch {
             outs.push(Out::Toast(fall_back_text()));
         }
         outs
+    }
+
+    /// Tells an idle agent its pull request ended, whatever the mode: the news asks for no fix, so it
+    /// needs no click and counts toward no cap.
+    fn flush_ending(&mut self, now: f64, now_ms: i64) -> Vec<Out> {
+        if !self.idle(now) {
+            return Vec::new();
+        }
+        let Some(text) = self.ending.take() else { return Vec::new() };
+        let tag = if self.closed() { "Closed" } else { "Merged" };
+        self.cards.add(
+            now_ms,
+            Body::Sent {
+                via: Via::Auto,
+                tag: tag.to_owned(),
+                headline: text.clone(),
+                extra_lines: 0,
+                text: text.clone(),
+            },
+        );
+        self.hold_until = Some(now + HOLD_SECS);
+        vec![Out::Paste(text), Out::Save]
+    }
+
+    fn idle(&self, now: f64) -> bool {
+        self.status == AgentStatus::Done && self.hold_until.is_none_or(|until| now >= until)
     }
 
     fn fall_back_to_asking(&mut self, default: GithubPrefs) {
@@ -734,7 +765,8 @@ impl Watch {
 
     /// The next wake-up for the hold after a send, when messages wait.
     pub(crate) fn next_flush(&self, now: f64) -> Option<f64> {
-        self.hold_until.filter(|until| *until > now && !self.pending.is_empty())
+        self.hold_until
+            .filter(|until| *until > now && (!self.pending.is_empty() || self.ending.is_some()))
     }
 
     pub(crate) fn summary(&self) -> Option<&Summary> {

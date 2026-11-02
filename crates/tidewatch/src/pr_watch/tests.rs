@@ -1233,3 +1233,40 @@ fn the_kind_a_message_was_told_for_comes_with_it() {
         "{outs:?}"
     );
 }
+
+#[test]
+fn a_merge_is_told_to_the_idle_agent_once_in_every_mode_that_watches() {
+    for mode in [PrMode::Ask, PrMode::Auto] {
+        let prefs = GithubPrefs { mode, ..GithubPrefs::default() };
+        let mut watch = ready(Some(42));
+        watch.set_policy(prefs, 0.0);
+        watch.observe(&AgentStatus::Working);
+        watch.look_started();
+        let outs = watch.polled(Ok(merged_poll()), prefs, "t", 5.0, 9_000);
+        assert_eq!(pasted(&outs), Vec::<&str>::new(), "{mode:?}: the agent is busy");
+        watch.observe(&AgentStatus::Done);
+        let outs = watch.flush(prefs, 6.0, 9_100);
+        let text = pasted(&outs);
+        assert_eq!(text.len(), 1, "{mode:?}");
+        assert!(text[0].starts_with("PR #42 was merged into main."), "{}", text[0]);
+        assert_eq!(watch.cards.auto_sends, 0, "{mode:?}: the news counts toward no cap");
+        assert_eq!(pasted(&watch.flush(prefs, 99.0, 9_200)), Vec::<&str>::new(), "{mode:?}");
+    }
+}
+
+#[test]
+fn a_close_is_told_and_never_pasted_into_an_agent_that_waits_on_you() {
+    let default = GithubPrefs::default();
+    let mut watch = ready(Some(42));
+    watch.observe(&AgentStatus::NeedsYou(Reason::Question));
+    watch.look_started();
+    watch.polled(Ok(closed_poll()), default, "t", 5.0, 9_000);
+    assert_eq!(pasted(&watch.flush(default, 6.0, 9_100)), Vec::<&str>::new());
+    watch.observe(&AgentStatus::Done);
+    let outs = watch.flush(default, 7.0, 9_200);
+    assert!(pasted(&outs)[0].starts_with("PR #42 was closed without merging."));
+    let Body::Sent { tag, .. } = &watch.cards.cards().last().unwrap().body else {
+        panic!("no message card")
+    };
+    assert_eq!(tag, "Closed");
+}

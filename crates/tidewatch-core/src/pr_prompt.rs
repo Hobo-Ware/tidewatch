@@ -81,6 +81,20 @@ pub fn wanted(prefs: &GithubPrefs, body: &Body) -> bool {
         })
 }
 
+/// What the agent hears once when its pull request ends, so the owner never has to tell it.
+#[must_use]
+pub fn ended_text(body: &Body) -> Option<String> {
+    match body {
+        Body::Merged { number, base } => Some(format!(
+            "PR #{number} was merged into {base}. Push nothing more to this branch. Mark the finished steps done in your progress report and stop. If work is left, list it there."
+        )),
+        Body::Closed { number } => Some(format!(
+            "PR #{number} was closed without merging. Stop work on it and say in your progress report what is left."
+        )),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Message {
     pub ask: Ask,
@@ -512,6 +526,16 @@ mod tests {
             assert_eq!(message(&body, 1, REBASE), None, "{body:?}");
             assert_eq!(ask_of(&body), None, "{body:?}");
         }
+    }
+
+    #[test]
+    fn only_a_merge_or_a_close_has_an_ending_note() {
+        let merged = ended_text(&Body::Merged { number: 7, base: "main".into() }).unwrap();
+        assert!(merged.starts_with("PR #7 was merged into main."), "{merged}");
+        let closed = ended_text(&Body::Closed { number: 7 }).unwrap();
+        assert!(closed.starts_with("PR #7 was closed without merging."), "{closed}");
+        assert_eq!(ended_text(&Body::Approved { author: "a".into() }), None);
+        assert_eq!(ended_text(&Body::Conflict { base: "main".into() }), None);
     }
 
     #[test]
