@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use stdusk_core::terminal::PtyTerm;
 use tidewatch_core::elsewhere::Cli;
+use tidewatch_core::paths::tab_key_of;
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::status::AgentStatus;
 
@@ -390,6 +391,13 @@ impl Tidewatch {
             .filter(|looked| self.look_key(change.tab).as_ref() == Some(&looked.key))
             .and_then(|looked| looked.name.clone());
         let spare_tab = subject.pinned.then(|| self.tabs.reserve_id());
+        let state_key = self
+            .tabs
+            .get(change.tab)
+            .filter(|tab| tab.pane.worktree.is_none())
+            .and_then(|tab| tab.pane.agent.as_ref()?.run.notes_file.as_deref())
+            .and_then(tab_key_of)
+            .map(str::to_owned);
         self.retarget.waiting.hold(change.clone(), now + EVERY_S, now);
         let installed = profiles.agent_table().found_on_path(Some(&self.catalog.path));
         let remembered = self
@@ -412,6 +420,7 @@ impl Tidewatch {
             start_from: self.new_tab_prefs.start_from(),
             name,
             spare_tab,
+            state_key,
         };
         retarget_jobs::retarget(&self.retarget.jobs, ctx, request);
     }

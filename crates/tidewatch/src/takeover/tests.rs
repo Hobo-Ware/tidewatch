@@ -457,6 +457,7 @@ fn a_moved_session_opens_through_the_restore_path() {
     assert_eq!(plan.dir, PathBuf::from("/Users/me/code/acme"));
     let tab = &plan.tabs[0];
     assert_eq!(tab.dir, PathBuf::from("/Users/me/code/acme"));
+    assert_eq!(tab.taken_over_from.as_deref(), Some(Path::new("/Users/me/code/acme")));
     let TabAction::ResumeAgent { agent, profile, session_id, how } = &tab.action else {
         panic!("expected a resume")
     };

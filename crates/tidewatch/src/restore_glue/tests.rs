@@ -165,6 +165,7 @@ fn agent(worktree: &Worktree, session: &str, level: Level) -> SavedTab {
         meeseeks: None,
         folder_repo: None,
         chosen_name: None,
+        state_key: None,
     })
 }
 
@@ -795,4 +796,14 @@ fn a_reload_takes_the_restore_switches_and_writes_nothing() {
     assert!(!host.restore_enabled());
     assert_eq!(host.resume_agents(), ResumeAgents::Off);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_folder_tab_reopens_in_its_saved_state_folder_and_an_older_save_in_the_one_its_id_names() {
+    let wt =
+        Worktree { repo: PathBuf::from("/w"), path: PathBuf::from("/w"), branch: String::new() };
+    let SavedTab::Agent(older) = agent(&wt, "s", Level::Edits) else { unreachable!() };
+    let kept = SavedAgentTab { state_key: Some("tab-1a2b3c4d".into()), ..older.clone() };
+    assert_eq!(state_key_of(&kept, 4), "tab-1a2b3c4d");
+    assert_eq!(state_key_of(&older, 4), "tab-4");
 }

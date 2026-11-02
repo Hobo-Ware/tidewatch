@@ -79,6 +79,7 @@ fn session_for(dir: &Path, worktree: &Worktree) -> Session {
                     meeseeks: None,
                     folder_repo: None,
                     chosen_name: None,
+                    state_key: None,
                 }),
             ],
             parked: Vec::new(),

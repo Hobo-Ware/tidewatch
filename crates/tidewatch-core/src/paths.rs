@@ -100,6 +100,17 @@ pub fn panel_log_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(PANEL_LOG_FILE)
 }
 
+/// A new folder tab's state key: random, since tab ids restart at every launch.
+#[must_use]
+pub fn new_folder_tab_key() -> String {
+    format!("tab-{}", &crate::session_id::new()[..8])
+}
+
+#[must_use]
+pub fn tab_key_of(notes_file: &Path) -> Option<&str> {
+    notes_file.parent()?.file_name()?.to_str()
+}
+
 fn repo_key(repo: &Path) -> String {
     let name = repo.file_name().unwrap_or_default().to_string_lossy();
     let digest = Sha256::digest(repo.as_os_str().as_encoded_bytes());
@@ -648,6 +659,15 @@ mod tests {
         assert_eq!(one, paths.state_dir().join("drafts/0000000000000001"));
         assert_ne!(one, other);
         assert_eq!(one.parent(), other.parent());
+    }
+
+    #[test]
+    fn a_folder_tab_key_is_fresh_each_time_and_reads_back_from_its_notes_file() {
+        let (a, b) = (new_folder_tab_key(), new_folder_tab_key());
+        assert_ne!(a, b);
+        assert!(a.starts_with("tab-") && a.len() == 12, "{a}");
+        let notes = paths().notes_file(Path::new("/work/web"), &a);
+        assert_eq!(tab_key_of(&notes), Some(a.as_str()));
     }
 
     #[test]

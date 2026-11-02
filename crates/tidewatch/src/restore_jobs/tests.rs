@@ -65,6 +65,7 @@ fn agent_tab(worktree: &Worktree, level: Level) -> SavedTab {
         meeseeks: None,
         folder_repo: None,
         chosen_name: None,
+        state_key: None,
     })
 }
 
@@ -314,6 +315,8 @@ fn reopen_spec(f: &Fixture, level: Level, listener: Option<Arc<Listener>>) -> Re
         path_var: OsString::from("/usr/bin:/bin"),
         listener,
         trust: None,
+        state_key: None,
+        resumed_as: tidewatch_core::context_refresh::Why::Resumed,
     }
 }
 
@@ -325,9 +328,13 @@ fn reopened(spec: ReopenSpec) -> Reopened {
 }
 
 fn post(base: &str, token: &str, body: &str) -> String {
+    post_to(base, "/mcp", token, body)
+}
+
+fn post_to(base: &str, path: &str, token: &str, body: &str) -> String {
     let mut stream = TcpStream::connect(base.trim_start_matches("http://")).unwrap();
     let request = format!(
-        "POST /mcp HTTP/1.1\r\nHost: tidewatch\r\nAuthorization: Bearer {token}\r\n\
+        "POST {path} HTTP/1.1\r\nHost: tidewatch\r\nAuthorization: Bearer {token}\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
@@ -373,6 +380,58 @@ fn a_resumed_tab_registers_with_the_listener_and_its_token_works() {
     assert!(post(&listener.base_url(), token, body).contains("200"));
     let message = inbox.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!((message.tab_id, message.generation), (9, 0));
+}
+
+fn token_of(f: &Fixture) -> String {
+    let mcp = f.paths.tab_state_dir(&f.repo, f.worktree.name()).join("mcp.json");
+    let text = std::fs::read_to_string(mcp).unwrap();
+    let (_, after) = text.split_once("Bearer ").unwrap();
+    after.split('"').next().unwrap().to_owned()
+}
+
+#[test]
+fn a_resumed_agent_is_told_why_on_its_first_session_start_and_a_fresh_one_is_not() {
+    use tidewatch_core::context_refresh::Why as Refresh;
+    let start = r#"{"hook_event_name":"SessionStart","source":"resume","session_id":"s"}"#;
+    let prompt = r#"{"hook_event_name":"UserPromptSubmit","session_id":"s","prompt":"hi"}"#;
+    let f = fixture();
+    let (listener, _inbox) = Listener::start(f.paths.clone(), Box::new(|| {})).unwrap();
+    let listener = Arc::new(listener);
+    let mut spec = reopen_spec(&f, Level::Edits, Some(Arc::clone(&listener)));
+    spec.resumed_as = Refresh::TakenOver { from: PathBuf::from("/old/place") };
+    assert!(reopened(spec).result.ok().and_then(|o| o.started).is_some());
+    let token = token_of(&f);
+    let answer = post_to(&listener.base_url(), "/hook/claude", &token, start);
+    assert!(answer.contains("moved into Tidewatch from /old/place"), "{answer}");
+
+    let mut fresh = reopen_spec(&f, Level::Edits, Some(Arc::clone(&listener)));
+    fresh.fresh = true;
+    assert!(reopened(fresh).result.ok().and_then(|o| o.started).is_some());
+    let answer = post_to(&listener.base_url(), "/hook/claude", &token_of(&f), prompt);
+    assert!(!answer.contains("Tidewatch resumed"), "{answer}");
+}
+
+#[test]
+fn a_folder_tab_comes_back_to_its_saved_state_folder_and_a_new_one_gets_its_own() {
+    let f = fixture();
+    let folder = f.home.join("notes");
+    std::fs::create_dir_all(&folder).unwrap();
+    let spec = |state_key: Option<&str>| {
+        let mut s = reopen_spec(&f, Level::Edits, None);
+        s.worktree = None;
+        s.dir = folder.clone();
+        s.repo = folder.clone();
+        s.state_key = state_key.map(str::to_owned);
+        s
+    };
+    let notes_of = |s| reopened(s).result.ok().and_then(|o| o.started).and_then(|s| s.notes_file);
+    assert_eq!(
+        notes_of(spec(Some("tab-1a2b3c4d"))),
+        Some(f.paths.notes_file(&folder, "tab-1a2b3c4d"))
+    );
+    let made = notes_of(spec(None)).expect("a notes file");
+    let key = tidewatch_core::paths::tab_key_of(&made).unwrap();
+    assert!(key.starts_with("tab-") && key != "tab-9", "not named after the tab id: {key}");
 }
 
 #[test]

@@ -16,13 +16,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tidewatch_core::context_refresh;
 use tidewatch_core::listener::Listener;
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::{RealDisk, TabAction, TabPlan, WindowPlan};
 use tidewatch_core::resume_mode::Resume;
-use tidewatch_core::session::SavedTab;
+use tidewatch_core::session::{SavedAgentTab, SavedTab};
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::Leftover;
 
@@ -358,6 +359,13 @@ impl Host {
                         path_var: env.catalog.path.clone(),
                         listener: env.listener.clone(),
                         trust: env.trust.clone(),
+                        state_key: Some(state_key_of(saved, id)),
+                        resumed_as: tab
+                            .taken_over_from
+                            .clone()
+                            .map_or(context_refresh::Why::Resumed, |from| {
+                                context_refresh::Why::TakenOver { from }
+                            }),
                     },
                 );
                 id
@@ -371,6 +379,12 @@ impl Host {
             }
         }
     }
+}
+
+/// The saved state folder, or for a tab saved before folders were kept, the one its id names now,
+/// which is what earlier versions read; the next save keeps it.
+fn state_key_of(saved: &SavedAgentTab, id: u64) -> String {
+    saved.state_key.clone().unwrap_or_else(|| format!("tab-{id}"))
 }
 
 #[derive(Clone, Copy)]

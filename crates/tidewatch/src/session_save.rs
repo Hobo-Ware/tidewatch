@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use tidewatch_core::agents::Level;
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::meeseeks_log::Poofed;
+use tidewatch_core::paths::tab_key_of;
 use tidewatch_core::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow};
 
 use crate::pane::{AgentTab, Body, Pane};
@@ -62,6 +63,7 @@ struct AgentRef<'a> {
     meeseeks: Option<&'a Meeseeks>,
     folder_repo: Option<&'a Path>,
     chosen_name: Option<&'a str>,
+    state_key: Option<&'a str>,
 }
 
 impl TabRef<'_> {
@@ -85,6 +87,7 @@ impl TabRef<'_> {
                 meeseeks: a.meeseeks.cloned().map(Box::new),
                 folder_repo: a.folder_repo.map(Path::to_path_buf),
                 chosen_name: a.chosen_name.map(str::to_owned),
+                state_key: a.state_key.map(str::to_owned),
             }),
         }
     }
@@ -114,6 +117,10 @@ fn agent_ref<'a>(
         meeseeks: agent.meeseeks.as_ref(),
         folder_repo: agent.folder_pick.as_deref(),
         chosen_name: agent.chosen_name.as_deref(),
+        state_key: branch
+            .is_none()
+            .then(|| agent.run.notes_file.as_deref().and_then(tab_key_of))
+            .flatten(),
     }))
 }
 
@@ -336,6 +343,7 @@ mod tests {
                     meeseeks: None,
                     folder_repo: None,
                     chosen_name: None,
+                    state_key: None,
                 }),
             ]
         );
@@ -356,6 +364,31 @@ mod tests {
             (tab.dir.as_path(), tab.folder_repo.as_deref()),
             (Path::new("/ws"), Some(Path::new("/ws/api")))
         );
+    }
+
+    #[test]
+    fn a_folder_tab_saves_its_state_folder_and_a_worktree_tab_does_not() {
+        let with_notes = |name: &str| {
+            let mut tab = agent(None);
+            tab.run.notes_file =
+                Some(PathBuf::from(format!("/state/web-1a2b3c/{name}/notes.json")));
+            tab
+        };
+        let mut tabs = tabs();
+        tabs.push("folder".into(), pane(Body::Shell(1), None, Some(with_notes("tab-5e6f7a8b"))));
+        tabs.push(
+            "brave-otter".into(),
+            pane(Body::Shell(2), Some(worktree("brave-otter")), Some(with_notes("brave-otter"))),
+        );
+        let keys: Vec<Option<String>> = saved_window(&view(false), &tabs)
+            .tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                SavedTab::Agent(agent) => Some(agent.state_key.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, [Some("tab-5e6f7a8b".to_owned()), None]);
     }
 
     #[test]

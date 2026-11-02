@@ -187,6 +187,7 @@ fn request(w: &World, target: Target, interrupt: bool) -> Request {
         start_from: StartFrom::DefaultBranch,
         name: None,
         spare_tab: None,
+        state_key: None,
     }
 }
 

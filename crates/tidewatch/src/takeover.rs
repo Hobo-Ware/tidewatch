@@ -653,6 +653,7 @@ pub(crate) fn window_plan(
         meeseeks: None,
         folder_repo: None,
         chosen_name: None,
+        state_key: None,
     });
     let action = TabAction::ResumeAgent {
         agent: agent.id.clone(),
@@ -665,7 +666,14 @@ pub(crate) fn window_plan(
         other: workspace.1,
         focus_mode: false,
         active: 0,
-        tabs: vec![TabPlan { saved, dir, worktree, action, park: None }],
+        tabs: vec![TabPlan {
+            saved,
+            dir,
+            worktree,
+            action,
+            park: None,
+            taken_over_from: Some(session.cwd.clone()),
+        }],
         skipped: Vec::new(),
     })
 }

@@ -21,8 +21,9 @@
 //!   permission prompt, a question or an explicit ask reads `NeedsYou`.
 //! - With no hook state, progress, bell, title activity and quiet time decide.
 //!
-//! Claude's `SessionStart` http hook never fired in `claude` 2.1.296 (interactive or `-p`), so the
-//! first Claude status comes from `UserPromptSubmit` or from the lower layers.
+//! Claude's `SessionStart` runs only command hooks (an http one never fired in 2.1.296 nor 2.1.316),
+//! so Claude posts it through `curl`; it carries no state, and the first Claude status still comes
+//! from `UserPromptSubmit` or from the lower layers.
 
 use std::path::PathBuf;
 

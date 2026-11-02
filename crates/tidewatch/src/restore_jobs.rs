@@ -8,10 +8,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tidewatch_core::agents::Agent;
+use tidewatch_core::context_refresh;
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
-use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::paths::{TidewatchPaths, new_folder_tab_key};
 use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::{
     PrepareInput, prepare, prepare_in_folder, prepare_resume, prepare_resume_in_folder,
@@ -145,6 +146,10 @@ pub(crate) struct ReopenSpec {
     pub(crate) listener: Option<Arc<Listener>>,
     /// Set after the user agreed to folder trust (D14): the worktree gets its entry again.
     pub(crate) trust: Option<Grant>,
+    /// The state folder a tab with no worktree reopens with; `None` makes a new one.
+    pub(crate) state_key: Option<String>,
+    /// What the resumed agent is told about why, on its first hook that can carry context.
+    pub(crate) resumed_as: context_refresh::Why,
 }
 
 pub(crate) struct Reopened {
@@ -160,10 +165,10 @@ pub(crate) fn reopen(jobs: &Jobs<Done>, ctx: &egui::Context, spec: ReopenSpec) {
 }
 
 pub(crate) fn run_reopen(spec: &ReopenSpec) -> Reopened {
-    let tab_key = spec
-        .worktree
-        .as_ref()
-        .map_or_else(|| format!("tab-{}", spec.tab), |worktree| worktree.name().to_owned());
+    let tab_key = match &spec.worktree {
+        Some(worktree) => worktree.name().to_owned(),
+        None => spec.state_key.clone().unwrap_or_else(new_folder_tab_key),
+    };
     let hooks = spec.listener.as_ref().map(|listener| {
         listener.register_tab(TabRegistration {
             tab_id: spec.tab,
@@ -174,6 +179,9 @@ pub(crate) fn run_reopen(spec: &ReopenSpec) -> Reopened {
             generation: 0,
         })
     });
+    if let Some(listener) = spec.listener.as_ref().filter(|_| !spec.fresh) {
+        listener.expect_resume(spec.tab, spec.resumed_as.clone());
+    }
     let outside_git = spec.worktree.is_none() && crate::repo::Repo::discover(&spec.dir).is_none();
     let in_folder = outside_git || spec.yolo_anywhere;
     let resume = if in_folder { prepare_resume_in_folder } else { prepare_resume };

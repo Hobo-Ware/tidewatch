@@ -107,6 +107,10 @@ pub struct SavedAgentTab {
     /// What the agent called its tab with `set_name`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen_name: Option<String>,
+    /// The state folder of a tab with no worktree (its notes, report and links), so a restart
+    /// finds them again. A worktree tab's state folder is named after the worktree instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_key: Option<String>,
 }
 
 impl SavedTab {
@@ -252,6 +256,7 @@ mod tests {
             meeseeks: None,
             folder_repo: None,
             chosen_name: None,
+            state_key: None,
         })
     }
 
@@ -384,6 +389,7 @@ mod tests {
                     meeseeks: None,
                     folder_repo: None,
                     chosen_name: None,
+                    state_key: None,
                 }),
             ],
             parked: Vec::new(),
