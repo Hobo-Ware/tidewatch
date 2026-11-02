@@ -150,6 +150,66 @@ fn a_review_brings_its_inline_comments_from_the_rest_api() {
 }
 
 #[test]
+fn a_codex_review_reaches_the_card_with_its_inline_comments_and_its_receipts_do_not() {
+    let footer = r"<details> <summary>About Codex in GitHub</summary>\nReviews are triggered when you open a pull request.\n</details>";
+    let suggestions = format!(
+        r"<!-- codex-review-receipt:v1 -->\n\n### Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n{footer}"
+    );
+    let nothing = format!(
+        r"<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues.\n\n{footer}"
+    );
+    let rest = r#"[{"id":201,"path":"src/stage.rs","line":54,"side":"RIGHT",
+        "user":{"login":"chatgpt-codex-connector[bot]"},"body":"Reset the counter between stages.",
+        "created_at":"2026-11-01T09:23:15Z","diff_hunk":"@@ -1 +1 @@\n+x","subject_type":"line"}]"#;
+    let cases: [(&str, &str, usize); 3] = [
+        (&suggestions, "", 1),
+        ("", &nothing, 0),
+        (
+            "",
+            "To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex).",
+            0,
+        ),
+    ];
+    for (review_body, comment_body, cards) in cases {
+        let reviews = if review_body.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"{{"id":"PRR_1","author":{{"login":"chatgpt-codex-connector"}},"authorAssociation":"NONE","state":"COMMENTED","body":"{review_body}","submittedAt":"2026-11-01T09:23:15Z"}}"#
+            )
+        };
+        let comments = if comment_body.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"{{"id":"IC_1","author":{{"login":"chatgpt-codex-connector"}},"authorAssociation":"NONE","body":"{comment_body}","url":"https://github.com/acme/web/pull/42#issuecomment-1","createdAt":"2026-11-01T09:24:00Z","viewerDidAuthor":false}}"#
+            )
+        };
+        let view = format!(
+            r#"{{"number":42,"title":"t","url":"https://github.com/acme/web/pull/42","state":"OPEN",
+            "mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"",
+            "headRefOid":"abc","baseRefName":"main","headRefName":"agent/x","author":{{"login":"me"}},
+            "statusCheckRollup":[],"createdAt":"2026-11-01T09:00:00Z",
+            "reviews":[{reviews}],"comments":[{comments}]}}"#
+        );
+        let gh = Gh::new(&[("'pr view'*", 0, &view), ("'api repos/'*", 0, rest)]);
+        let seen = Seen { opened: true, head: "abc".into(), ..Seen::default() };
+        let polled = poll(&gh.tools(), cwd().path(), 42, Some(&seen), 0).unwrap();
+        assert_eq!(polled.events.len(), cards, "{:?}", polled.events);
+        assert_eq!(polled.summary.comments, 0, "a receipt is no comment in the count");
+        let Some(event) = polled.events.first() else { continue };
+        let Body::Reviewed { author, body, comments, trusted } = &event.body else {
+            panic!("not a review card: {event:?}")
+        };
+        assert_eq!(author, "chatgpt-codex-connector");
+        assert!(trusted, "Codex is a trusted review bot");
+        assert!(!body.contains("About Codex") && !body.contains("<!--"), "{body}");
+        assert_eq!(comments.len(), 1);
+        assert_eq!((comments[0].path.as_str(), comments[0].line), ("src/stage.rs", Some(54)));
+    }
+}
+
+#[test]
 fn gh_failures_are_sorted_and_a_missing_gh_is_missing() {
     let gh = Gh::new(&[("'pr view'*", 1, "")]);
     assert!(matches!(poll(&gh.tools(), cwd().path(), 1, None, 0), Err(GhError::Failed(_))));

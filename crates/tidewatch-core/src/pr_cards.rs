@@ -207,7 +207,7 @@ impl Cards {
                         matches!(c.body, Body::ChangesRequested { .. } | Body::Approved { .. })
                     })
             }
-            Body::Commented { .. } | Body::PushFix { .. } => !ended,
+            Body::Reviewed { .. } | Body::Commented { .. } | Body::PushFix { .. } => !ended,
             Body::Conflict { .. } => {
                 !ended
                     && self.seen.as_ref().is_some_and(|seen| seen.conflicting)
@@ -260,6 +260,7 @@ mod tests {
                 Body::Conflict { .. } => "conflict",
                 Body::Merged { .. } => "merged",
                 Body::PushFix { .. } => "push-fix",
+                Body::Reviewed { .. } => "reviewed",
                 Body::Commented { .. } => "commented",
                 Body::Opened { .. } => "opened",
                 Body::Closed { .. } => "closed",

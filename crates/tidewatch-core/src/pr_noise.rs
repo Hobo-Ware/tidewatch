@@ -1,14 +1,17 @@
 //! Comments on a pull request that have nothing to act on, so they never become a card: a review bot's
 //! receipt ("I looked, nothing to say"), the status post Codex keeps up to date while it reviews, and
 //! the status posts of deploy, coverage and CI bots. A bot comment that carries a suggestion is not
-//! noise. Pure.
+//! noise, and neither is a Codex review whose note says its suggestions are inline. Pure.
 
 use crate::text::squash;
 
-/// The hidden markers of Codex's own posts that only report progress: the receipt of a review that
-/// found nothing, and the summary comment it edits as a review starts, runs and ends.
-const STATUS_MARKERS: [&str; 3] =
+/// The hidden markers of Codex's comments that only report progress: the receipt of a review, and
+/// the summary comment it edits as a review starts, runs and ends.
+const COMMENT_MARKERS: [&str; 3] =
     ["codex-review-receipt", "codex-pull-request-review-summary", "codex-review-state"];
+/// The same without the receipt: Codex marks a review that carries inline suggestions with it too.
+const REVIEW_MARKERS: [&str; 2] = ["codex-pull-request-review-summary", "codex-review-state"];
+const RECEIPT_MARKER: &str = "codex-review-receipt";
 const CODEX_FOOTER: &str = "About Codex in GitHub";
 const SUGGESTION_FENCE: &str = "```suggestion";
 
@@ -29,22 +32,47 @@ const STATUS_BOTS: [&str; 13] = [
     "vercel",
 ];
 
-/// What a Codex review that found nothing says once its footer is gone.
-const NOTHING_FOUND: [&str; 3] = ["find any major issues", "no major issues", "no suggestions"];
+/// What a Codex post with nothing to act on says once its footer is gone: a review that found
+/// nothing, or the notice to a reviewer without a Codex account.
+const NOTHING_FOUND: [&str; 4] = [
+    "find any major issues",
+    "no major issues",
+    "no suggestions",
+    "to use codex here create a codex account",
+];
 
 /// True when the comment by `author` with text `body` leaves nothing for an agent or the owner to do.
 #[must_use]
 pub fn is_noise(author: &str, body: &str) -> bool {
+    noise(author, body, &COMMENT_MARKERS)
+}
+
+/// True when a review's own note leaves nothing to do; its inline comments are not part of `body`.
+#[must_use]
+pub fn is_review_noise(author: &str, body: &str) -> bool {
+    noise(author, body, &REVIEW_MARKERS)
+}
+
+fn noise(author: &str, body: &str, markers: &[&str]) -> bool {
     if body.contains(SUGGESTION_FENCE) {
         return false;
     }
-    if STATUS_MARKERS.iter().any(|marker| body.contains(marker)) {
+    if markers.iter().any(|marker| body.contains(marker)) {
         return true;
     }
-    if author.to_ascii_lowercase().contains("codex") || body.contains(CODEX_FOOTER) {
+    if author.to_ascii_lowercase().contains("codex")
+        || body.contains(CODEX_FOOTER)
+        || body.contains(RECEIPT_MARKER)
+    {
         return only_codex_boilerplate(body);
     }
     is_status_bot(author)
+}
+
+/// The body as a reader needs it: no hidden HTML comments and no "About Codex in GitHub" footer.
+#[must_use]
+pub fn readable(body: &str) -> String {
+    without_footer(body).trim().to_owned()
 }
 
 fn is_status_bot(author: &str) -> bool {
@@ -162,6 +190,46 @@ mod tests {
         ] {
             assert!(!is_noise(author, body), "{author}: {body}");
         }
+    }
+
+    const LIVE_FOOTER: &str = "<details> <summary>\u{2139}\u{fe0f} About Codex in GitHub</summary>\n<br/>\n\nCodex has been enabled to automatically review pull requests in this repo. Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with \u{1f44d}.\n\n\n\n\nWhen you [sign up for Codex through ChatGPT](https://openai.com/codex), Codex can also answer questions or update the PR, like \"@codex address that feedback\".\n            \n</details>";
+
+    #[test]
+    fn codex_posts_as_github_sends_them_are_noise_only_when_nothing_is_to_be_done() {
+        let review_with_suggestions = format!(
+            "<!-- codex-review-receipt:v1 -->\n\n\n### \u{1f4a1} Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `0123456789`\n    \n\n{LIVE_FOOTER}"
+        );
+        let nothing_found = format!(
+            "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Nice work.\n\n**Reviewed commit:** `0123456789`\n\n{LIVE_FOOTER}"
+        );
+        let no_account = "To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex/cloud/settings/connectors).";
+        let inline = "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Reset the counter between stages**\n\nThe second stage starts at the limit.";
+        let cases = [
+            ("chatgpt-codex-connector", review_with_suggestions.as_str(), false, true),
+            ("chatgpt-codex-connector[bot]", review_with_suggestions.as_str(), false, true),
+            ("chatgpt-codex-connector", inline, false, false),
+            ("chatgpt-codex-connector", nothing_found.as_str(), true, true),
+            ("chatgpt-codex-connector[bot]", nothing_found.as_str(), true, true),
+            ("chatgpt-codex-connector", no_account, true, true),
+            ("someone-else", "<!-- codex-review-receipt:v1 -->", true, true),
+            ("chatgpt-codex-connector", SUMMARY, true, true),
+        ];
+        for (author, body, as_review, as_comment) in cases {
+            assert_eq!(is_review_noise(author, body), as_review, "review {author}: {body}");
+            assert_eq!(is_noise(author, body), as_comment, "comment {author}: {body}");
+        }
+    }
+
+    #[test]
+    fn a_readable_body_has_no_hidden_markers_and_no_footer() {
+        let body = format!(
+            "<!-- codex-review-receipt:v1 -->\n\n### Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n{LIVE_FOOTER}"
+        );
+        assert_eq!(
+            readable(&body),
+            "### Codex Review\n\nHere are some automated review suggestions for this pull request."
+        );
+        assert_eq!(readable("  plain words  "), "plain words");
     }
 
     #[test]

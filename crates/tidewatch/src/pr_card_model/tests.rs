@@ -153,6 +153,31 @@ fn changes_requested_list_each_comment_and_offer_the_notes() {
 }
 
 #[test]
+fn a_review_without_a_verdict_lists_its_comments_and_asks_like_a_review() {
+    let body = Body::Reviewed {
+        trusted: true,
+        author: "chatgpt-codex-connector".into(),
+        body: "Here are some automated review suggestions.".into(),
+        comments: vec![ReviewComment {
+            path: "src/stage.rs".into(),
+            line: Some(54),
+            text: "Reset the counter.".into(),
+        }],
+    };
+    let model = card(vec![body], PrMode::Ask);
+    assert_eq!(model.title, "Reviewed");
+    assert_eq!(model.sub, "by @chatgpt-codex-connector \u{b7} 1 comment");
+    assert_eq!(
+        model.body,
+        [
+            Block::Markdown("Here are some automated review suggestions.".into()),
+            Block::Comments(vec![("stage.rs:54".into(), "Reset the counter.".into())])
+        ]
+    );
+    assert_eq!(labels(&model), [("Ask Builder to address", true), ("Open as notes", false)]);
+}
+
+#[test]
 fn the_words_of_a_review_are_markdown_and_the_words_of_the_card_are_plain() {
     let body = Body::ChangesRequested {
         trusted: true,

@@ -40,7 +40,8 @@ pub fn poll(
     for event in &mut events {
         match &mut event.body {
             Body::ChecksFailed { jobs, .. } => read_failures(tools, dir, jobs),
-            Body::ChangesRequested { author, comments, .. } => {
+            Body::ChangesRequested { author, comments, .. }
+            | Body::Reviewed { author, comments, .. } => {
                 let (author, at) = (author.clone(), event.at_ms);
                 *comments = inline_comments(tools, dir, &snapshot, &author, at);
             }
