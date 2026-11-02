@@ -142,11 +142,9 @@ pub(crate) struct Facts<'a> {
 pub(crate) enum Handling {
     /// The owner: every card keeps its buttons.
     Owner,
-    /// Auto answers the cards on a tab the owner drives: the cards are a record, but the commits
-    /// it leaves are still the owner's to push.
+    /// Auto answers the cards on a tab the owner drives: the cards are a record.
     Answers,
-    /// The agent, through Auto, on a tab that runs on its own: the cards are a record and it
-    /// pushes its own commits.
+    /// The agent, through Auto, on a tab that runs on its own: the cards are a record.
     Agent,
     /// The agent, but the loop guard stopped the sends: the cards stay a record and one line says so.
     Paused,
@@ -365,17 +363,6 @@ impl Watch {
         let changed = self.cards.after_merge != commits;
         self.cards.after_merge = commits;
         changed
-    }
-
-    /// The commit card whose commits a tab that runs on its own should push now.
-    pub(crate) fn push_fix_due(&self, default: GithubPrefs) -> Option<u64> {
-        if !matches!(self.handling(default), Handling::Agent | Handling::Paused) || self.closed() {
-            return None;
-        }
-        let cards = self.cards.cards();
-        (0..cards.len())
-            .find(|&at| matches!(cards[at].body, Body::PushFix { .. }) && self.cards.is_current(at))
-            .map(|at| cards[at].id)
     }
 
     /// The tab's lookup found a pull request: follow it, and look again soon when its head moved
@@ -765,40 +752,19 @@ impl Watch {
 /// What a tab's delivery may do now (see `push_of`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Push {
-    /// Auto may ask the agent to push and open the pull request: the tab's mode is Auto with the
-    /// push tick on, its saved cards are read and its pull request is not closed.
-    pub(crate) auto: bool,
-    /// The delivery stays shut: Auto would push but the saved cards are not read yet, or the pull
-    /// request merged and its head is not known, so the branch could still be the merged one.
+    /// The delivery stays shut: the pull request merged and its head is not known, so the branch
+    /// could still be the merged one.
     pub(crate) shut: bool,
     /// The head the tab's pull request merged with: what comes after it goes to a new branch.
     pub(crate) merged_head: Option<String>,
 }
 
-/// The tab's delivery rules from its watch. A Meeseeks hands off through its own check and never
-/// pushes through Auto. A tab that waits for the owner is never held back by `shut`.
-pub(crate) fn push_of(
-    watch: Option<&Watch>,
-    default: GithubPrefs,
-    autonomous: bool,
-    meeseeks: bool,
-) -> Push {
-    let policy = match watch {
-        Some(watch) => watch.policy(default),
-        None if autonomous => GithubPrefs { mode: PrMode::Auto, ..default },
-        None => default,
-    };
-    let wants = !meeseeks && policy.pushes_on_its_own();
-    let ready = watch.is_some_and(Watch::ready);
+/// The tab's delivery rules from its watch. Tidewatch never asks for the pull request by itself:
+/// the delivery card waits for the owner's click.
+pub(crate) fn push_of(watch: Option<&Watch>) -> Push {
     let merged = watch.is_some_and(Watch::merged);
     let merged_head = watch.filter(|watch| watch.merged()).and_then(Watch::pr_head);
-    let head_unknown = merged && merged_head.is_none();
-    let closed = watch.is_some_and(Watch::closed);
-    Push {
-        auto: wants && ready && !closed && !head_unknown,
-        shut: (wants && !ready) || head_unknown,
-        merged_head,
-    }
+    Push { shut: merged && merged_head.is_none(), merged_head }
 }
 
 fn fall_back_text() -> String {

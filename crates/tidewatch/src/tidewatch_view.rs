@@ -57,9 +57,7 @@ pub(crate) fn tag_colors(reason: Reason) -> (Color32, Color32) {
         Reason::MeeseeksCheck => (brand::VIOLET_TEXT, VIOLET_LINE),
         Reason::DueToday | Reason::StuckJob | Reason::BackgroundJob => (brand::AMBER, AMBER_LINE),
         Reason::CommentGuard => (brand::ORANGE_SOFT, ORANGE_LINE),
-        Reason::AutoPush | Reason::AutoPick | Reason::PullRequest | Reason::Avatar => {
-            (brand::TEAL_TEXT, TEAL_LINE)
-        }
+        Reason::AutoPick | Reason::PullRequest | Reason::Avatar => (brand::TEAL_TEXT, TEAL_LINE),
         Reason::Workflow => (brand::SOFT, brand::FIELD_LINE),
         Reason::Resume => (brand::MUTED, brand::ITEM_LINE),
     }
@@ -666,13 +664,6 @@ mod tests {
                 ],
             ),
             (
-                record_of(Reason::AutoPush, because::AUTO_PUSH, false),
-                vec![
-                    ("Change workflow", Click::ChangeWorkflow),
-                    ("Turn off pushing", Click::TurnOff(Switch::Auto(AutoJob::Push))),
-                ],
-            ),
-            (
                 record_of(Reason::PullRequest, because::ASK_PR_CLICK, true),
                 vec![("Change workflow", Click::ChangeWorkflow)],
             ),
@@ -782,7 +773,7 @@ mod tests {
     fn the_buttons_stay_inside_the_column_from_a_narrow_width_up() {
         use tidewatch_core::sent::because;
         for width in [360.0, 480.0, 900.0] {
-            let record = record_of(Reason::AutoPush, because::AUTO_PUSH, false);
+            let record = record_of(Reason::AutoFix, because::AUTO_CONFLICTS, false);
             let row = Row::new(record, width);
             for (text, rect) in &row.texts {
                 assert!(

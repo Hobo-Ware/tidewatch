@@ -131,32 +131,12 @@ pub(crate) fn tone_ink(tone: Tone) -> Color32 {
 pub(crate) struct JobRow {
     pub(crate) which: AutoJob,
     pub(crate) label: &'static str,
-    pub(crate) caption: Option<&'static str>,
 }
 
-pub(crate) const JOBS: [JobRow; 4] = [
-    JobRow {
-        which: AutoJob::FailedChecks,
-        label: "Fix failed checks, with the failing log lines",
-        caption: None,
-    },
-    JobRow {
-        which: AutoJob::Reviews,
-        label: "Answer review comments and requested changes",
-        caption: None,
-    },
-    JobRow {
-        which: AutoJob::Conflicts,
-        label: "Fix merge conflicts with the base branch",
-        caption: None,
-    },
-    JobRow {
-        which: AutoJob::Push,
-        label: "Ask the agent to open the pull request",
-        caption: Some(
-            "When the agent is done and has commits. The agent pushes and opens a draft, writing its own title and body.",
-        ),
-    },
+pub(crate) const JOBS: [JobRow; 3] = [
+    JobRow { which: AutoJob::FailedChecks, label: "Fix failed checks, with the failing log lines" },
+    JobRow { which: AutoJob::Reviews, label: "Answer review comments and requested changes" },
+    JobRow { which: AutoJob::Conflicts, label: "Fix merge conflicts with the base branch" },
 ];
 
 const MODES: [(PrMode, &str); 3] =
@@ -305,7 +285,7 @@ fn popover(chip: &Response, number: u64, policy: GithubPrefs) -> Option<GithubPr
             );
             for job in JOBS {
                 let on = policy.allows(job.which);
-                if tick(ui, job.label, job.caption, on) {
+                if tick_row(ui, job.label, on) {
                     changed = Some(policy.with(job.which, !on));
                 }
             }
@@ -320,24 +300,6 @@ fn popover(chip: &Response, number: u64, policy: GithubPrefs) -> Option<GithubPr
         },
     );
     changed
-}
-
-fn tick(ui: &mut Ui, label: &str, caption: Option<&str>, on: bool) -> bool {
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
-        let clicked = tick_row(ui, label, on);
-        if let Some(text) = caption {
-            egui::Frame::new().inner_margin(egui::Margin { left: 26, ..egui::Margin::ZERO }).show(
-                ui,
-                |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(egui::RichText::new(text).size(TEXT_SECONDARY).color(brand::MUTED));
-                },
-            );
-        }
-        clicked
-    })
-    .inner
 }
 
 fn tick_row(ui: &mut Ui, label: &str, on: bool) -> bool {

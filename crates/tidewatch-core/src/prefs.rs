@@ -293,7 +293,6 @@ pub enum PrMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)] // one switch per job Auto may do, each its own settings.toml key
 pub struct GithubPrefs {
     #[serde(default)]
     pub mode: PrMode,
@@ -303,8 +302,6 @@ pub struct GithubPrefs {
     pub reviews: bool,
     #[serde(default = "on")]
     pub conflicts: bool,
-    #[serde(default)]
-    pub push: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,7 +309,6 @@ pub enum AutoJob {
     FailedChecks,
     Reviews,
     Conflicts,
-    Push,
 }
 
 impl GithubPrefs {
@@ -322,7 +318,6 @@ impl GithubPrefs {
             AutoJob::FailedChecks => self.failed_checks,
             AutoJob::Reviews => self.reviews,
             AutoJob::Conflicts => self.conflicts,
-            AutoJob::Push => self.push,
         }
     }
 
@@ -332,19 +327,13 @@ impl GithubPrefs {
             AutoJob::FailedChecks => Self { failed_checks: on, ..self },
             AutoJob::Reviews => Self { reviews: on, ..self },
             AutoJob::Conflicts => Self { conflicts: on, ..self },
-            AutoJob::Push => Self { push: on, ..self },
         }
-    }
-
-    #[must_use]
-    pub fn pushes_on_its_own(self) -> bool {
-        self.mode == PrMode::Auto && self.push
     }
 }
 
 impl Default for GithubPrefs {
     fn default() -> Self {
-        Self { mode: PrMode::Ask, failed_checks: true, reviews: true, conflicts: true, push: false }
+        Self { mode: PrMode::Ask, failed_checks: true, reviews: true, conflicts: true }
     }
 }
 
@@ -832,25 +821,17 @@ mod tests {
         let github = Prefs::default().github;
         assert_eq!(
             github,
-            GithubPrefs {
-                mode: PrMode::Ask,
-                failed_checks: true,
-                reviews: true,
-                conflicts: true,
-                push: false
-            }
+            GithubPrefs { mode: PrMode::Ask, failed_checks: true, reviews: true, conflicts: true }
         );
     }
 
     #[test]
-    fn auto_does_not_push_unless_the_switch_is_on() {
-        assert!(!Prefs::default().github.push);
+    fn a_file_with_the_old_push_tick_still_loads_and_the_tick_is_gone() {
         let (_home, paths) = paths();
         std::fs::create_dir_all(paths.config_dir()).unwrap();
-        std::fs::write(paths.prefs_file(), "[github]\nmode = \"auto\"\n").unwrap();
-        assert!(!Prefs::load(&paths).github.push);
         std::fs::write(paths.prefs_file(), "[github]\nmode = \"auto\"\npush = true\n").unwrap();
-        assert!(Prefs::load(&paths).github.push);
+        let github = Prefs::load(&paths).github;
+        assert_eq!(github, GithubPrefs { mode: PrMode::Auto, ..GithubPrefs::default() });
     }
 
     #[test]
@@ -883,13 +864,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 Prefs::load(&paths).github,
-                GithubPrefs {
-                    mode: want,
-                    failed_checks: true,
-                    reviews: false,
-                    conflicts: true,
-                    push: false
-                },
+                GithubPrefs { mode: want, failed_checks: true, reviews: false, conflicts: true },
                 "{text}"
             );
         }

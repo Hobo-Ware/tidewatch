@@ -19,11 +19,8 @@ pub mod because {
     pub const AUTO_CHECKS: &str = "Auto fixes failed checks on this PR";
     pub const AUTO_REVIEWS: &str = "Auto answers reviews on this PR";
     pub const AUTO_CONFLICTS: &str = "Auto fixes conflicts on this PR";
-    pub const AUTO_PUSH: &str = "Auto may ask the agent to open the pull request on this tab";
     pub const AUTO_PICK: &str = "nobody answered its question in 5 minutes";
     pub const ASK_PR_CLICK: &str = "you asked the agent to open the pull request";
-    pub const ASK_PUSH_OWN: &str =
-        "this tab runs on its own and has commits the pull request does not have";
     pub const ASK_PUSH_CLICK: &str = "you asked the agent to push its new commits";
     pub const LEDGER_STOP: &str = "the progress report was not updated this turn";
     pub const LEDGER_FINAL: &str = "the progress report still said working at the end of the turn";
@@ -42,14 +39,12 @@ pub mod because {
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 22] = [
+    pub const ALL: [&str; 20] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
-        AUTO_PUSH,
         AUTO_PICK,
         ASK_PR_CLICK,
-        ASK_PUSH_OWN,
         ASK_PUSH_CLICK,
         LEDGER_STOP,
         LEDGER_FINAL,
@@ -71,8 +66,8 @@ pub mod because {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
+    #[serde(alias = "auto_push")]
     AutoFix,
-    AutoPush,
     AutoPick,
     PullRequest,
     MeeseeksCheck,
@@ -91,7 +86,7 @@ impl Reason {
     #[must_use]
     pub fn tag(self) -> &'static str {
         match self {
-            Self::AutoFix | Self::AutoPush => "auto",
+            Self::AutoFix => "auto",
             Self::AutoPick => "auto pick",
             Self::PullRequest => "pull request",
             Self::MeeseeksCheck => "Meeseeks check",
@@ -119,7 +114,6 @@ impl Reason {
             Self::Resume => Some("Tidewatch resumed the agent"),
             Self::StuckJob => Some("Tidewatch asked the agent about a stuck job"),
             Self::AutoFix
-            | Self::AutoPush
             | Self::AutoPick
             | Self::PullRequest
             | Self::MeeseeksCheck
@@ -132,7 +126,7 @@ impl Reason {
     /// The message was filled in from the repo's workflow profile, so the profile is what changes it.
     #[must_use]
     pub fn uses_workflow(self) -> bool {
-        matches!(self, Self::AutoFix | Self::AutoPush | Self::PullRequest)
+        matches!(self, Self::AutoFix | Self::PullRequest)
     }
 
     /// Told through a hook, so the transcript holds no user turn for it.
@@ -158,7 +152,6 @@ impl Switch {
             Self::Auto(AutoJob::FailedChecks) => "Turn off for failed checks",
             Self::Auto(AutoJob::Reviews) => "Turn off for reviews",
             Self::Auto(AutoJob::Conflicts) => "Turn off for conflicts",
-            Self::Auto(AutoJob::Push) => "Turn off pushing",
             Self::DoneCheck => "Turn off the done check",
             Self::Comments => "Turn off the comment guard for this tab",
         }
@@ -260,7 +253,6 @@ impl Record {
             ]
             .into_iter()
             .find_map(|(clause, job)| (self.because == clause).then_some(Switch::Auto(job))),
-            Reason::AutoPush => Some(Switch::Auto(AutoJob::Push)),
             Reason::DoneCheck => Some(Switch::DoneCheck),
             Reason::CommentGuard => Some(Switch::Comments),
             _ => None,
@@ -348,7 +340,6 @@ mod tests {
             (Reason::DoneCheck, true, false),
             (Reason::Avatar, true, false),
             (Reason::AutoFix, false, false),
-            (Reason::AutoPush, false, false),
             (Reason::AutoPick, false, false),
             (Reason::PullRequest, false, false),
             (Reason::MeeseeksCheck, false, false),
@@ -467,7 +458,6 @@ mod tests {
     fn what_the_reader_shows_never_uses_the_internal_word_ledger() {
         let tags = [
             Reason::AutoFix,
-            Reason::AutoPush,
             Reason::AutoPick,
             Reason::PullRequest,
             Reason::MeeseeksCheck,
@@ -514,7 +504,6 @@ mod tests {
             (Reason::AutoFix, because::AUTO_REVIEWS, Some(Switch::Auto(AutoJob::Reviews))),
             (Reason::AutoFix, because::AUTO_CONFLICTS, Some(Switch::Auto(AutoJob::Conflicts))),
             (Reason::AutoFix, "Auto is on for this PR", None),
-            (Reason::AutoPush, because::AUTO_PUSH, Some(Switch::Auto(AutoJob::Push))),
             (Reason::DoneCheck, because::DONE_CHECK_OWN, Some(Switch::DoneCheck)),
             (Reason::CommentGuard, because::COMMENTS, Some(Switch::Comments)),
             (Reason::LedgerGuard, because::LEDGER_STOP, None),
@@ -523,6 +512,14 @@ mod tests {
         for (reason, why, want) in table {
             assert_eq!(Record::new(reason, why, "x", None).switch(), want, "{reason:?} {why}");
         }
+    }
+
+    #[test]
+    fn a_record_of_the_removed_auto_push_still_loads_as_auto_with_no_switch() {
+        let old = r#"{"id":1,"at_ms":2,"reason":"auto_push","because":"Auto may ask the agent to open the pull request on this tab","text":"x"}"#;
+        let record: Record = serde_json::from_str(old).unwrap();
+        assert_eq!((record.reason, record.reason.tag()), (Reason::AutoFix, "auto"));
+        assert_eq!(record.switch(), None);
     }
 
     #[test]
@@ -540,7 +537,6 @@ mod tests {
             (Switch::Auto(AutoJob::FailedChecks), "Turn off for failed checks"),
             (Switch::Auto(AutoJob::Reviews), "Turn off for reviews"),
             (Switch::Auto(AutoJob::Conflicts), "Turn off for conflicts"),
-            (Switch::Auto(AutoJob::Push), "Turn off pushing"),
             (Switch::DoneCheck, "Turn off the done check"),
             (Switch::Comments, "Turn off the comment guard for this tab"),
         ];
@@ -553,7 +549,6 @@ mod tests {
     fn the_workflow_words_sit_on_the_pull_request_messages_only() {
         let table = [
             (Reason::AutoFix, true),
-            (Reason::AutoPush, true),
             (Reason::AutoPick, false),
             (Reason::PullRequest, true),
             (Reason::MeeseeksCheck, false),

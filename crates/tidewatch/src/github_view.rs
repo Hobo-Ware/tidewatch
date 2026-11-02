@@ -9,7 +9,7 @@ use crate::settings_ui::{self, Control, section, switch_row};
 const MODES: [(PrMode, &str); 3] =
     [(PrMode::Ask, "Ask me"), (PrMode::Auto, "Auto"), (PrMode::Off, "Off")];
 
-const SWITCHES: [(AutoJob, &str, &str); 4] = [
+const SWITCHES: [(AutoJob, &str, &str); 3] = [
     (AutoJob::FailedChecks, "Fix failed checks", "With the failing log lines."),
     (
         AutoJob::Reviews,
@@ -17,11 +17,6 @@ const SWITCHES: [(AutoJob, &str, &str); 4] = [
         "Comments on the pull request and in a review.",
     ),
     (AutoJob::Conflicts, "Fix merge conflicts", "With the base branch."),
-    (
-        AutoJob::Push,
-        "Ask the agent to open the pull request",
-        "When the agent is done and has commits. The agent pushes and opens a draft with a title and body it writes. Commits made after a merge go to a new branch and a new pull request.",
-    ),
 ];
 
 /// The card. Returns the whole table when something changed.

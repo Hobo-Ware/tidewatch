@@ -179,7 +179,7 @@ fn the_strip_draws_for_a_merged_closed_and_long_titled_pull_request() {
 }
 
 #[test]
-fn the_popover_says_auto_and_lists_the_four_jobs_with_push_last_and_explained() {
+fn the_popover_says_auto_and_lists_the_three_fix_jobs_and_never_a_push() {
     let labels: Vec<&str> = MODES.iter().map(|(_, label)| *label).collect();
     assert_eq!(labels, ["Ask me", "Auto", "Off"]);
     assert!(mode_help(PrMode::Auto).starts_with("Auto does the ticked jobs by itself"));
@@ -190,11 +190,8 @@ fn the_popover_says_auto_and_lists_the_four_jobs_with_push_last_and_explained() 
             "Fix failed checks, with the failing log lines",
             "Answer review comments and requested changes",
             "Fix merge conflicts with the base branch",
-            "Ask the agent to open the pull request",
         ]
     );
-    assert_eq!(JOBS.iter().filter(|job| job.caption.is_some()).count(), 1);
-    assert_eq!(JOBS[3].which, AutoJob::Push);
 }
 
 #[test]

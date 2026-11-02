@@ -375,9 +375,7 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             let mut m =
                 model(Icon::Merged, Ink::Teal, format!("Merged into {base}"), format!("#{number}"));
             m.body = merged_body(context.cleanup, context.busy);
-            if !context.policy.pushes_on_its_own() {
-                m.note = merged_branch::note(context.cards.after_merge);
-            }
+            m.note = merged_branch::note(context.cards.after_merge);
             if current {
                 m.buttons = merged_buttons(context.cleanup, context.busy, card.id);
             }
@@ -401,15 +399,13 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
                 format!("{} committed {commits} new {noun}", context.profile),
                 "Not on the pull request yet".to_owned(),
             );
-            if current && matches!(context.handling, Handling::Owner | Handling::Answers) {
+            if current {
                 m.buttons.push(Button {
                     label: format!("Ask {} to push", context.profile),
                     primary: true,
                     action: CardAction::PushFix(card.id),
                 });
                 m.buttons.push(quiet("Not now", CardAction::NotNow(card.id)));
-            } else if current {
-                m.note = Some("Tidewatch asks the agent to push this on its own".to_owned());
             }
             Look::Card(m)
         }

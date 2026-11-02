@@ -16,8 +16,7 @@ use tidewatch_core::transcript::Source;
 use crate::delivery_card::Delivery;
 use crate::dev_flow::{DevFlow, Fact, Ready, SendMode, Step};
 use crate::diff_pane::PaneAction;
-use crate::done_check_glue::{self, TestsGate};
-use crate::flow::{Asker, Flow, Gate, Out, TabFacts};
+use crate::flow::{Flow, Gate, Out, TabFacts};
 use crate::flow_jobs::Which;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notes_strip::StripAction;
@@ -47,7 +46,6 @@ pub(crate) fn facts<T>(
     tabs: &Tabs<Pane<T>>,
     views: &HashMap<u64, TabView>,
     pr: &pr_glue::Host,
-    done: &done_check_glue::Host,
     active: u64,
     now: f64,
 ) -> Vec<TabFacts> {
@@ -62,11 +60,7 @@ pub(crate) fn facts<T>(
             let agent_id = agent.run.agent_id.clone();
             let deliverable = *agent.run.status() == AgentStatus::Done;
             let pending = views.get(&tab.id).map_or(0, |view| view.notes.pending(&agent_id).len());
-            let meeseeks = agent.meeseeks.is_some();
-            let push = pr.push(tab.id, agent.autonomous(), meeseeks);
-            let workflow = pr.workflow(tab.id);
-            let tests =
-                if meeseeks { TestsGate::Clear } else { done.tests_gate(tab.id, workflow.checks) };
+            let push = pr.push(tab.id);
             Some(TabFacts {
                 id: tab.id,
                 active: tab.id == active,
@@ -77,12 +71,10 @@ pub(crate) fn facts<T>(
                 branch: worktree.branch.clone(),
                 notes_file: agent.run.notes_file.clone(),
                 pending,
-                auto_push: push.auto,
                 merged_head: push.merged_head,
                 gate: delivery_gate(push.shut, agent.meeseeks.as_ref()),
                 profile: agent.profile_name.clone(),
-                workflow,
-                tests,
+                workflow: pr.workflow(tab.id),
             })
         })
         .collect()
@@ -200,19 +192,14 @@ pub(crate) fn ask_agents(
 ) -> Vec<String> {
     let mut toasts = Vec::new();
     for ask in flow.asking() {
-        let send = match ask.by {
-            Asker::Auto => Send::auto(&ask.text, Reason::AutoPush, because::AUTO_PUSH),
-            Asker::Owner => Send::by_hand(&ask.text, Reason::PullRequest, because::ASK_PR_CLICK),
-        };
+        let send = Send::by_hand(&ask.text, Reason::PullRequest, because::ASK_PR_CLICK);
         match offer_to_agent(tabs, flow, ask.tab, &send, ctx, now) {
             Offer::Go => flow.asked(ask.tab, now),
             Offer::Wait => ctx.request_repaint_after(Duration::from_secs_f64(0.5)),
             Offer::Paused | Offer::Saving => flow.not_asked(ask.tab),
             Offer::Refuse(reason) => {
                 flow.not_asked(ask.tab);
-                if ask.by == Asker::Owner {
-                    toasts.push(reason.to_owned());
-                }
+                toasts.push(reason.to_owned());
             }
         }
     }
@@ -455,27 +442,11 @@ mod tests {
             branch: "agent/brave-otter".into(),
             notes_file: None,
             pending: 0,
-            auto_push: true,
             merged_head: None,
             gate: Gate::Open,
             profile: "Builder".into(),
             workflow: Workflow::default(),
-            tests: crate::done_check_glue::TestsGate::Clear,
         }
-    }
-
-    #[test]
-    fn an_agent_that_cannot_be_asked_is_not_asked_and_its_button_stays() {
-        let (mut tabs, id) = lone_agent_tab();
-        let mut flow = Flow::new(Tools::default());
-        flow.ready_for_ask(&done_facts(id), 2);
-        flow.ask_on_its_own(&done_facts(id));
-        let toasts = ask_agents(&mut tabs, &mut flow, &Context::default(), 1.0);
-        assert_eq!(toasts, Vec::<String>::new(), "Auto says nothing");
-        let (push, delivery) = flow.push_state(id).unwrap();
-        assert_eq!(push, crate::flow::AutoPush::Spent);
-        assert_eq!(delivery, Delivery::Ready { commits: 2 });
-        assert_eq!(flow.outbox.waiting_tabs(), Vec::<u64>::new());
     }
 
     #[test]
@@ -486,7 +457,10 @@ mod tests {
         flow.ask_to_open(id);
         let toasts = ask_agents(&mut tabs, &mut flow, &Context::default(), 1.0);
         assert_eq!(toasts, [NO_AGENT.to_owned()]);
-        assert_eq!(flow.push_state(id).unwrap().1, Delivery::Ready { commits: 2 });
+        let (ask, delivery) = flow.push_state(id).unwrap();
+        assert_eq!(ask, crate::flow::PrAsk::Spent);
+        assert_eq!(delivery, Delivery::Ready { commits: 2 });
+        assert_eq!(flow.outbox.waiting_tabs(), Vec::<u64>::new());
         assert_eq!(flow.asking(), []);
     }
 

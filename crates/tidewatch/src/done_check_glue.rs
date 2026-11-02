@@ -202,17 +202,6 @@ fn now_secs() -> i64 {
     i64::try_from(tidewatch_core::clock::now_secs()).unwrap_or(0)
 }
 
-/// Where Tidewatch's own test run stands for a tab whose Auto push waits for it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum TestsGate {
-    /// Nothing to wait for: the switch is off, the repo has no runnable command, or the run passed.
-    #[default]
-    Clear,
-    /// The switch is on and the run has not come back.
-    Pending,
-    Failed,
-}
-
 #[derive(Debug, Default)]
 struct Tab {
     trigger: Trigger,
@@ -349,31 +338,6 @@ impl Host {
             let report = Box::new(done_check::run(&input));
             Done { tab, job, report, at: now_secs() }
         });
-    }
-
-    /// Whether Auto may ask this tab's agent to push: its work passes Tidewatch's own test run.
-    pub(crate) fn tests_gate(&self, tab: u64, checks: Checks) -> TestsGate {
-        if !self.enabled || self.is_fake() || !checks.tests {
-            return TestsGate::Clear;
-        }
-        let Some(state) = self.tabs.get(&tab).filter(|state| state.eligible) else {
-            return TestsGate::Clear;
-        };
-        match &state.entry {
-            None | Some(Entry::Checking { .. }) => TestsGate::Pending,
-            Some(Entry::Report { report, .. }) => {
-                let failed = report
-                    .lines
-                    .iter()
-                    .any(|line| line.kind == Kind::Tests && line.status == Status::Fail);
-                if failed { TestsGate::Failed } else { TestsGate::Clear }
-            }
-        }
-    }
-
-    /// Whether the tab has neither a check running nor a report.
-    pub(crate) fn is_idle(&self, tab: u64) -> bool {
-        self.tabs.get(&tab).is_some_and(|state| state.entry.is_none())
     }
 
     pub(crate) fn look(&self, tab: u64) -> Option<Look> {
@@ -619,53 +583,6 @@ mod tests {
         answer(&mut host, 3, report_saying("late"), 300);
         assert_eq!(host.take_finished(), [(1, false), (1, true)]);
         assert_eq!(host.take_finished(), Vec::<(u64, bool)>::new());
-    }
-
-    fn gate_host(tab_state: Option<Entry>, eligible: bool) -> Host {
-        let mut host = Host::new(true, Fake::Off);
-        let tab = host.tabs.entry(1).or_default();
-        tab.eligible = eligible;
-        tab.entry = tab_state;
-        host
-    }
-
-    fn tests_report(status: Status) -> Entry {
-        let line = Line { kind: Kind::Tests, status, detail: "Ran x".into() };
-        Entry::Report {
-            report: Box::new(Report { lines: vec![line], ..Report::default() }),
-            checked: STAMP,
-        }
-    }
-
-    #[test]
-    fn auto_push_waits_for_the_test_run_and_stops_on_a_failed_one() {
-        let on = Checks::default();
-        let off = Checks { tests: false, ..on };
-        let cases = [
-            (None, true, on, TestsGate::Pending),
-            (Some(Entry::Checking { job: 1, before: None }), true, on, TestsGate::Pending),
-            (Some(tests_report(Status::Pass)), true, on, TestsGate::Clear),
-            (Some(tests_report(Status::Skipped)), true, on, TestsGate::Clear),
-            (Some(tests_report(Status::Unknown)), true, on, TestsGate::Clear),
-            (Some(tests_report(Status::Fail)), true, on, TestsGate::Failed),
-            (None, true, off, TestsGate::Clear),
-            (None, false, on, TestsGate::Clear),
-        ];
-        for (entry, eligible, checks, want) in cases {
-            let label = format!("{entry:?} {eligible} {checks:?}");
-            assert_eq!(gate_host(entry, eligible).tests_gate(1, checks), want, "{label}");
-        }
-        assert_eq!(Host::new(true, Fake::Off).tests_gate(9, on), TestsGate::Clear, "unknown tab");
-        assert_eq!(Host::new(false, Fake::Off).tests_gate(1, on), TestsGate::Clear, "check off");
-        assert_eq!(Host::new(true, Fake::Done).tests_gate(1, on), TestsGate::Clear, "dev fake");
-    }
-
-    #[test]
-    fn a_tab_with_no_check_and_no_report_is_idle_and_one_with_either_is_not() {
-        assert!(gate_host(None, true).is_idle(1));
-        assert!(!gate_host(Some(Entry::Checking { job: 1, before: None }), true).is_idle(1));
-        assert!(!gate_host(Some(tests_report(Status::Pass)), true).is_idle(1));
-        assert!(!Host::new(true, Fake::Off).is_idle(1), "no such tab");
     }
 
     #[test]

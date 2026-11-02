@@ -107,14 +107,9 @@ impl Host {
         self.dev.popover
     }
 
-    /// The commit card a tab that runs on its own should push now, if any.
-    pub(crate) fn push_fix_due(&self, tab: u64) -> Option<u64> {
-        self.tabs.get(&tab)?.push_fix_due(self.default)
-    }
-
     /// What the tab's delivery may do now (see `pr_watch::push_of`).
-    pub(crate) fn push(&self, tab: u64, autonomous: bool, meeseeks: bool) -> Push {
-        push_of(self.tabs.get(&tab), self.default, autonomous, meeseeks)
+    pub(crate) fn push(&self, tab: u64) -> Push {
+        push_of(self.tabs.get(&tab))
     }
 
     /// The workflow profile the tab's messages use, as the last frame saw it.

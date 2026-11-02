@@ -15,7 +15,6 @@ use tidewatch_core::tools::Tools;
 use tidewatch_core::workflow_profile::Workflow;
 
 use crate::delivery_card::Delivery;
-use crate::done_check_glue::TestsGate;
 use crate::flow_jobs::{self, Done, Which};
 use crate::jobs::Jobs;
 use crate::note_send::{AutoDelivery, EnterQueue, ReviewGate, gate, gate_reason, review_gate};
@@ -38,15 +37,11 @@ pub(crate) struct TabFacts {
     pub(crate) branch: String,
     pub(crate) notes_file: Option<PathBuf>,
     pub(crate) pending: usize,
-    /// Auto may ask the agent to push the branch and open a draft pull request for this tab.
-    pub(crate) auto_push: bool,
     /// The head the branch's pull request merged with: what came after it goes to a new branch.
     pub(crate) merged_head: Option<String>,
     pub(crate) gate: Gate,
     pub(crate) profile: String,
     pub(crate) workflow: Workflow,
-    /// What the done check's own test run says: Auto asks for the push only once it passed.
-    pub(crate) tests: TestsGate,
 }
 
 /// Whether the tab may deliver: shut once its pull request merged (`merged_branch`), so no card
@@ -85,28 +80,19 @@ pub(crate) enum Want {
     ReviewExpired,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Asker {
-    Auto,
-    Owner,
-}
-
-/// Where the ask for a tab's finished work is. One go per stretch of work, so an ask that was
-/// refused waits for the owner instead of being retried in a loop.
+/// Where the owner's ask for a tab's finished work is. Tidewatch never asks by itself: only the
+/// card's button starts one, once per click.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum AutoPush {
+pub(crate) enum PrAsk {
     #[default]
     Idle,
-    Asking {
-        by: Asker,
-    },
+    Asking,
     Spent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Ask {
     pub(crate) tab: u64,
-    pub(crate) by: Asker,
     pub(crate) text: String,
 }
 
@@ -122,7 +108,7 @@ pub(crate) struct TabFlow {
     target: Option<TabFacts>,
     was_done: bool,
     probed_after: Option<String>,
-    pub(crate) push: AutoPush,
+    pub(crate) push: PrAsk,
     was_active: bool,
     lines_loading: bool,
 }
@@ -133,9 +119,9 @@ impl TabFlow {
         self.target.as_ref().is_some_and(|facts| facts.merged_head.is_some())
     }
 
-    fn begin_ask(&mut self, by: Asker) {
+    fn begin_ask(&mut self) {
         if self.delivery.ask_started() {
-            self.push = AutoPush::Asking { by };
+            self.push = PrAsk::Asking;
         }
     }
 
@@ -173,7 +159,7 @@ pub(crate) fn decide(flow: &mut TabFlow, facts: &TabFacts, now: f64) -> Vec<Want
     if !done {
         flow.delivery.leave_done();
         if !flow.delivery.is_asked() {
-            flow.push = AutoPush::Idle;
+            flow.push = PrAsk::Idle;
         }
     }
     flow.was_done = done;
@@ -292,40 +278,13 @@ impl Flow {
             for want in wants {
                 self.start(fact, want, ctx, unix);
             }
-            self.ask_on_its_own(fact);
         }
         next
     }
 
-    pub(crate) fn ask_on_its_own(&mut self, facts: &TabFacts) {
-        let Some(state) = self.tabs.get_mut(&facts.id) else { return };
-        if facts.auto_push && facts.tests == TestsGate::Clear && state.push == AutoPush::Idle {
-            state.begin_ask(Asker::Auto);
-        }
-    }
-
-    /// The tabs Auto would ask to push now if Tidewatch's own test run had come back: they need
-    /// the done check to run.
-    pub(crate) fn waiting_for_tests(&self, facts: &[TabFacts]) -> Vec<u64> {
-        facts
-            .iter()
-            .filter(|fact| fact.auto_push && fact.tests == TestsGate::Pending)
-            .filter(|fact| {
-                self.tabs.get(&fact.id).is_some_and(|state| {
-                    state.push == AutoPush::Idle
-                        && matches!(
-                            state.delivery,
-                            Delivery::Ready { .. } | Delivery::Missing { .. }
-                        )
-                })
-            })
-            .map(|fact| fact.id)
-            .collect()
-    }
-
     pub(crate) fn ask_to_open(&mut self, tab: u64) {
         if let Some(state) = self.tabs.get_mut(&tab) {
-            state.begin_ask(Asker::Owner);
+            state.begin_ask();
         }
     }
 
@@ -333,7 +292,7 @@ impl Flow {
         if let Some(state) = self.tabs.get_mut(&tab)
             && state.delivery.ask_started()
         {
-            state.push = AutoPush::Spent;
+            state.push = PrAsk::Spent;
             state.delivery.asked(now);
         }
     }
@@ -342,7 +301,7 @@ impl Flow {
         if let Some(state) = self.tabs.get_mut(&tab)
             && let Delivery::Ready { commits } = state.delivery
         {
-            state.push = AutoPush::Spent;
+            state.push = PrAsk::Spent;
             state.delivery = Delivery::Missing { commits };
         }
     }
@@ -350,10 +309,8 @@ impl Flow {
     pub(crate) fn asking(&self) -> Vec<Ask> {
         self.tabs
             .iter()
-            .filter_map(|(tab, state)| {
-                let AutoPush::Asking { by } = state.push else { return None };
-                Some(Ask { tab: *tab, by, text: state.ask_text()? })
-            })
+            .filter(|(_, state)| state.push == PrAsk::Asking)
+            .filter_map(|(tab, state)| Some(Ask { tab: *tab, text: state.ask_text()? }))
             .collect()
     }
 
@@ -370,22 +327,22 @@ impl Flow {
     }
 
     #[cfg(test)]
-    pub(crate) fn push_state(&self, tab: u64) -> Option<(AutoPush, Delivery)> {
+    pub(crate) fn push_state(&self, tab: u64) -> Option<(PrAsk, Delivery)> {
         self.tabs.get(&tab).map(|state| (state.push, state.delivery.clone()))
     }
 
     /// The ask went through the send gate and was typed: the agent has the whole job from here.
     pub(crate) fn asked(&mut self, tab: u64, now: f64) {
         if let Some(state) = self.tabs.get_mut(&tab) {
-            state.push = AutoPush::Spent;
+            state.push = PrAsk::Spent;
             state.delivery.asked(now);
         }
     }
 
-    /// The agent cannot take the ask: the card offers it again and Auto does not retry.
+    /// The agent cannot take the ask: the card offers it again for the owner.
     pub(crate) fn not_asked(&mut self, tab: u64) {
         if let Some(state) = self.tabs.get_mut(&tab) {
-            state.push = AutoPush::Spent;
+            state.push = PrAsk::Spent;
             state.delivery.not_asked();
         }
     }
@@ -753,12 +710,10 @@ mod tests {
             branch: "agent/brave-otter".into(),
             notes_file: Some(PathBuf::from("/s/notes.json")),
             pending: 0,
-            auto_push: false,
             merged_head: None,
             gate: Gate::Open,
             profile: "Builder".into(),
             workflow: Workflow::default(),
-            tests: TestsGate::Clear,
         }
     }
 
@@ -1119,17 +1074,16 @@ mod tests {
         flow
     }
 
-    fn push_on() -> TabFacts {
-        TabFacts { auto_push: true, ..facts(AgentStatus::Done) }
+    fn done() -> TabFacts {
+        facts(AgentStatus::Done)
     }
 
     #[test]
-    fn auto_asks_the_agent_to_open_the_pull_request_and_pushes_and_opens_nothing_itself() {
-        let mut flow = ready_tab(&push_on(), 2);
-        flow.ask_on_its_own(&push_on());
+    fn the_owners_click_asks_the_agent_to_open_the_pull_request_and_tidewatch_opens_nothing() {
+        let mut flow = ready_tab(&done(), 2);
+        flow.ask_to_open(7);
         let asks = flow.asking();
         assert_eq!(asks.len(), 1);
-        assert_eq!(asks[0].by, Asker::Auto);
         for needle in [
             "2 commits on `agent/brave-otter` are not in `main`",
             "open a draft pull request into `main`",
@@ -1141,7 +1095,7 @@ mod tests {
             flow.tabs[&7].delivery,
             Delivery::Asked { commits: 2, wait: crate::delivery_card::Wait::Queued }
         );
-        flow.ask_on_its_own(&push_on());
+        flow.ask_to_open(7);
         assert_eq!(flow.asking().len(), 1, "asked for once");
 
         flow.asked(7, 5.0);
@@ -1150,58 +1104,56 @@ mod tests {
             Delivery::Asked { commits: 2, wait: crate::delivery_card::Wait::Typed { at: 5.0 } }
         );
         assert_eq!(flow.asking(), []);
-        flow.ask_on_its_own(&push_on());
-        assert_eq!(flow.asking(), [], "asked once per stretch of work");
     }
 
     #[test]
     fn the_ask_names_the_base_branch_the_repo_really_has() {
-        let mut flow = ready_tab(&push_on(), 1);
+        let mut flow = ready_tab(&done(), 1);
         flow.tabs.get_mut(&7).unwrap().base = Some("develop".into());
-        flow.ask_on_its_own(&push_on());
+        flow.ask_to_open(7);
         let text = &flow.asking()[0].text;
         assert!(text.contains("into `develop`"), "{text}");
-        assert!(text.starts_with("1 commit on `agent/brave-otter` is not in `develop`"), "{text}");
+        assert!(text.contains("1 commit on `agent/brave-otter` is not in `develop`"), "{text}");
     }
 
     #[test]
     fn the_ask_opens_the_kind_of_pull_request_the_profile_says() {
         use tidewatch_core::workflow_profile::PullRequests;
         let ready = Workflow { pull_requests: PullRequests::Ready, ..Workflow::default() };
-        let facts = TabFacts { workflow: ready, ..push_on() };
+        let facts = TabFacts { workflow: ready, ..done() };
         let mut flow = ready_tab(&facts, 1);
-        flow.ask_on_its_own(&facts);
+        flow.ask_to_open(7);
         let text = &flow.asking()[0].text;
         assert!(text.contains("open a pull request (not a draft) into `main`"), "{text}");
     }
 
     #[test]
     fn a_commit_set_after_a_merge_is_asked_for_on_a_new_branch() {
-        let merged = TabFacts { merged_head: Some("e3dba69".into()), ..push_on() };
+        let merged = TabFacts { merged_head: Some("e3dba69".into()), ..done() };
         let mut flow = ready_tab(&merged, 1);
-        flow.ask_on_its_own(&merged);
+        flow.ask_to_open(7);
         let text = &flow.asking()[0].text;
         assert!(text.contains("merged at `e3dba69`"), "{text}");
         assert!(text.contains("push it as `agent/brave-otter-2`"), "{text}");
     }
 
     #[test]
-    fn with_the_push_tick_off_nothing_is_asked_and_the_card_waits_for_the_owner() {
-        let off = TabFacts { auto_push: false, ..facts(AgentStatus::Done) };
-        let mut flow = ready_tab(&off, 2);
-        flow.ask_on_its_own(&off);
+    fn a_ready_card_asks_nothing_until_the_owner_clicks() {
+        let mut flow = ready_tab(&done(), 2);
+        assert_eq!(flow.asking(), []);
+        let state = flow.tabs.get_mut(&7).unwrap();
+        state.was_done = true;
+        decide(state, &done(), 1.0);
         assert_eq!(flow.asking(), []);
         assert_eq!(flow.tabs[&7].delivery, Delivery::Ready { commits: 2 });
-        assert_eq!(flow.tabs[&7].push, AutoPush::Idle);
+        assert_eq!(flow.tabs[&7].push, PrAsk::Idle);
     }
 
     #[test]
     fn the_owners_click_asks_from_a_ready_card_and_again_from_a_missing_one() {
-        let off = TabFacts { auto_push: false, ..facts(AgentStatus::Done) };
-        let mut flow = ready_tab(&off, 2);
+        let mut flow = ready_tab(&done(), 2);
         flow.ask_to_open(7);
-        let asks = flow.asking();
-        assert_eq!((asks.len(), asks[0].by), (1, Asker::Owner));
+        assert_eq!(flow.asking().len(), 1);
         flow.asked(7, 1.0);
         flow.ask_to_open(7);
         assert_eq!(flow.asking(), [], "nothing to ask again while it is being asked");
@@ -1214,11 +1166,10 @@ mod tests {
     }
 
     #[test]
-    fn an_agent_that_cannot_take_the_ask_leaves_the_button_for_the_owner_and_auto_does_not_retry() {
-        let mut flow = ready_tab(&push_on(), 2);
-        flow.ask_on_its_own(&push_on());
+    fn an_agent_that_cannot_take_the_ask_leaves_the_button_for_the_owner_and_nothing_retries() {
+        let mut flow = ready_tab(&done(), 2);
+        flow.ask_to_open(7);
         flow.not_asked(7);
-        flow.ask_on_its_own(&push_on());
         assert_eq!(flow.asking(), []);
         assert_eq!(flow.tabs[&7].delivery, Delivery::Ready { commits: 2 });
         flow.ask_to_open(7);
@@ -1229,27 +1180,27 @@ mod tests {
     fn a_new_stretch_of_work_may_ask_again_but_an_ask_under_way_is_not_cut_off() {
         let mut flow = TabFlow::default();
         let working = facts(AgentStatus::Working);
-        flow.push = AutoPush::Spent;
+        flow.push = PrAsk::Spent;
         decide(&mut flow, &working, 1.0);
-        assert_eq!(flow.push, AutoPush::Idle);
-        flow.push = AutoPush::Asking { by: Asker::Auto };
+        assert_eq!(flow.push, PrAsk::Idle);
+        flow.push = PrAsk::Asking;
         decide(&mut flow, &working, 2.0);
-        assert_eq!(flow.push, AutoPush::Idle, "an agent that went back to work is not asked");
+        assert_eq!(flow.push, PrAsk::Idle, "an agent that went back to work is not asked");
         flow.delivery = Delivery::Asked { commits: 1, wait: crate::delivery_card::Wait::Working };
-        flow.push = AutoPush::Spent;
+        flow.push = PrAsk::Spent;
         decide(&mut flow, &working, 3.0);
-        assert_eq!(flow.push, AutoPush::Spent, "the ask under way keeps its mark");
+        assert_eq!(flow.push, PrAsk::Spent, "the ask under way keeps its mark");
     }
 
     fn asked_flow() -> Flow {
-        let mut flow = ready_tab(&push_on(), 2);
-        flow.ask_on_its_own(&push_on());
+        let mut flow = ready_tab(&done(), 2);
+        flow.ask_to_open(7);
         flow.asked(7, 10.0);
         flow
     }
 
     fn tick(flow: &mut Flow, status: AgentStatus, now: f64) -> Vec<Want> {
-        let facts = TabFacts { auto_push: true, ..facts(status) };
+        let facts = facts(status);
         let state = flow.tabs.get_mut(&7).unwrap();
         state.target = Some(facts.clone());
         decide(state, &facts, now)
@@ -1280,10 +1231,9 @@ mod tests {
         answer(&mut flow, Ok(None), 170.5);
         assert_eq!(flow.tabs[&7].delivery, Delivery::Missing { commits: 2 });
         assert_eq!(tick(&mut flow, AgentStatus::Done, 400.0), [], "no third lookup");
-        assert_eq!(flow.asking(), [], "Auto never asks again by itself");
+        assert_eq!(flow.asking(), [], "nothing asks again by itself");
         flow.ask_to_open(7);
         assert_eq!(flow.asking().len(), 1);
-        assert_eq!(flow.asking()[0].by, Asker::Owner);
     }
 
     #[test]
@@ -1325,19 +1275,19 @@ mod tests {
     fn the_wake_up_is_when_the_next_lookup_is_due() {
         let mut flow = asked_flow();
         let ctx = egui::Context::default();
-        let wake = flow.tick(&[push_on()], &ctx, 11.0, 0);
+        let wake = flow.tick(&[done()], &ctx, 11.0, 0);
         assert_eq!(wake, Some(10.0 + crate::delivery_card::TYPED_GRACE_SECS));
     }
 
     #[test]
     fn the_dev_switches_show_the_asked_and_missing_cards_without_an_agent() {
-        let mut flow = ready_tab(&push_on(), 3);
+        let mut flow = ready_tab(&done(), 3);
         flow.show_asked(7, 1.0);
         assert_eq!(
             flow.tabs[&7].delivery.card(false, "Builder").map(|card| card.text),
             Some("Asked Builder to open the pull request".to_owned())
         );
-        let mut missing = ready_tab(&push_on(), 3);
+        let mut missing = ready_tab(&done(), 3);
         missing.show_missing(7);
         let card = missing.tabs[&7].delivery.card(false, "Builder").unwrap();
         assert_eq!(
@@ -1345,43 +1295,5 @@ mod tests {
             ("No pull request yet", Some("Ask again"))
         );
         assert_eq!(missing.asking(), [], "forcing a card sends nothing");
-    }
-
-    fn waiting(tests: TestsGate) -> TabFacts {
-        TabFacts { tests, ..push_on() }
-    }
-
-    #[test]
-    fn auto_push_holds_back_until_the_tests_come_back_clear() {
-        for (tests, asked) in
-            [(TestsGate::Pending, 0), (TestsGate::Failed, 0), (TestsGate::Clear, 1)]
-        {
-            let facts = waiting(tests);
-            let mut flow = ready_tab(&facts, 2);
-            flow.ask_on_its_own(&facts);
-            assert_eq!(flow.asking().len(), asked, "{tests:?}");
-        }
-    }
-
-    #[test]
-    fn only_a_ready_tab_whose_push_waits_on_the_tests_needs_a_run() {
-        let pending = waiting(TestsGate::Pending);
-        let flow = ready_tab(&pending, 2);
-        assert_eq!(flow.waiting_for_tests(std::slice::from_ref(&pending)), [7]);
-        let cases = [
-            TabFacts { tests: TestsGate::Clear, ..pending.clone() },
-            TabFacts { tests: TestsGate::Failed, ..pending.clone() },
-            TabFacts { auto_push: false, ..pending.clone() },
-            TabFacts { id: 99, ..pending.clone() },
-        ];
-        for facts in cases {
-            assert_eq!(
-                flow.waiting_for_tests(std::slice::from_ref(&facts)),
-                Vec::<u64>::new(),
-                "{facts:?}"
-            );
-        }
-        let nothing_to_push = Flow::new(Tools::default());
-        assert_eq!(nothing_to_push.waiting_for_tests(&[pending]), Vec::<u64>::new());
     }
 }
