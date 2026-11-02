@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tidewatch_core::context_refresh::Why;
 use tidewatch_core::elsewhere::Cli;
 use tidewatch_core::elsewhere::{Scope, Session};
 use tidewatch_core::elsewhere_scan::{
@@ -178,6 +179,8 @@ pub(crate) struct Request {
     /// A tab id kept for the agent when the pinned main tab is changed: the agent opens in a new
     /// tab and the main tab keeps its shell.
     pub(crate) spare_tab: Option<u64>,
+    /// The state folder of the tab's agent when it runs outside a worktree, kept by the new agent.
+    pub(crate) state_key: Option<String>,
 }
 
 pub(crate) fn retarget(jobs: &Jobs<Done>, ctx: &egui::Context, request: Request) {
@@ -338,6 +341,12 @@ fn attempt(system: &dyn System, env: &ScanEnv, request: &Request) -> Option<Done
                 path_var: request.path_var.clone(),
                 listener: request.listener.clone(),
                 trust: request.trust.clone(),
+                state_key: request.state_key.clone(),
+                resumed_as: if subject.cli.is_some() {
+                    Why::Resumed
+                } else {
+                    Why::TakenOver { from: cwd.clone() }
+                },
             });
             if let (Some(made), Ok(done)) = (&settled.made, &mut opened.result) {
                 done.base_note.clone_from(&made.base_note);

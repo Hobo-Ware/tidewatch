@@ -11,7 +11,7 @@ use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
 use tidewatch_core::meeseeks_check;
-use tidewatch_core::paths::TidewatchPaths;
+use tidewatch_core::paths::{TidewatchPaths, new_folder_tab_key};
 use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::session_id;
 use tidewatch_core::setup_recipe::{self, Recipe};
@@ -77,9 +77,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         }
         return Ok(Opened { worktree, dir, started: None, base_note });
     };
-    let tab_key = worktree
-        .as_ref()
-        .map_or_else(|| format!("tab-{}", spec.tab), |made| made.name().to_owned());
+    let tab_key = worktree.as_ref().map_or_else(new_folder_tab_key, |made| made.name().to_owned());
     let hooks = spec.listener.as_ref().map(|listener| {
         listener.register_tab(TabRegistration {
             tab_id: spec.tab,

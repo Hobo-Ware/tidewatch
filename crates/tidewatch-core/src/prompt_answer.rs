@@ -46,16 +46,23 @@ pub fn ledger_context(ledger: &Ledger) -> Option<String> {
     ))
 }
 
-/// The hook's JSON answer carrying every line as one `additionalContext`, `None` for no lines.
+/// The `UserPromptSubmit` answer carrying every line as one `additionalContext`, `None` for no lines.
 #[must_use]
 pub fn answer(contexts: &[&str]) -> Option<String> {
+    answer_to("UserPromptSubmit", contexts)
+}
+
+/// The answer to the hook `event` (`UserPromptSubmit` or `SessionStart`, the two whose
+/// `additionalContext` Claude reads), `None` for no lines.
+#[must_use]
+pub fn answer_to(event: &str, contexts: &[&str]) -> Option<String> {
     if contexts.is_empty() {
         return None;
     }
     Some(
         serde_json::json!({
             "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
+                "hookEventName": event,
                 "additionalContext": contexts.join("\n"),
             }
         })
@@ -89,6 +96,14 @@ mod tests {
     fn two_lines_are_joined_and_neither_is_dropped() {
         let both = context_of(&answer(&["one", "two"]).unwrap());
         assert_eq!(both, "one\ntwo");
+    }
+
+    #[test]
+    fn a_session_start_answer_names_its_own_event() {
+        let answer: serde_json::Value =
+            serde_json::from_str(&answer_to("SessionStart", &["here"]).unwrap()).unwrap();
+        assert_eq!(answer["hookSpecificOutput"]["hookEventName"], "SessionStart");
+        assert_eq!(answer["hookSpecificOutput"]["additionalContext"], "here");
     }
 
     fn ledger(status: &str, checklist: &str, not_verified: &str) -> Ledger {

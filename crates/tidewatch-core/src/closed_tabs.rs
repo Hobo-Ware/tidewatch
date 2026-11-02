@@ -125,6 +125,7 @@ impl Closed {
             meeseeks: None,
             folder_repo: None,
             chosen_name: self.chosen_name.clone(),
+            state_key: None,
         });
         SavedWindow {
             dir: self.repo.clone(),

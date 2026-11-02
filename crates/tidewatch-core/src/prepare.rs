@@ -22,7 +22,8 @@ use crate::house_style;
 use crate::launch::{
     GEMINI_SYSTEM_DEFAULTS_ENV, GEMINI_SYSTEM_SETTINGS_ENV, GeminiSettingsFiles, HookListener,
     Launch, LaunchCtx, LaunchError, StatusLineCtx, claude_settings_json, copilot_plugin_files,
-    ensure_no_push_helper, gemini_system_settings, launch_command, mcp_config_json,
+    ensure_no_push_helper, gemini_system_settings, hook_header_line, launch_command,
+    mcp_config_json,
 };
 use crate::limited;
 use crate::own_hooks::{own_comment_guard, own_status_line};
@@ -38,6 +39,7 @@ use crate::{services, services_mcp, workflow_detect};
 
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const CLAUDE_SETTINGS_FILE: &str = "claude-settings.json";
+const HOOK_HEADERS_FILE: &str = "hook-headers";
 const GEMINI_SETTINGS_FILE: &str = "gemini-settings.json";
 const GEMINI_PROJECT_SETTINGS: &str = ".gemini/settings.json";
 #[cfg(target_os = "macos")]
@@ -235,6 +237,13 @@ fn prepare_with(
     let mut ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
     ctx.copilot_plugin_dir = copilot_plugin_dir;
     ctx.yolo_in_folder = yolo_in_folder;
+    if let Some(listener) = input.listener.as_ref().filter(|_| wiring == Wiring::Claude) {
+        let file = paths.tab_state_dir(input.repo, input.tab).join(HOOK_HEADERS_FILE);
+        ctx.hook_header_file = soft(
+            "hook header file, so this agent is not told what changed after a resume",
+            write_private_atomic(&file, &hook_header_line(listener)).map(|()| file),
+        );
+    }
     if wiring == Wiring::Claude
         && let Some(json) = claude_settings_json(&ctx)
     {
@@ -321,6 +330,7 @@ fn context(
         status_line: (input.agent.wiring == Wiring::Claude)
             .then(|| status_line_ctx(input))
             .flatten(),
+        hook_header_file: None,
         trailers_guard: input.worktree_tab
             && input.agent.wiring == Wiring::Claude
             && Prefs::load_file(&input.paths.prefs_file())
@@ -428,6 +438,8 @@ pub fn preview(input: &PrepareInput) -> Result<Launch, LaunchError> {
         settings: paths.tab_state_dir(input.repo, input.tab).join(GEMINI_SETTINGS_FILE),
         defaults: gemini_system_files(&|key| std::env::var_os(key)).1,
     });
+    ctx.hook_header_file = (wiring == Wiring::Claude && input.listener.is_some())
+        .then(|| paths.tab_state_dir(input.repo, input.tab).join(HOOK_HEADERS_FILE));
     ctx.settings_file = (wiring == Wiring::Claude && claude_settings_json(&ctx).is_some())
         .then(|| paths.tab_state_dir(input.repo, input.tab).join(CLAUDE_SETTINGS_FILE));
     let mut launch = launch_command(input.agent, input.profile, &ctx)?;
@@ -1332,6 +1344,18 @@ mod tests {
             let text = std::fs::read_to_string(&file).unwrap();
             assert!(text.contains(&format!("Bearer {token}")));
             let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+            let start =
+                serde_json::from_str::<serde_json::Value>(&text).unwrap()["hooks"]["SessionStart"]
+                    .to_string();
+            assert!(!start.contains(token), "{start}");
+            let headers = file.with_file_name(HOOK_HEADERS_FILE);
+            assert!(start.contains(&format!("-H @{}", headers.display())), "{start}");
+            assert_eq!(
+                std::fs::read_to_string(&headers).unwrap(),
+                format!("Authorization: Bearer {token}\n")
+            );
+            let mode = std::fs::metadata(&headers).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
     }

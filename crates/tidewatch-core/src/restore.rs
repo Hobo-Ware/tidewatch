@@ -190,6 +190,7 @@ pub struct TabPlan {
     pub worktree: Option<Worktree>,
     pub action: TabAction,
     pub park: Option<SavedPark>,
+    pub taken_over_from: Option<PathBuf>,
 }
 
 impl TabPlan {
@@ -358,6 +359,7 @@ fn plan_tab(
                 worktree,
                 action: TabAction::ShellInstead(Reason::WorktreeBroken),
                 park: None,
+                taken_over_from: None,
             });
         }
     } else if !disk.dir_exists(&dir) {
@@ -368,7 +370,7 @@ fn plan_tab(
         SavedTab::Agent(agent) => plan_agent(agent, worktree.is_some(), env, disk, claims),
         SavedTab::Poofed(_) => TabAction::Summary,
     };
-    Ok(TabPlan { saved: tab.clone(), dir, worktree, action, park: None })
+    Ok(TabPlan { saved: tab.clone(), dir, worktree, action, park: None, taken_over_from: None })
 }
 
 fn plan_agent(
@@ -671,6 +673,7 @@ mod tests {
             meeseeks: None,
             folder_repo: None,
             chosen_name: None,
+            state_key: None,
         })
     }
 
@@ -893,6 +896,7 @@ mod tests {
             meeseeks: None,
             folder_repo: None,
             chosen_name: None,
+            state_key: None,
         })
     }
 
@@ -1058,6 +1062,7 @@ mod tests {
                 meeseeks: None,
                 folder_repo: None,
                 chosen_name: None,
+                state_key: None,
             });
             let plan = plan_with(&window(vec![tab]), &everything_installed(), &disk_for_all());
             assert_eq!(plan.tabs[0].action, TabAction::ShellInstead(Reason::WorkflowRetired));
@@ -1083,6 +1088,7 @@ mod tests {
             meeseeks: None,
             folder_repo: None,
             chosen_name: None,
+            state_key: None,
         });
         let plan = plan_with(&window(vec![tab]), &everything_installed(), &disk_for_all());
         assert_eq!(plan.tabs.len(), 0);
@@ -1171,6 +1177,7 @@ mod tests {
                 meeseeks: None,
                 folder_repo: None,
                 chosen_name: None,
+                state_key: None,
             })
         };
         let other = SavedWindow {
@@ -1380,6 +1387,7 @@ mod tests {
             trailers_guard: false,
             own_comment_guard: None,
             status_line: None,
+            hook_header_file: None,
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),

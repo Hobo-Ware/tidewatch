@@ -31,6 +31,7 @@ use sha2::{Digest, Sha256};
 use crate::avatar_ask::{self, Face};
 use crate::avatar_store;
 use crate::background;
+use crate::context_refresh::{self, Why};
 use crate::events::{Repaint, RepoMessage, TabEvent, TabMessage};
 use crate::github_hooks::{self, Answer, GithubHooks, RepoHook};
 use crate::launch::HookListener;
@@ -116,6 +117,7 @@ struct Shared {
     avatar_ask_exempt: Mutex<HashSet<u64>>,
     service_lines: Mutex<HashMap<u64, String>>,
     service_told: Mutex<HashMap<u64, String>>,
+    resumes_due: Mutex<HashMap<u64, Why>>,
     github: GithubHooks,
 }
 
@@ -199,6 +201,12 @@ impl Listener {
         replace_service_lines(&self.shared, lines);
     }
 
+    /// Tells the tab's agent, once, why it was resumed: on Claude's `SessionStart` of the resume,
+    /// or on its next prompt when no `SessionStart` arrives first.
+    pub fn expect_resume(&self, tab_id: u64, why: Why) {
+        self.shared.resumes_due.lock().unwrap_or_else(PoisonError::into_inner).insert(tab_id, why);
+    }
+
     /// The port the listener serves.
     #[must_use]
     pub fn port(&self) -> u16 {
@@ -224,6 +232,7 @@ impl Listener {
             avatar_ask_exempt: Mutex::new(HashSet::new()),
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
+            resumes_due: Mutex::new(HashMap::new()),
             ask_timeout_ms: AtomicU64::new(
                 u64::try_from(ASK_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
             ),
@@ -324,8 +333,12 @@ impl Listener {
 
     /// Revokes every token of the tab. Later requests with them get 401.
     pub fn unregister_tab(&self, tab_id: u64) {
-        let mut tabs = self.shared.tabs.lock().unwrap_or_else(PoisonError::into_inner);
-        tabs.retain(|_, entry| entry.tab_id != tab_id);
+        self.shared
+            .tabs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, entry| entry.tab_id != tab_id);
+        self.shared.resumes_due.lock().unwrap_or_else(PoisonError::into_inner).remove(&tab_id);
     }
 }
 
@@ -521,10 +534,47 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     if let Some(event) = parse_hook(agent, &payload) {
         shared.emit(entry, TabEvent::Hook(event));
     }
-    Response::json(200, prompt_reply(shared, entry, agent, &payload).unwrap_or_else(|| "{}".into()))
+    let reply = session_start_reply(shared, entry, agent, &payload)
+        .or_else(|| prompt_reply(shared, entry, agent, &payload));
+    Response::json(200, reply.unwrap_or_else(|| "{}".into()))
 }
 
-/// The answer to a prompt: extra context that asks a tab with a goal and no icon, never asked, to
+/// The answer to Claude's `SessionStart` after a resume or a compaction: the refresh line, so the
+/// agent knows where it is and what changed before it reads the next message.
+fn session_start_reply(
+    shared: &Shared,
+    entry: &Entry,
+    agent: &str,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    let field = |name: &str| payload.get(name).and_then(serde_json::Value::as_str);
+    if field("hook_event_name") != Some("SessionStart") || agent != PROMPT_ANSWERING_AGENT {
+        return None;
+    }
+    let why = match field("source") {
+        Some("compact") => Why::Compacted,
+        Some("resume") => take_resume_due(shared, entry.tab_id).unwrap_or(Why::Resumed),
+        _ => return None,
+    };
+    let line = refresh_line(entry, payload, &why);
+    prompt_answer::answer_to("SessionStart", &[&line])
+}
+
+fn take_resume_due(shared: &Shared, tab_id: u64) -> Option<Why> {
+    shared.resumes_due.lock().unwrap_or_else(PoisonError::into_inner).remove(&tab_id)
+}
+
+/// The refresh line for the agent working in the payload's `cwd`, else in the tab's repo.
+fn refresh_line(entry: &Entry, payload: &serde_json::Value, why: &Why) -> String {
+    let folder = payload
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| entry.repo.clone(), PathBuf::from);
+    context_refresh::line(why, &context_refresh::gather(&entry.notes_file, &folder))
+}
+
+/// The answer to a prompt: the refresh line a resume left due when no `SessionStart` took it, extra
+/// context that asks a tab with a goal and no icon, never asked, to
 /// pick one, names what the tab's report still holds open, and gives the repo's services when they
 /// changed since the tab last heard. The avatar marker is written first, so a tab whose state
 /// folder cannot be written is not asked on every prompt.
@@ -542,7 +592,9 @@ fn prompt_reply(
     let ledger = progress_store::load(&progress_file_beside(&entry.notes_file));
     let message = payload.get("prompt").and_then(serde_json::Value::as_str).unwrap_or_default();
     let (avatar, name) = asks_due(shared, entry, message);
-    let mut contexts: Vec<String> = avatar.into_iter().collect();
+    let refresh =
+        take_resume_due(shared, entry.tab_id).map(|why| refresh_line(entry, payload, &why));
+    let mut contexts: Vec<String> = refresh.into_iter().chain(avatar).collect();
     if let Some(line) = ledger.as_ref().and_then(prompt_answer::ledger_context) {
         contexts.push(line);
     }
@@ -917,6 +969,7 @@ mod tests {
             avatar_ask_exempt: Mutex::new(HashSet::new()),
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
+            resumes_due: Mutex::new(HashMap::new()),
             github: GithubHooks::new().0,
             ask_timeout_ms: AtomicU64::new(1000),
         });
@@ -1259,6 +1312,82 @@ mod tests {
         assert_eq!(closed.body, "{}", "nothing open, nothing said");
         let told = sent::load(&sent_file_beside(&notes_of(&f, &token)));
         assert_eq!(told, [], "a line that rides every prompt leaves no record");
+    }
+
+    fn start(source: &str, cwd: &Path) -> String {
+        serde_json::json!({
+            "hook_event_name": "SessionStart",
+            "session_id": "s1",
+            "source": source,
+            "cwd": cwd,
+        })
+        .to_string()
+    }
+
+    fn prompt_in(cwd: &Path) -> String {
+        serde_json::json!({ "hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "hi", "cwd": cwd })
+            .to_string()
+    }
+
+    fn start_context(response: &Response) -> String {
+        assert_eq!(body_json(response)["hookSpecificOutput"]["hookEventName"], "SessionStart");
+        context_of(response)
+    }
+
+    #[test]
+    fn a_compaction_hands_the_agent_its_folder_and_report_back() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        save_ledger(
+            &f,
+            &token,
+            "# Goal\nShip\n\n## Status\nstate: working\nnow: Fixing the parser\n",
+        );
+        let cwd = f.paths.root();
+        let context =
+            start_context(&f.send("POST", "/hook/claude", Some(&token), &start("compact", cwd)));
+        assert!(context.starts_with("Your context was just compacted. You are in "), "{context}");
+        assert!(context.contains(&cwd.display().to_string()), "{context}");
+        assert!(context.contains("Your saved report says working"), "{context}");
+        for (path, body) in [
+            ("/hook/claude", start("startup", cwd)),
+            ("/hook/claude", start("clear", cwd)),
+            ("/hook/copilot", start("compact", cwd)),
+        ] {
+            assert_eq!(f.send("POST", path, Some(&token), &body).body, "{}", "{path} {body}");
+        }
+    }
+
+    #[test]
+    fn a_resume_is_explained_once_on_session_start_or_else_on_the_next_prompt() {
+        let f = fixture();
+        let token = f.register(1, "a");
+        already_asked(&f, &token);
+        name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
+        let cwd = f.paths.root();
+        let from = PathBuf::from("/elsewhere/web");
+        let due = |why: Why| {
+            f.shared.resumes_due.lock().unwrap().insert(1, why);
+        };
+        due(Why::TakenOver { from: from.clone() });
+        let context =
+            start_context(&f.send("POST", "/hook/claude", Some(&token), &start("resume", cwd)));
+        assert!(
+            context.starts_with("This conversation moved into Tidewatch from /elsewhere/web"),
+            "{context}"
+        );
+        assert_eq!(f.send("POST", "/hook/claude", Some(&token), &prompt_in(cwd)).body, "{}");
+        let again =
+            start_context(&f.send("POST", "/hook/claude", Some(&token), &start("resume", cwd)));
+        assert!(
+            again.starts_with("Tidewatch resumed this conversation"),
+            "a resume nobody announced: {again}"
+        );
+
+        due(Why::Resumed);
+        let context = context_of(&f.send("POST", "/hook/claude", Some(&token), &prompt_in(cwd)));
+        assert!(context.starts_with("Tidewatch resumed this conversation"), "{context}");
+        assert_eq!(f.send("POST", "/hook/claude", Some(&token), &prompt_in(cwd)).body, "{}");
     }
 
     #[test]

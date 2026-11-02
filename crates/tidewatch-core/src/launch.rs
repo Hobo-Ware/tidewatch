@@ -33,8 +33,7 @@ const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
 /// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
 /// more, so the CLI never gives up first. Codex defaults to 60 s and Gemini to 600 s.
 const MCP_TOOL_TIMEOUT_SECS: u64 = ASK_TIMEOUT.as_secs() + 5 * 60;
-const CLAUDE_HOOK_EVENTS: [&str; 9] = [
-    "SessionStart",
+const CLAUDE_HOOK_EVENTS: [&str; 8] = [
     "UserPromptSubmit",
     "Notification",
     "PermissionRequest",
@@ -140,6 +139,10 @@ pub struct LaunchCtx {
     pub own_comment_guard: Option<String>,
     /// Claude only: the status line command that saves the plan limits, see `statusline_run`.
     pub status_line: Option<StatusLineCtx>,
+    /// Claude only: the private file holding the listener's `Authorization` header, which the
+    /// `SessionStart` hook's `curl` reads with `-H @file`, so the token is never on a command line.
+    /// Without it the tab has no `SessionStart` hook.
+    pub hook_header_file: Option<PathBuf>,
     pub house_style: Option<PathBuf>,
     /// Directory holding `tidewatch.instructions.md` (Copilot), see `house_style::sync_copilot_instructions`.
     pub copilot_instructions_dir: Option<PathBuf>,
@@ -380,6 +383,23 @@ fn curl_hook_command(url: &str, bearer: &str) -> String {
     )
 }
 
+/// Like [`curl_hook_command`], but the listener's answer is the hook's output. Claude's
+/// `SessionStart` runs only command hooks: an http one never fired in claude 2.1.296 nor 2.1.316,
+/// while this one did, on startup, resume and compact, and its `additionalContext` reached the model.
+fn curl_answer_command(url: &str, header_file: &Path) -> String {
+    format!(
+        "curl -s -m 2 -X POST -H {} -H 'Content-Type: application/json' --data-binary @- {} 2>/dev/null || true",
+        shell_quote(&format!("@{}", header_file.display())),
+        shell_quote(url)
+    )
+}
+
+/// The content of `LaunchCtx::hook_header_file`: one header line, as `curl -H @file` reads it.
+#[must_use]
+pub fn hook_header_line(listener: &HookListener) -> String {
+    format!("Authorization: {}\n", listener.bearer())
+}
+
 /// The JSON the Claude tab's `--settings` file holds, for the hooks, the comment guard, the shared
 /// memory folder and the trailers guard that `ctx` asks for. `None` when none applies, and then
 /// `ctx.settings_file` stays unset.
@@ -393,6 +413,7 @@ pub fn claude_settings_json(ctx: &LaunchCtx) -> Option<String> {
         memory_dir: ctx.memory_dir.as_deref().filter(|_| ctx.worktree_tab),
         own_comment_guard: ctx.own_comment_guard.is_some(),
         status_line: ctx.status_line.as_ref(),
+        hook_header_file: ctx.hook_header_file.as_deref(),
     };
     claude_settings_with(ctx.hooks.as_ref(), guard_bin, &extras)
 }
@@ -427,6 +448,7 @@ struct Extras<'a> {
     /// The owner's own comment guard runs, so Tidewatch's comment hooks stay out.
     own_comment_guard: bool,
     status_line: Option<&'a StatusLineCtx>,
+    hook_header_file: Option<&'a Path>,
 }
 
 fn claude_settings_with(
@@ -444,6 +466,11 @@ fn claude_settings_with(
         });
         for event in CLAUDE_HOOK_EVENTS {
             hooks.insert(event.to_owned(), json!([{ "hooks": [hook.clone()] }]));
+        }
+        if let Some(header_file) = extras.hook_header_file {
+            let command = curl_answer_command(&listener.hook_url("claude"), header_file);
+            let start = json!({ "type": "command", "command": command });
+            hooks.insert("SessionStart".to_owned(), json!([{ "hooks": [start] }]));
         }
     }
     let command = |bin: &Path, tail: &str| json!({ "type": "command", "command": format!("{} --guard {tail}", shell_quote(&bin.display().to_string())) });
@@ -785,6 +812,7 @@ mod tests {
             hooks: Some(listener()),
             mcp_config: Some("/state/tab/mcp.json".into()),
             settings_file: Some("/state/tab/claude-settings.json".into()),
+            hook_header_file: Some("/state/tab/hook-headers".into()),
             house_style: Some("/cfg/house-style.md".into()),
             copilot_instructions_dir: Some("/cfg/copilot".into()),
             copilot_plugin_dir: Some("/state/tab/copilot-plugin".into()),
@@ -1054,6 +1082,19 @@ mod tests {
             assert!(settings["hooks"][event].is_array(), "{event}");
         }
         assert_eq!(settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["type"], "http");
+        let start = &settings["hooks"]["SessionStart"][0]["hooks"];
+        assert_eq!(start.as_array().unwrap().len(), 1);
+        assert_eq!(start[0]["type"], "command");
+        assert_eq!(
+            start[0]["command"],
+            "curl -s -m 2 -X POST -H @/state/tab/hook-headers -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:5555/hook/claude 2>/dev/null || true"
+        );
+        assert!(!settings["hooks"]["SessionStart"].to_string().contains("tok123"));
+        assert_eq!(hook_header_line(&listener()), "Authorization: Bearer tok123\n");
+        let headerless = LaunchCtx { hook_header_file: None, ..full_ctx() };
+        let settings: Value =
+            serde_json::from_str(&claude_settings_json(&headerless).unwrap()).unwrap();
+        assert!(settings["hooks"]["SessionStart"].is_null(), "no hook that would print the token");
         for want in
             ["--mcp-config=/state/tab/mcp.json", "--allowedTools=mcp__tidewatch__*", "--session-id"]
         {
@@ -1342,7 +1383,7 @@ mod tests {
         assert_eq!(prompt.len(), 2);
         assert_eq!(prompt[0]["hooks"][0]["type"], "http");
         assert_eq!(prompt[1]["hooks"][0]["command"], "/app/tidewatch --guard ledger");
-        assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["url"].is_string());
+        assert_eq!(settings["hooks"]["SessionStart"][0]["hooks"][0]["type"], "command");
 
         let main_tab = LaunchCtx { worktree_tab: false, ..ctx.clone() };
         let settings: Value =
