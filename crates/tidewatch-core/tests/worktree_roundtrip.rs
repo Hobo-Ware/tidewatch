@@ -235,6 +235,23 @@ fn removing_after_the_folder_was_deleted_by_hand_still_cleans_up() {
 }
 
 #[test]
+fn discarding_a_worktree_git_already_forgot_whose_branch_is_gone_still_closes() {
+    let f = fixture();
+    let wt = worktree::add(&f.paths, &f.repo).unwrap();
+    git(&f.repo, &["worktree", "remove", "-f", "-f", wt.path.to_str().unwrap()]);
+    git(&f.repo, &["branch", "-D", &wt.branch]);
+
+    for branch in [BranchChoice::Delete, BranchChoice::Keep] {
+        let outcome = worktree::remove(&f.paths, &wt, branch, RemoveMode::Discard).unwrap();
+        assert!(
+            matches!(outcome, BranchOutcome::Deleted { restore: None } | BranchOutcome::Kept),
+            "{branch:?}: {outcome:?}"
+        );
+    }
+    assert_only_main(&f.repo);
+}
+
+#[test]
 fn removing_with_an_unreachable_repo_reports_git_s_error() {
     let f = fixture();
     let wt = worktree::add(&f.paths, &f.repo).unwrap();

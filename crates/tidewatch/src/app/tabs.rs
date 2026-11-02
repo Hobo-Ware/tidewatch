@@ -326,6 +326,7 @@ impl Tidewatch {
                     }
                 }
                 Err(message) => {
+                    self.show_toast(format!("Could not close the tab: {message}"), ctx);
                     if let Some(tab) = self.tabs.get_mut(tab) {
                         tab.pane.remove_failed(message);
                     }
