@@ -25,7 +25,18 @@ pub fn was_asked(marker: &Path) -> bool {
 }
 
 pub fn mark_asked(marker: &Path) -> std::io::Result<()> {
-    write_atomic(marker, "")
+    mark_asked_for(marker, "")
+}
+
+/// Marks the tab asked and keeps the owner's message the ask went with, for the fallback icon.
+pub fn mark_asked_for(marker: &Path, message: &str) -> std::io::Result<()> {
+    write_atomic(marker, message)
+}
+
+/// The owner's message the ask went with, when one was kept.
+#[must_use]
+pub fn asked_message(marker: &Path) -> Option<String> {
+    std::fs::read_to_string(marker).ok().filter(|text| !text.trim().is_empty())
 }
 
 #[cfg(test)]
