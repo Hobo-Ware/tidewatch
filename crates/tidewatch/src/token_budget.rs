@@ -1,8 +1,10 @@
 //! What the token budget says on screen (pure, table-tested): a tab's tokens and cost for its
-//! tooltip and its Overview card, the plan limit meters of the status bar, and the tokens mark.
+//! tooltip and its Overview card, the plan limit meters of the status bar, and the tokens mark with
+//! how full the tab's context window is.
 
 use jiff::tz::TimeZone;
 use tidewatch_core::save_mode::{PlanLimits, THRESHOLD_PCT, Which, Window};
+use tidewatch_core::statusline::Context;
 use tidewatch_core::token_usage::{self, Share, Tally};
 
 const MINUTE_MS: i64 = 60_000;
@@ -108,24 +110,61 @@ pub(crate) fn cost_line(cost_usd: f64) -> String {
     format!("${cost_usd:.2} this session")
 }
 
-/// The lines of a tab's tooltip about what it spent: its tokens, then its cost once it is a cent.
-pub(crate) fn tab_tip(tab: Option<&TabTokens>, cost_usd: Option<f64>) -> Option<String> {
+fn context_percent(context: Context) -> u8 {
+    context.used_pct.floor().clamp(0.0, 100.0) as u8
+}
+
+/// `Context 38% full · 380k of 1M tokens`, or `Context 38% full` with no counts.
+pub(crate) fn context_line(context: Context) -> String {
+    let percent = context_percent(context);
+    match (context.used_tokens, context.size) {
+        (Some(used), Some(size)) => format!(
+            "Context {percent}% full \u{b7} {} of {} tokens",
+            token_usage::compact(used),
+            token_usage::compact(size)
+        ),
+        _ => format!("Context {percent}% full"),
+    }
+}
+
+/// The lines of a tab's tooltip about what it spent: its tokens, how full its context is, then its
+/// cost once it is a cent.
+pub(crate) fn tab_tip(
+    tab: Option<&TabTokens>,
+    cost_usd: Option<f64>,
+    context: Option<Context>,
+) -> Option<String> {
     let cost = cost_usd.filter(|cost| *cost >= MIN_COST_USD);
-    let lines: Vec<String> =
-        tab.map(|tab| tab.tip.clone()).into_iter().chain(cost.map(cost_line)).collect();
+    let lines: Vec<String> = tab
+        .map(|tab| tab.tip.clone())
+        .into_iter()
+        .chain(context.map(context_line))
+        .chain(cost.map(cost_line))
+        .collect();
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
-/// The one mark at the left of the status bar: the active tab's tokens.
+/// The one mark at the left of the status bar: the active tab's tokens and context fill.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Mark {
     pub(crate) text: String,
     pub(crate) tip: String,
 }
 
-pub(crate) fn bar_mark(tab: Option<&TabTokens>, cost_usd: Option<f64>) -> Option<Mark> {
-    let tab = tab?;
-    Some(Mark { text: tab.short.clone(), tip: tab_tip(Some(tab), cost_usd)? })
+pub(crate) fn bar_mark(
+    tab: Option<&TabTokens>,
+    cost_usd: Option<f64>,
+    context: Option<Context>,
+) -> Option<Mark> {
+    let parts: Vec<String> = tab
+        .map(|tab| tab.short.clone())
+        .into_iter()
+        .chain(context.map(|context| format!("{}% context", context_percent(context))))
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(Mark { text: parts.join(" \u{b7} "), tip: tab_tip(tab, cost_usd, context)? })
 }
 
 #[cfg(test)]
@@ -270,23 +309,61 @@ mod tests {
         assert_eq!(cost_line(0.004), "$0.00 this session");
         let tab = tab_tokens(&tally(), Share::default()).unwrap();
         assert_eq!(
-            tab_tip(Some(&tab), Some(20.51)).as_deref(),
+            tab_tip(Some(&tab), Some(20.51), None).as_deref(),
             Some("1.2M tokens \u{b7} 96% cached \u{b7} 18 turns\n$20.51 this session")
         );
-        assert_eq!(tab_tip(None, Some(1.0)).as_deref(), Some("$1.00 this session"));
-        assert_eq!(tab_tip(Some(&tab), None).as_deref(), Some(tab.tip.as_str()));
-        assert_eq!(tab_tip(None, None), None);
-        assert_eq!(tab_tip(None, Some(0.0)), None, "a fresh session has cost nothing yet");
-        assert_eq!(tab_tip(Some(&tab), Some(0.004)).as_deref(), Some(tab.tip.as_str()));
+        assert_eq!(tab_tip(None, Some(1.0), None).as_deref(), Some("$1.00 this session"));
+        assert_eq!(tab_tip(Some(&tab), None, None).as_deref(), Some(tab.tip.as_str()));
+        assert_eq!(tab_tip(None, None, None), None);
+        assert_eq!(tab_tip(None, Some(0.0), None), None, "a fresh session has cost nothing yet");
+        assert_eq!(tab_tip(Some(&tab), Some(0.004), None).as_deref(), Some(tab.tip.as_str()));
     }
 
     #[test]
     fn the_bar_shows_the_active_tabs_tokens_with_its_cost_in_the_tooltip_or_nothing() {
-        assert_eq!(bar_mark(None, Some(3.0)), None);
+        assert_eq!(bar_mark(None, Some(3.0), None), None);
         let tab = tab_tokens(&tally(), Share::default()).unwrap();
-        let mark = bar_mark(Some(&tab), None).unwrap();
+        let mark = bar_mark(Some(&tab), None, None).unwrap();
         assert_eq!((mark.text.as_str(), mark.tip.as_str()), ("1.2M tokens", tab.tip.as_str()));
-        let priced = bar_mark(Some(&tab), Some(20.51)).unwrap();
+        let priced = bar_mark(Some(&tab), Some(20.51), None).unwrap();
         assert_eq!(priced.tip.lines().last(), Some("$20.51 this session"));
+    }
+
+    fn context(used_pct: f64, used: Option<u64>, size: Option<u64>) -> Context {
+        Context { used_pct, used_tokens: used, size }
+    }
+
+    #[test]
+    fn the_context_line_names_the_fill_and_the_counts_when_known() {
+        let cases = [
+            (
+                context(38.4, Some(384_000), Some(1_000_000)),
+                "Context 38% full \u{b7} 384k of 1M tokens",
+            ),
+            (
+                context(12.0, Some(24_000), Some(200_000)),
+                "Context 12% full \u{b7} 24k of 200k tokens",
+            ),
+            (context(99.9, None, Some(200_000)), "Context 99% full"),
+            (context(0.0, Some(0), None), "Context 0% full"),
+        ];
+        for (context, want) in cases {
+            assert_eq!(context_line(context), want);
+        }
+    }
+
+    #[test]
+    fn the_bar_shows_the_context_fill_beside_the_tokens_and_its_line_in_the_tooltip() {
+        let tab = tab_tokens(&tally(), Share::default()).unwrap();
+        let fill = context(38.0, Some(380_000), Some(1_000_000));
+        let mark = bar_mark(Some(&tab), Some(20.51), Some(fill)).unwrap();
+        assert_eq!(mark.text, "1.2M tokens \u{b7} 38% context");
+        assert_eq!(
+            mark.tip.lines().collect::<Vec<_>>(),
+            [tab.tip.as_str(), "Context 38% full \u{b7} 380k of 1M tokens", "$20.51 this session"]
+        );
+        let alone = bar_mark(None, None, Some(fill)).unwrap();
+        assert_eq!(alone.text, "38% context");
+        assert_eq!(alone.tip, "Context 38% full \u{b7} 380k of 1M tokens");
     }
 }

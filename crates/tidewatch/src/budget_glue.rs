@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use tidewatch_core::paths::plan_limits_file_beside;
 use tidewatch_core::save_mode::{Notice, PlanLimits, SaveMode, Window};
-use tidewatch_core::statusline::{self, Reading};
+use tidewatch_core::statusline::{self, Context, Reading};
 use tidewatch_core::token_usage::{Share, Tally, Usage};
 
 use crate::jobs::Jobs;
@@ -18,6 +18,8 @@ const HOUR_MS: i64 = 3_600_000;
 const DAY_MS: i64 = 24 * HOUR_MS;
 const LOOK_EVERY_MS: i64 = 5_000;
 const FAKE_COST_USD: f64 = 20.51;
+const FAKE_CONTEXT: Context =
+    Context { used_pct: 38.0, used_tokens: Some(380_000), size: Some(1_000_000) };
 
 type Looked = Vec<(u64, Reading)>;
 
@@ -64,6 +66,11 @@ impl Host {
         self.readings.get(&tab).and_then(|reading| reading.cost_usd).or_else(fake_cost)
     }
 
+    /// How full the tab's context window is, when its status line has reported it.
+    pub(crate) fn context_of(&self, tab: u64) -> Option<Context> {
+        self.readings.get(&tab).and_then(|reading| reading.context).or_else(fake_context)
+    }
+
     /// Whether Tidewatch holds back what it sends on its own right now.
     pub(crate) fn saving(&self) -> bool {
         self.mode.saving().is_some()
@@ -105,7 +112,8 @@ impl Host {
 }
 
 /// `TIDEWATCH_FAKE_TOKENS=1`: every agent tab reads as having spent 1.2M tokens, 14k of them on
-/// four messages of Tidewatch's, and $20.51, for captures. Nothing is read or saved.
+/// four messages of Tidewatch's, and $20.51, with its context 38% full, for captures. Nothing is
+/// read or saved.
 pub(crate) fn fake_tokens() -> Option<TabTokens> {
     std::env::var_os("TIDEWATCH_FAKE_TOKENS")?;
     let tally = Tally {
@@ -120,6 +128,10 @@ pub(crate) fn fake_tokens() -> Option<TabTokens> {
 
 fn fake_cost() -> Option<f64> {
     std::env::var_os("TIDEWATCH_FAKE_TOKENS").map(|_| FAKE_COST_USD)
+}
+
+fn fake_context() -> Option<Context> {
+    std::env::var_os("TIDEWATCH_FAKE_TOKENS").map(|_| FAKE_CONTEXT)
 }
 
 /// `62@2h,81@3d`: the five-hour and the weekly reading as a percent and how long until it resets.
@@ -210,7 +222,7 @@ mod tests {
     }
 
     const FIVE: &str = r#"{"cost":{"total_cost_usd":20.51},"rate_limits":{"five_hour":{"used_percentage":31,"resets_at":5000}}}"#;
-    const BOTH: &str = r#"{"cost":{"total_cost_usd":3.5},"rate_limits":{"five_hour":{"used_percentage":45,"resets_at":5000},"seven_day":{"used_percentage":84,"resets_at":900000}}}"#;
+    const BOTH: &str = r#"{"cost":{"total_cost_usd":3.5},"context_window":{"used_percentage":42,"total_input_tokens":84000,"context_window_size":200000},"rate_limits":{"five_hour":{"used_percentage":45,"resets_at":5000},"seven_day":{"used_percentage":84,"resets_at":900000}}}"#;
 
     #[test]
     fn the_limits_are_the_newest_reading_of_any_tab_and_each_tab_keeps_its_own_cost() {
@@ -229,6 +241,8 @@ mod tests {
             (host.cost_of(1), host.cost_of(2), host.cost_of(3)),
             (Some(20.51), Some(3.5), None)
         );
+        assert_eq!(host.context_of(1), None);
+        assert_eq!(host.context_of(2).map(|context| context.used_pct), Some(42.0));
     }
 
     #[test]
