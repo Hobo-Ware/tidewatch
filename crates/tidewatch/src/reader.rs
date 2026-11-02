@@ -141,6 +141,13 @@ impl Typing {
     fn next_due(&self) -> Option<f64> {
         (!self.queue.is_empty()).then_some(self.due)
     }
+
+    fn drop_leading_keys(&mut self, now: f64) {
+        while matches!(self.queue.front(), Some((_, Step::Keys(_)))) {
+            self.queue.pop_front();
+        }
+        self.due = now;
+    }
 }
 
 pub(crate) struct Reader {
@@ -156,6 +163,7 @@ pub(crate) struct Reader {
     last_poke: f64,
     answered: bool,
     typing: Typing,
+    menu_check: Option<Vec<Question>>,
     pub(crate) auto: Countdown,
     session_title: Option<String>,
     own_title: Option<String>,
@@ -199,6 +207,7 @@ impl Reader {
             last_poke: f64::NEG_INFINITY,
             answered: false,
             typing: Typing::default(),
+            menu_check: None,
             auto: Countdown::default(),
             session_title: None,
             own_title: None,
@@ -422,6 +431,29 @@ impl Reader {
     /// Types `steps` into the agent one after the other, starting at `now`.
     pub(crate) fn type_steps(&mut self, steps: Vec<(f64, Step)>, now: f64) {
         self.typing.queue(steps, now);
+    }
+
+    /// Queues the presses that answer Claude's menu of `questions`; the menu is looked for again
+    /// right before the first press goes out.
+    pub(crate) fn type_menu_steps(
+        &mut self,
+        steps: Vec<(f64, Step)>,
+        questions: Vec<Question>,
+        now: f64,
+    ) {
+        self.menu_check = Some(questions);
+        self.typing.queue(steps, now);
+    }
+
+    /// The menu to look for before the next press, once that press is due.
+    pub(crate) fn take_menu_check(&mut self, now: f64) -> Option<Vec<Question>> {
+        self.typing.next_due().filter(|due| *due <= now)?;
+        self.menu_check.take()
+    }
+
+    /// Drops the key presses at the head of the queue; a pasted message after them still goes.
+    pub(crate) fn drop_queued_keys(&mut self, now: f64) {
+        self.typing.drop_leading_keys(now);
     }
 
     /// The next step to type, when its time has come.

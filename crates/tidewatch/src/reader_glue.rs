@@ -63,6 +63,7 @@ const LINE_FULL_TOAST: &str =
     "Too many messages are waiting for the agent. Yours is back in the box";
 const MENU_GONE: &str =
     "The agent's question is no longer on its screen. Nothing was typed. Check the terminal";
+const ALREADY_ANSWERED: &str = "That question was already answered. Nothing was typed";
 
 /// Starts the feed of every agent tab that has an agent running and none yet.
 pub(crate) fn start(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, dev: &DevReader) {
@@ -86,6 +87,7 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
     let mut picked = Vec::new();
     for tab in tabs.items_mut() {
         let id = tab.id;
+        drop_keys_for_a_gone_menu(&mut tab.pane, now);
         if let Pane { body: Body::Shell(term), agent: Some(agent), .. } = &mut tab.pane {
             while let Some(step) = agent.reader.take_due_step(now) {
                 match step {
@@ -155,6 +157,17 @@ fn keep_reply_box(agent: &mut AgentTab, ctx: &Context, now: f64) {
     let view = &agent.reader.view;
     if let Some(wake) = agent.reader.store.tick(&view.reply, now) {
         request_wake(ctx, wake);
+    }
+}
+
+/// A digit that reaches Claude while its menu is off the screen stays in the input box and rides
+/// along with the next message (Claude Code 2.1.316, checked in a pty), so the menu is looked for
+/// again right before its first press goes out.
+fn drop_keys_for_a_gone_menu<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) {
+    let (Body::Shell(term), Some(agent)) = (&pane.body, pane.agent.as_mut()) else { return };
+    let Some(questions) = agent.reader.take_menu_check(now) else { return };
+    if menu_look(term, &questions) == Look::Gone {
+        agent.reader.drop_queued_keys(now);
     }
 }
 
@@ -968,6 +981,9 @@ fn answer_question<T: ShowsScreen>(
     let asked = agent.reader.rows.question_of(seq).cloned()?;
     let gone =
         matches!(&pane.body, Body::Shell(term) if menu_look(term, &asked.questions) == Look::Gone);
+    if matches!(asked.origin, Origin::Claude) && asked.asked != Asked::Pending {
+        return Some(ALREADY_ANSWERED);
+    }
     if matches!(asked.origin, Origin::Claude) && gone {
         return Some(MENU_GONE);
     }
@@ -1011,7 +1027,11 @@ fn answer_question<T: ShowsScreen>(
         }
     };
     agent.reader.rows.set_asked(seq, state);
-    agent.reader.type_steps(steps, now);
+    if matches!(asked.origin, Origin::Claude) {
+        agent.reader.type_menu_steps(steps, asked.questions.clone(), now);
+    } else {
+        agent.reader.type_steps(steps, now);
+    }
     refresh_asking(agent);
     if matches!(asked.origin, Origin::Claude) {
         agent.reader.mark_answered();
@@ -1203,6 +1223,30 @@ mod tests {
 
     fn asked_of(pane: &Pane<Fake>, seq: u64) -> Asked {
         pane.agent.as_ref().unwrap().reader.rows.question_of(seq).unwrap().asked.clone()
+    }
+
+    #[test]
+    fn a_claude_question_is_typed_into_once_and_a_second_answer_is_refused() {
+        let (mut pane, seq) = pane(Origin::Claude);
+        assert_eq!(answer_question(&mut pane, seq, Reply::Answered(answered()), 100.0), None);
+        assert_eq!(typed(&mut pane).len(), 5);
+        let again = answer_question(&mut pane, seq, Reply::Answered(answered()), 101.0);
+        assert_eq!(again, Some(ALREADY_ANSWERED));
+        assert!(typed(&mut pane).is_empty(), "the second answer typed nothing");
+    }
+
+    #[test]
+    fn menu_keys_are_dropped_when_the_menu_left_the_screen_before_the_first_press() {
+        let (mut gone, seq) = pane(Origin::Claude);
+        answer_question(&mut gone, seq, Reply::Answered(answered()), 100.0);
+        gone.body = crate::pane::Body::Shell(Fake(vec!["\u{276f} ".into()]));
+        drop_keys_for_a_gone_menu(&mut gone, 100.0);
+        assert!(typed(&mut gone).is_empty(), "no digit lands in the empty input box");
+
+        let (mut open, seq) = pane(Origin::Claude);
+        answer_question(&mut open, seq, Reply::Answered(answered()), 100.0);
+        drop_keys_for_a_gone_menu(&mut open, 100.0);
+        assert_eq!(steps_only(typed(&mut open)), keys(&[b"2", b"1", b"2", b"\x1b[C", b"1"]));
     }
 
     #[test]
