@@ -72,6 +72,7 @@ fn kinds(events: &[Event]) -> Vec<&'static str> {
             Body::ChecksFailed { .. } => "failed",
             Body::ChecksPassed { .. } => "passed",
             Body::ChangesRequested { .. } => "changes",
+            Body::Reviewed { .. } => "reviewed",
             Body::Commented { .. } => "commented",
             Body::Conflict { .. } => "conflict",
             Body::Approved { .. } => "approved",
@@ -302,7 +303,7 @@ fn reviews_make_one_card_each_and_your_own_are_skipped() {
 }
 
 #[test]
-fn a_review_with_a_note_but_no_verdict_is_a_comment() {
+fn a_review_with_a_note_but_no_verdict_is_a_review_card() {
     let mut snap = snapshot();
     let (_, seen) = diff(None, &snap, 0);
     let mut noted = review("r1", "reviewer", ReviewState::Commented, 500);
@@ -310,9 +311,41 @@ fn a_review_with_a_note_but_no_verdict_is_a_comment() {
     snap.reviews = vec![noted, review("r2", "reviewer", ReviewState::Commented, 600)];
     assert_eq!(
         look(&seen, &snap).0,
-        ["commented"],
+        ["reviewed"],
         "an empty COMMENTED review only carries inline notes"
     );
+}
+
+#[test]
+fn a_codex_review_with_suggestions_is_a_review_card_and_its_receipts_are_none() {
+    let footer = "<details> <summary>About Codex in GitHub</summary>\nReviews are triggered when you open a pull request.\n</details>";
+    let suggestions = format!(
+        "<!-- codex-review-receipt:v1 -->\n\n### Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n{footer}"
+    );
+    let nothing = format!(
+        "<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues.\n\n{footer}"
+    );
+    let notice = "To use Codex here, [create a Codex account and connect to github](https://chatgpt.com/codex).";
+    let cases: [(&str, &[&str]); 3] =
+        [(&suggestions, &["reviewed"]), (&nothing, &[]), (notice, &[])];
+    for (body, want) in cases {
+        let mut snap = snapshot();
+        let (_, seen) = diff(None, &snap, 0);
+        let mut by_codex = review("r1", "chatgpt-codex-connector", ReviewState::Commented, 500);
+        by_codex.body = body.to_owned();
+        let mut receipt = comment("c1", "chatgpt-codex-connector", false, 510);
+        receipt.body = body.to_owned();
+        snap.reviews = vec![by_codex];
+        snap.comments = vec![receipt];
+        let (events, _) = diff(Some(&seen), &snap, 99_000);
+        assert_eq!(kinds(&events), want, "{body}");
+        if let Some(Event { body: Body::Reviewed { body, .. }, .. }) = events.first() {
+            assert_eq!(
+                body,
+                "### Codex Review\n\nHere are some automated review suggestions for this pull request."
+            );
+        }
+    }
 }
 
 #[test]
@@ -481,6 +514,23 @@ fn thread(path: &str, placement: Placement, author: &str, time: i64, text: &str)
 }
 
 #[test]
+fn a_bot_review_owns_its_threads_though_rest_adds_bot_to_the_login() {
+    let threads = [
+        thread("a.rs", Placement::Line(4), "chatgpt-codex-connector[bot]", 1000, "Reset it."),
+        thread("b.rs", Placement::Line(9), "chatgpt-codex-connector-x[bot]", 1000, "Not it."),
+    ];
+    let cases = [
+        ("chatgpt-codex-connector", vec!["a.rs"]),
+        ("chatgpt-codex-connector[bot]", vec!["a.rs"]),
+        ("someone", vec![]),
+    ];
+    for (author, want) in cases {
+        let got = review_comments(&threads, author, 0, 1_000_000);
+        assert_eq!(got.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(), want, "{author}");
+    }
+}
+
+#[test]
 fn a_review_owns_the_threads_its_author_started_since_their_last_review() {
     let threads = [
         thread(
@@ -557,6 +607,12 @@ fn cards_survive_a_round_trip_through_json() {
             text: "t".into(),
         },
         Body::PushFix { commits: 2, head: "h".into() },
+        Body::Reviewed {
+            author: "rev".into(),
+            body: "b".into(),
+            comments: vec![ReviewComment { path: "a.rs".into(), line: Some(1), text: "x".into() }],
+            trusted: false,
+        },
     ];
     for body in bodies {
         let json = serde_json::to_string(&body).unwrap();

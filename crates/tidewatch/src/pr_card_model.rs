@@ -297,12 +297,17 @@ pub(crate) fn look(index: usize, context: Context<'_>) -> Option<Look> {
             ))];
             Look::Card(m)
         }
-        Body::ChangesRequested { author, body, comments, .. } => {
+        Body::ChangesRequested { author, body, comments, .. }
+        | Body::Reviewed { author, body, comments, .. } => {
             let count = comments.len();
+            let (ink, title) = match &card.body {
+                Body::ChangesRequested { .. } => (Ink::Orange, "Changes requested"),
+                _ => (Ink::Quiet, "Reviewed"),
+            };
             let mut m = model(
                 Icon::Review,
-                Ink::Orange,
-                "Changes requested".to_owned(),
+                ink,
+                title.to_owned(),
                 format!(
                     "by @{author} \u{b7} {count} {}",
                     if count == 1 { "comment" } else { "comments" }

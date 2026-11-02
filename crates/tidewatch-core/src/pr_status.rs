@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::pr::PrThread;
-use crate::pr_noise::is_noise;
+use crate::pr_noise::{is_noise, is_review_noise, readable};
 use crate::pr_trust::is_trusted;
 use crate::rfc3339;
 
@@ -191,6 +191,16 @@ pub enum Body {
         secs: Option<i64>,
     },
     ChangesRequested {
+        author: String,
+        #[serde(default)]
+        body: String,
+        #[serde(default)]
+        comments: Vec<ReviewComment>,
+        #[serde(default = "trusted_by_default")]
+        trusted: bool,
+    },
+    /// A review that left a note or inline comments without a verdict, as Codex reviews do.
+    Reviewed {
         author: String,
         #[serde(default)]
         body: String,
@@ -659,7 +669,9 @@ fn talk_events(before: &Seen, first: bool, snap: &Snapshot) -> Vec<Event> {
             }
             ReviewState::Approved => !first || latest_approval.is_some_and(|l| l.id == review.id),
             ReviewState::Commented => {
-                !first && !review.body.trim().is_empty() && !is_noise(&review.author, &review.body)
+                !first
+                    && !review.body.trim().is_empty()
+                    && !is_review_noise(&review.author, &review.body)
             }
             ReviewState::Other => false,
         };
@@ -674,7 +686,13 @@ fn talk_events(before: &Seen, first: bool, snap: &Snapshot) -> Vec<Event> {
                 trusted: is_trusted(&review.author, &review.association),
             },
             ReviewState::Approved => Body::Approved { author: review.author.clone() },
-            ReviewState::Commented | ReviewState::Other => Body::Commented {
+            ReviewState::Commented => Body::Reviewed {
+                author: review.author.clone(),
+                body: readable(&review.body),
+                comments: Vec::new(),
+                trusted: is_trusted(&review.author, &review.association),
+            },
+            ReviewState::Other => Body::Commented {
                 author: review.author.clone(),
                 text: review.body.clone(),
                 url: String::new(),
@@ -705,7 +723,7 @@ fn talk_events(before: &Seen, first: bool, snap: &Snapshot) -> Vec<Event> {
 
 /// The inline comments a review left: threads its author started between the author's previous
 /// review (`since_ms`) and a minute after this one (`submitted_ms`), since GitHub's REST comments do
-/// not name the review in `gh`'s answer.
+/// not name the review in `gh`'s answer. REST names a bot `name[bot]` where `gh pr view` says `name`.
 #[must_use]
 pub fn review_comments(
     threads: &[PrThread],
@@ -719,7 +737,7 @@ pub fn review_comments(
             let first = thread.comments.first()?;
             let at = first.time * 1000;
             let inside = at > since_ms && at <= submitted_ms + 60_000;
-            (first.author == author && inside).then(|| ReviewComment {
+            (same_login(&first.author, author) && inside).then(|| ReviewComment {
                 path: thread.path.clone(),
                 line: match thread.placement {
                     crate::pr::Placement::Line(line) => Some(line),
@@ -730,6 +748,14 @@ pub fn review_comments(
             })
         })
         .collect()
+}
+
+fn same_login(a: &str, b: &str) -> bool {
+    bare_login(a) == bare_login(b)
+}
+
+fn bare_login(login: &str) -> &str {
+    login.strip_suffix("[bot]").unwrap_or(login)
 }
 
 #[cfg(test)]

@@ -47,7 +47,7 @@ impl Trigger {
 pub fn ask_of(body: &Body) -> Option<(Ask, Trigger)> {
     let (verb, phrase, tag, trigger) = match body {
         Body::ChecksFailed { .. } => ("fix", "fix CI", "CI failure", Trigger::FailedChecks),
-        Body::ChangesRequested { .. } => {
+        Body::ChangesRequested { .. } | Body::Reviewed { .. } => {
             ("address", "address the review", "Review", Trigger::Reviews)
         }
         Body::Commented { .. } => ("answer", "answer the comment", "Comment", Trigger::Reviews),
@@ -65,7 +65,9 @@ pub fn ask_of(body: &Body) -> Option<(Ask, Trigger)> {
 pub fn untrusted(body: &Body) -> bool {
     matches!(
         body,
-        Body::ChangesRequested { trusted: false, .. } | Body::Commented { trusted: false, .. }
+        Body::ChangesRequested { trusted: false, .. }
+            | Body::Reviewed { trusted: false, .. }
+            | Body::Commented { trusted: false, .. }
     )
 }
 
@@ -94,7 +96,12 @@ pub fn message(body: &Body, number: u64, workflow: Workflow) -> Option<Message> 
     let (headline, detail, extra_lines) = match body {
         Body::ChecksFailed { jobs, .. } => checks(jobs, number, workflow),
         Body::ChangesRequested { author, body, comments, .. } => {
-            review(author, body, comments, number, workflow)
+            let did = format!("@{author} requested changes on PR #{number}");
+            review(&did, "Fix them", body, comments, workflow)
+        }
+        Body::Reviewed { author, body, comments, .. } => {
+            let did = format!("@{author} reviewed PR #{number}");
+            review(&did, "Fix what holds up, answer the rest on GitHub", body, comments, workflow)
         }
         Body::Commented { author, text, .. } => {
             let detail = quote(text);
@@ -170,10 +177,10 @@ fn checks(jobs: &[Job], number: u64, workflow: Workflow) -> (String, String, usi
 }
 
 fn review(
-    author: &str,
+    did: &str,
+    fix: &str,
     body: &str,
     comments: &[ReviewComment],
-    number: u64,
     workflow: Workflow,
 ) -> (String, String, usize) {
     let below = match comments.len() {
@@ -182,10 +189,8 @@ fn review(
         1 => " (1 comment below)".to_owned(),
         n => format!(" ({n} comments below)"),
     };
-    let headline = format!(
-        "@{author} requested changes on PR #{number}{below}. Fix them, run the tests, {}.",
-        workflow.fix_and_push(Fix::Each)
-    );
+    let headline =
+        format!("{did}{below}. {fix}, run the tests, {}.", workflow.fix_and_push(Fix::Each));
     let mut parts: Vec<String> = Vec::new();
     if !body.trim().is_empty() {
         parts.push(quote(body));
@@ -348,6 +353,26 @@ mod tests {
     }
 
     #[test]
+    fn a_review_without_a_verdict_lists_its_comments_and_leaves_the_rest_to_a_reply() {
+        let body = Body::Reviewed {
+            trusted: true,
+            author: "chatgpt-codex-connector".into(),
+            body: "### Codex Review\n\nHere are some automated review suggestions.".into(),
+            comments: vec![ReviewComment {
+                path: "stage.rs".into(),
+                line: Some(54),
+                text: "Reset the counter between stages.".into(),
+            }],
+        };
+        let message = message(&body, 7, REBASE).unwrap();
+        assert_eq!(
+            message.text,
+            "@chatgpt-codex-connector reviewed PR #7 (1 comment below). Fix what holds up, answer the rest on GitHub, run the tests, fold each fix into its commit and push with --force-with-lease.\n\n> ### Codex Review\n> \n> Here are some automated review suggestions.\n- `stage.rs:54` Reset the counter between stages."
+        );
+        assert_eq!((message.ask.verb, message.trigger), ("address", Trigger::Reviews));
+    }
+
+    #[test]
     fn a_conflict_names_the_fact_and_fills_the_method_from_the_profile() {
         let conflict = Body::Conflict { base: "main".into() };
         let rebase = message(&conflict, 9, REBASE).unwrap();
@@ -385,6 +410,12 @@ mod tests {
                 url: String::new(),
             },
             Body::Conflict { base: "develop".into() },
+            Body::Reviewed {
+                trusted: true,
+                author: "rev".into(),
+                body: String::new(),
+                comments: vec![ReviewComment { path: "a.rs".into(), line: None, text: "x".into() }],
+            },
         ]
     }
 
@@ -439,6 +470,11 @@ mod tests {
                 5,
                 "PR #5 conflicts with develop. Rebase onto origin/develop, resolve the conflicts, run the tests, and push with --force-with-lease.",
                 "PR #5 conflicts with develop. Merge origin/develop into this branch, resolve the conflicts, run the tests, and push.",
+            ),
+            (
+                6,
+                "@rev reviewed PR #5 (1 comment below). Fix what holds up, answer the rest on GitHub, run the tests, fold each fix into its commit and push with --force-with-lease.",
+                "@rev reviewed PR #5 (1 comment below). Fix what holds up, answer the rest on GitHub, run the tests, commit each fix and push.",
             ),
         ];
         let bodies = every_kind();

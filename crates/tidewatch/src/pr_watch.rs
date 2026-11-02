@@ -10,7 +10,7 @@ use tidewatch_core::github_hook::Hit;
 use tidewatch_core::pr_cards::{Cards, send_cap};
 use tidewatch_core::pr_gh::Polled;
 use tidewatch_core::pr_prompt::{self, Message, Trigger, short_step};
-use tidewatch_core::pr_status::{Body, Seen, State, Summary, Tone as PrTone, Via};
+use tidewatch_core::pr_status::{Body, ReviewComment, Seen, State, Summary, Tone as PrTone, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::GhError;
@@ -776,6 +776,13 @@ pub(crate) fn paused_note() -> String {
     format!("Auto paused after {} sends on this pull request", send_cap(true))
 }
 
+fn first_comment(author: &str, comments: &[ReviewComment]) -> String {
+    comments.first().map_or_else(
+        || format!("by @{author}"),
+        |comment| format!("@{author}: {}", comment.text.lines().next().unwrap_or_default()),
+    )
+}
+
 /// The notification for a new card, `None` for the quiet ones.
 pub(crate) fn notice(body: &Body, number: u64, tab_title: &str) -> Option<Notice> {
     let (tone, what, detail) = match body {
@@ -789,14 +796,12 @@ pub(crate) fn notice(body: &Body, number: u64, tab_title: &str) -> Option<Notice
                 .map_or_else(String::new, |step| format!(" at {step}"));
             (Tone::Failed, "checks failed", format!("{} failed{at}", first.name))
         }
-        Body::ChangesRequested { author, comments, .. } => (
-            Tone::Needs,
-            "changes requested",
-            comments.first().map_or_else(
-                || format!("by @{author}"),
-                |comment| format!("@{author}: {}", comment.text.lines().next().unwrap_or_default()),
-            ),
-        ),
+        Body::ChangesRequested { author, comments, .. } => {
+            (Tone::Needs, "changes requested", first_comment(author, comments))
+        }
+        Body::Reviewed { author, comments, .. } => {
+            (Tone::Needs, "new review", first_comment(author, comments))
+        }
         Body::Commented { author, text, .. } => (
             Tone::Needs,
             "new comment",
