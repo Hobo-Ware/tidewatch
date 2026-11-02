@@ -37,10 +37,59 @@ fn rate_looks_only_at_the_latest_samples() {
     let mut samples: Vec<Sample> =
         (0..30).map(|i| Sample { at_ms: i * MIN, done: (i * 100) as f64 }).collect();
     let slow = samples.last().copied().unwrap();
-    for i in 1..=RATE_WINDOW as i64 {
+    for i in 1..RATE_MIN_POINTS as i64 {
         samples.push(Sample { at_ms: slow.at_ms + i * MIN, done: slow.done + (i * 10) as f64 });
     }
-    assert_eq!(rate_per_min(&samples), Some(10.0));
+    assert_eq!(rate_per_min(&samples).map(f64::round), Some(10.0));
+}
+
+#[test]
+fn lines_read_in_one_look_are_one_sample_so_a_fast_job_keeps_its_rate() {
+    let mut board = JobBoard::default();
+    for second in 0..5 {
+        for line in 1..=20 {
+            board.report(
+                &with("fast", f64::from(second * 20 + line), 1e6),
+                i64::from(second) * 1000,
+            );
+        }
+    }
+    assert_eq!(job(&board).samples.len(), 5);
+    assert_eq!(job(&board).rate_per_min.map(f64::round), Some(1200.0));
+    assert!(job(&board).eta_left(4000).is_some());
+}
+
+#[test]
+fn a_steady_job_read_at_uneven_moments_keeps_a_steady_eta() {
+    let mut board = JobBoard::default();
+    let per_sec = 10.0;
+    let total = 10_000.0;
+    let mut shown = Vec::new();
+    for second in 0..120_i64 {
+        let jitter = [0, 400, 150, 900, 30, 700, 250][usize::try_from(second % 7).unwrap()];
+        let at = second * 1000 + jitter;
+        board.report(&with("steady", (at as f64 / 1000.0 * per_sec).floor(), total), at);
+        if second >= 30 {
+            shown.push(job(&board).eta_left((second + 1) * 1000).unwrap());
+        }
+    }
+    for pair in shown.windows(2) {
+        let step = pair[0].abs_diff(pair[1]);
+        assert!((0..=2).contains(&step), "the ETA jumped {pair:?}");
+    }
+}
+
+#[test]
+fn elapsed_and_time_left_tick_on_the_same_second_marks() {
+    let mut board = JobBoard::default();
+    steady(&mut board, "orders", 1000.0, &[(400, 0.0), (MIN + 400, 100.0)]);
+    let left = |at| job(&board).eta_left(at).unwrap();
+    assert_eq!(job(&board).elapsed_secs(MIN + 999), 60);
+    assert_eq!(job(&board).elapsed_secs(MIN + 1000), 61);
+    assert_eq!(left(MIN + 999), left(MIN + 400));
+    assert_eq!(left(MIN + 1000), left(MIN + 400) - 1);
+    assert_eq!(next_second_at(MIN + 400), MIN + 1000);
+    assert_eq!(next_second_at(MIN + 1000), MIN + 2000);
 }
 
 #[test]

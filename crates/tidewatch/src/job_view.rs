@@ -99,22 +99,25 @@ fn detail_row(painter: &egui::Painter, row: Rect, detail: &str) {
     painter.galley(pos2(row.left(), row.center().y - galley.size().y / 2.0), galley, brand::MUTED);
 }
 
-fn card_height(has_detail: bool, stacked: bool) -> f32 {
+fn card_height(detail_rows: usize, stacked: bool) -> f32 {
     2.0 * PAD_Y
         + NAME_H
         + if stacked { NAME_H } else { 0.0 }
         + INNER_GAP
         + BAR_H
-        + if has_detail { INNER_GAP - 2.0 + DETAIL_H } else { 0.0 }
+        + if detail_rows > 0 { INNER_GAP - 2.0 } else { 0.0 }
+        + detail_rows as f32 * DETAIL_H
 }
 
 fn bar_card(ui: &mut Ui, width: f32, stack: bool, card: &BarCard) {
     let right = card.right.as_deref().unwrap_or("");
     let stacked = stacks(ui.painter(), width - 2.0 * PAD_X, stack, right);
-    let (rect, _) = ui.allocate_exact_size(
-        vec2(width, card_height(!card.detail.is_empty(), stacked)),
-        Sense::hover(),
-    );
+    let rows: Vec<&str> = [card.detail.as_str(), card.stats.as_str()]
+        .into_iter()
+        .filter(|row| !row.is_empty())
+        .collect();
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(width, card_height(rows.len(), stacked)), Sense::hover());
     let painter = ui.painter();
     card_frame(painter, rect, brand::SEGMENT, brand::ITEM_LINE);
     let inner = rect.shrink2(vec2(PAD_X, PAD_Y));
@@ -129,19 +132,17 @@ fn bar_card(ui: &mut Ui, width: f32, stack: bool, card: &BarCard) {
     let fill =
         Rect::from_min_size(track.min, vec2(track.width() * card.fraction.clamp(0.0, 1.0), BAR_H));
     painter.rect_filled(fill, CornerRadius::same(3), brand::TEAL);
-    if !card.detail.is_empty() {
-        let row = Rect::from_min_size(
-            pos2(inner.left(), track.bottom() + INNER_GAP - 2.0),
-            vec2(inner.width(), DETAIL_H),
-        );
-        detail_row(painter, row, &card.detail);
+    for (index, text) in rows.into_iter().enumerate() {
+        let top = track.bottom() + INNER_GAP - 2.0 + index as f32 * DETAIL_H;
+        let row = Rect::from_min_size(pos2(inner.left(), top), vec2(inner.width(), DETAIL_H));
+        detail_row(painter, row, text);
     }
 }
 
 fn segments_card(ui: &mut Ui, width: f32, stack: bool, card: &SegmentsCard) {
     let stacked = stacks(ui.painter(), width - 2.0 * PAD_X, stack, &card.label);
     let (rect, _) = ui.allocate_exact_size(
-        vec2(width, card_height(!card.sub.is_empty(), stacked)),
+        vec2(width, card_height(usize::from(!card.sub.is_empty()), stacked)),
         Sense::hover(),
     );
     let painter = ui.painter();

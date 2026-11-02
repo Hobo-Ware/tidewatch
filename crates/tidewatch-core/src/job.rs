@@ -12,8 +12,9 @@ pub const MIN_SAMPLES_FOR_ETA: usize = 2;
 pub const MAX_JOBS: usize = 24;
 pub const MAX_NAME_CHARS: usize = 60;
 pub const MAX_WORD_CHARS: usize = 40;
-const MAX_SAMPLES: usize = 48;
-const RATE_WINDOW: usize = 12;
+const MAX_SAMPLES: usize = 128;
+const RATE_WINDOW_MS: i64 = 60_000;
+const RATE_MIN_POINTS: usize = 6;
 const MAX_ETA_SECS: f64 = 100.0 * 86_400.0;
 const MIN_RATE_SPAN_MS: i64 = 1_000;
 const SEGMENT_MAX_TOTAL: f64 = 12.0;
@@ -202,8 +203,14 @@ impl Job {
             (_, _, Some((at_ms, secs))) => (at_ms, secs),
             _ => return None,
         };
-        let spent = u64::try_from((now_ms - base_ms).max(0) / 1000).unwrap_or(0);
-        Some(secs.saturating_sub(spent)).filter(|left| *left > 0)
+        Some(secs.saturating_sub(whole_secs_between(base_ms, now_ms))).filter(|left| *left > 0)
+    }
+
+    /// Whole seconds the job has run, counted on the wall clock's second marks so the elapsed time
+    /// and the time left tick over on the same frame.
+    #[must_use]
+    pub fn elapsed_secs(&self, now_ms: i64) -> u64 {
+        whole_secs_between(self.started_ms, self.finished_ms.unwrap_or(now_ms))
     }
 
     /// A job with no total whose reporter gave a time left: its bar is the clock.
@@ -285,15 +292,40 @@ impl Job {
     }
 }
 
-/// Items per minute over the latest samples. `None` with fewer than two, with no time between
-/// them, or when nothing moved.
+fn whole_secs_between(from_ms: i64, to_ms: i64) -> u64 {
+    u64::try_from(to_ms.div_euclid(1000) - from_ms.div_euclid(1000)).unwrap_or(0)
+}
+
+/// The next wall-clock second mark after `now_ms`, when a running job's clocks next tick over.
+#[must_use]
+pub fn next_second_at(now_ms: i64) -> i64 {
+    (now_ms.div_euclid(1000) + 1) * 1000
+}
+
+/// Items per minute: the least-squares slope through the samples of the last minute, or the last
+/// few samples when they are further apart, so one late or early reading barely moves it. `None`
+/// with fewer than two samples, under a second between them, or when nothing moved forward.
 #[must_use]
 pub fn rate_per_min(samples: &[Sample]) -> Option<f64> {
-    let window = &samples[samples.len().saturating_sub(RATE_WINDOW)..];
-    let (first, last) = (window.first()?, window.last()?);
-    let span = last.at_ms - first.at_ms;
-    let moved = last.done - first.done;
-    (span >= MIN_RATE_SPAN_MS && moved > 0.0).then(|| moved / (span as f64 / 60_000.0))
+    let last = samples.last()?;
+    let recent = samples.iter().filter(|s| s.at_ms >= last.at_ms - RATE_WINDOW_MS).count();
+    let window = &samples[samples.len() - recent.max(RATE_MIN_POINTS).min(samples.len())..];
+    let first = window.first()?;
+    if window.len() < 2 || last.at_ms - first.at_ms < MIN_RATE_SPAN_MS {
+        return None;
+    }
+    let points: Vec<(f64, f64)> = window
+        .iter()
+        .map(|s| ((s.at_ms - first.at_ms) as f64 / 60_000.0, s.done - first.done))
+        .collect();
+    let count = points.len() as f64;
+    let mean_t = points.iter().map(|(t, _)| t).sum::<f64>() / count;
+    let mean_d = points.iter().map(|(_, d)| d).sum::<f64>() / count;
+    let (cov, var) = points.iter().fold((0.0, 0.0), |(cov, var), (t, d)| {
+        (cov + (t - mean_t) * (d - mean_d), var + (t - mean_t).powi(2))
+    });
+    let rate = cov / var;
+    (rate.is_finite() && rate > 0.0).then_some(rate)
 }
 
 /// Seconds to finish at `rate` (per minute). `None` before two samples, without a total, when
@@ -464,7 +496,11 @@ fn apply(job: &mut Job, report: &Report, now_ms: i64) {
         job.done = done;
     }
     if moved && !job.state.is_finished() {
-        job.samples.push(Sample { at_ms: now_ms, done: job.done });
+        let sample = Sample { at_ms: now_ms, done: job.done };
+        match job.samples.last_mut() {
+            Some(last) if last.at_ms >= now_ms => *last = Sample { at_ms: last.at_ms, ..sample },
+            _ => job.samples.push(sample),
+        }
         if job.samples.len() > MAX_SAMPLES {
             job.samples.remove(0);
         }
