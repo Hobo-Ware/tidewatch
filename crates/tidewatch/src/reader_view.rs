@@ -530,6 +530,19 @@ fn quick_for<'a>(rows: &Rows, state: &'a mut ViewState, facts: &Facts<'_>) -> &'
     state.quick.as_ref().map_or(&[][..], |(_, quick)| quick.as_slice())
 }
 
+/// The row whose place in the timeline draws row `newest`: the anchor of its turn when the turn
+/// draws it, so the quick replies follow the agent's message and not a note timed after it.
+fn chips_after(layout: &reader_turns::Layout, newest: usize) -> usize {
+    match layout.slots.get(newest) {
+        Some(Slot::Hidden) => layout
+            .groups
+            .iter()
+            .find(|group| group.texts.contains(&newest) || group.calls.contains(&newest))
+            .map_or(newest, |group| group.anchor),
+        _ => newest,
+    }
+}
+
 /// The tool call waiting for permission as (tool, what it does), when the newest row is one.
 fn permission_tool(rows: &Rows, root: Option<&Path>) -> Option<(String, String)> {
     let tool = rows.waiting_tool()?;
@@ -960,7 +973,20 @@ fn transcript(
                 }
                 _ => None,
             };
+            let chips_at = list.len().checked_sub(1).map(|newest| chips_after(layout, newest));
+            let mut chips_due = false;
+            let mut chips_drawn = quick.is_empty();
+            let mut draw_chips = |ui: &mut egui::Ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(INSET);
+                    ui.vertical(|ui| chip_click = question_view::quick_chips(ui, quick));
+                });
+            };
             for entry in quiet_notes::fold(shown, quiet_of) {
+                if std::mem::take(&mut chips_due) {
+                    draw_chips(ui);
+                    chips_drawn = true;
+                }
                 let top = ui.next_widget_position().y;
                 let place = match entry {
                     Entry::Quiet(run) => {
@@ -992,6 +1018,8 @@ fn transcript(
                     }
                     Entry::Place(place) => place,
                 };
+                chips_due =
+                    !chips_drawn && matches!(place, Place::Row(index) if Some(index) == chips_at);
                 let (key, height) = match place {
                     Place::Row(index) => match layout.slots[index] {
                         Slot::Group(n) => {
@@ -1141,6 +1169,10 @@ fn transcript(
                     }
                 }
             }
+            if chips_due {
+                draw_chips(ui);
+                chips_drawn = true;
+            }
             let time = ui.input(|i| i.time);
             for (n, queued) in rows.queued().enumerate() {
                 let stale = queued.not_seen(now_ms());
@@ -1187,11 +1219,8 @@ fn transcript(
                 });
                 actions.extend(tail.inner.inner.map(Action::Pr));
             }
-            if !quick.is_empty() {
-                ui.horizontal(|ui| {
-                    ui.add_space(INSET);
-                    ui.vertical(|ui| chip_click = question_view::quick_chips(ui, quick));
-                });
+            if !chips_drawn {
+                draw_chips(ui);
             }
             ui.add_space(12.0);
             if scroll_down {
@@ -2490,6 +2519,67 @@ mod tests {
         state.quick_used = rows.newest_seq();
         draw(&rows, &mut state, &facts(None, Turn::Finished));
         assert!(state.quick.is_none(), "a used chip row does not come back");
+    }
+
+    #[test]
+    fn quick_replies_sit_under_the_agents_question_above_a_tidewatch_note_timed_after_it() {
+        use tidewatch_core::sent::{Reason, Record};
+        use tidewatch_core::transcript::{Entry, Role, ToolCall};
+        let mut rows = Rows::default();
+        let entry = |role, text: &str, tool: Option<ToolCall>, ts| Entry {
+            role,
+            text: text.into(),
+            tool,
+            ts: Some(ts),
+            images: Vec::new(),
+        };
+        rows.push(entry(Role::User, "Fix the crash", None, 1_000));
+        rows.push(entry(Role::Assistant, "Looking.", None, 2_000));
+        rows.push(entry(Role::Assistant, "Fixed. Should I also update the README?", None, 3_000));
+        let note = Record {
+            at_ms: 4_000,
+            ..Record::new(Reason::Avatar, "the tab has a goal", "Also call set_avatar.", None)
+        };
+        rows.tidewatch_said(vec![note]);
+        let ctx = crate::fonts::test_context();
+        let mut state = ViewState::default();
+        let mut texts = Vec::new();
+        for _ in 0..4 {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
+                focused: true,
+                ..RawInput::default()
+            };
+            let output = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                let _ = show(ui, rect, &rows, &mut state, &facts(None, Turn::Finished));
+            });
+            texts.clear();
+            for shape in &output.shapes {
+                crate::test_support::painted_text_rects_nonblank(&shape.shape, &mut texts);
+            }
+        }
+        let find = |text: &str| {
+            texts.iter().find(|(drawn, _)| drawn.contains(text)).map(|(_, rect)| *rect)
+        };
+        let question = find("update the README?").expect("the question is drawn");
+        let yes = find("Yes").expect("the chips are drawn");
+        let told = find("Tidewatch asked for an avatar").expect("the note is drawn");
+        assert!(question.bottom() <= yes.top(), "{question:?} {yes:?}");
+        assert!(yes.bottom() <= told.top(), "the chips come before the note: {yes:?} {told:?}");
+    }
+
+    #[test]
+    fn the_chips_follow_the_turn_that_draws_the_newest_row() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = Rows::default();
+        for (role, text) in [(Role::User, "Go"), (Role::Assistant, "a"), (Role::Assistant, "b?")] {
+            rows.push(Entry { role, text: text.into(), tool: None, ts: None, images: Vec::new() });
+        }
+        let layout = reader_turns::layout(&rows);
+        assert_eq!(layout.slots, [Slot::Plain, Slot::Group(0), Slot::Hidden]);
+        assert_eq!(chips_after(&layout, 2), 1, "a hidden row is drawn at its turn's anchor");
+        assert_eq!(chips_after(&layout, 0), 0, "a plain row is drawn at its own place");
     }
 
     struct Frames {
