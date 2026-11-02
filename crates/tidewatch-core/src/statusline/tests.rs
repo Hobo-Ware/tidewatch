@@ -8,7 +8,7 @@ const SAMPLE: &str = r#"{
   "workspace": {"current_dir": "/work/web", "project_dir": "/work/web"},
   "version": "2.1.316",
   "cost": {"total_cost_usd": 20.51, "total_duration_ms": 91000, "total_lines_added": 4},
-  "context_window": {"used_percentage": 12},
+  "context_window": {"total_input_tokens": 120000, "context_window_size": 1000000, "used_percentage": 12},
   "rate_limits": {
     "five_hour": {"used_percentage": 31.4, "resets_at": 1793007800},
     "seven_day": {"used_percentage": 84, "resets_at": 1793260000}
@@ -30,6 +30,11 @@ fn the_real_field_names_of_claude_code_2_1_316_give_both_windows_and_the_cost() 
                 week: Some(window(84.0, 1_793_260_000_000)),
             },
             cost_usd: Some(20.51),
+            context: Some(Context {
+                used_pct: 12.0,
+                used_tokens: Some(120_000),
+                size: Some(1_000_000)
+            }),
             read_ms: NOW,
         }
     );
@@ -138,5 +143,43 @@ fn the_input_of_a_real_session_before_its_first_answer_has_a_cost_and_no_limits(
     let reading = parse(FIRST_SCREEN, NOW).unwrap();
     assert_eq!(reading.limits, PlanLimits::default());
     assert_eq!(reading.cost_usd, Some(0.0));
+    assert_eq!(reading.context, None);
     assert!(reading.has_data());
+}
+
+#[test]
+fn a_context_reading_without_a_percent_is_none_and_its_counts_are_optional() {
+    let cases = [
+        (r#"{"context_window":{"used_percentage":null}}"#, None),
+        (r#"{"context_window":{"used_percentage":"x"}}"#, None),
+        (
+            r#"{"context_window":{"used_percentage":130}}"#,
+            Some(Context { used_pct: 100.0, used_tokens: None, size: None }),
+        ),
+        (
+            r#"{"context_window":{"used_percentage":5,"total_input_tokens":-1,"context_window_size":0}}"#,
+            Some(Context { used_pct: 5.0, used_tokens: None, size: None }),
+        ),
+    ];
+    for (input, want) in cases {
+        assert_eq!(parse(input, NOW).unwrap().context, want, "{input}");
+    }
+    assert!(parse(r#"{"context_window":{"used_percentage":1}}"#, NOW).unwrap().has_data());
+}
+
+#[test]
+fn the_context_is_never_kept_from_the_saved_reading_so_a_clear_empties_it() {
+    let saved = parse(SAMPLE, NOW - 5000).unwrap();
+    let cleared = parse(FIRST_SCREEN, NOW).unwrap().over(Some(saved));
+    assert_eq!(cleared.context, None);
+    assert_eq!(cleared.limits, saved.limits);
+}
+
+#[test]
+fn a_reading_saved_before_the_context_field_still_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plan-limits.json");
+    std::fs::write(&file, r#"{"five_hour":null,"week":null,"cost_usd":1.5,"read_ms":3}"#).unwrap();
+    let reading = load(&file).unwrap();
+    assert_eq!((reading.cost_usd, reading.context), (Some(1.5), None));
 }

@@ -1,6 +1,6 @@
-//! The plan limits and session cost Tidewatch keeps from Claude Code's status line input (JSON on
-//! stdin, given to a status line command only). Field names checked against claude 2.1.316:
-//! `used_percentage` is 0 to 100 and `resets_at` unix seconds.
+//! The plan limits, session cost and context fill Tidewatch keeps from Claude Code's status line
+//! input (JSON on stdin, given to a status line command only). Field names checked against claude
+//! 2.1.316: `used_percentage` is 0 to 100 and `resets_at` unix seconds.
 
 use std::path::Path;
 
@@ -18,17 +18,26 @@ pub struct Reading {
     pub limits: PlanLimits,
     pub cost_usd: Option<f64>,
     #[serde(default)]
+    pub context: Option<Context>,
+    #[serde(default)]
     pub read_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Context {
+    pub used_pct: f64,
+    pub used_tokens: Option<u64>,
+    pub size: Option<u64>,
 }
 
 impl Reading {
     #[must_use]
     pub fn has_data(&self) -> bool {
-        self.limits != PlanLimits::default() || self.cost_usd.is_some()
+        self.limits != PlanLimits::default() || self.cost_usd.is_some() || self.context.is_some()
     }
 
     /// Claude Code sends no limits before a session's first answer, so what the new input lacks
-    /// stays as saved.
+    /// stays as saved. The context is always the new input's: it is empty again after `/clear`.
     #[must_use]
     pub fn over(self, before: Option<Self>) -> Self {
         let Some(before) = before else { return self };
@@ -38,6 +47,7 @@ impl Reading {
                 week: self.limits.week.or(before.limits.week),
             },
             cost_usd: self.cost_usd.or(before.cost_usd),
+            context: self.context,
             read_ms: self.read_ms,
         }
     }
@@ -54,6 +64,16 @@ fn window(value: Option<&Value>) -> Option<Window> {
     Some(Window { used_pct: used.clamp(0.0, 100.0), resets_at_ms })
 }
 
+fn context(value: Option<&Value>) -> Option<Context> {
+    let value = value?;
+    let used = value.get("used_percentage")?.as_f64().filter(|used| used.is_finite())?;
+    Some(Context {
+        used_pct: used.clamp(0.0, 100.0),
+        used_tokens: value.get("total_input_tokens").and_then(Value::as_u64),
+        size: value.get("context_window_size").and_then(Value::as_u64).filter(|size| *size > 0),
+    })
+}
+
 #[must_use]
 pub fn parse(input: &str, now_ms: i64) -> Option<Reading> {
     let root: Value = serde_json::from_str(input).ok()?;
@@ -68,6 +88,7 @@ pub fn parse(input: &str, now_ms: i64) -> Option<Reading> {
             .pointer("/cost/total_cost_usd")
             .and_then(Value::as_f64)
             .filter(|cost| cost.is_finite() && *cost >= 0.0),
+        context: context(root.get("context_window")),
         read_ms: now_ms,
     })
 }
