@@ -1,6 +1,6 @@
 //! The window's side of the token budget: the plan limits the agent tabs saved, save mode once per
-//! frame, its one notice, the hold on the outbox, and the token and cost facts of each agent tab for
-//! the tooltip, the Overview and the status bar.
+//! frame, its one notice, the hold on the outbox, and the token, context and cost facts of each
+//! agent tab for the tooltip, the Overview and the status bar.
 
 use std::time::Duration;
 
@@ -34,11 +34,19 @@ impl Tidewatch {
     }
 
     pub(super) fn tab_spend_tip(&self, tab: u64) -> Option<String> {
-        token_budget::tab_tip(self.tokens_of(tab).as_ref(), self.budget.cost_of(tab))
+        token_budget::tab_tip(
+            self.tokens_of(tab).as_ref(),
+            self.budget.cost_of(tab),
+            self.budget.context_of(tab),
+        )
     }
 
     pub(super) fn budget_mark(&self, active_id: u64) -> Option<Mark> {
-        token_budget::bar_mark(self.tokens_of(active_id).as_ref(), self.budget.cost_of(active_id))
+        token_budget::bar_mark(
+            self.tokens_of(active_id).as_ref(),
+            self.budget.cost_of(active_id),
+            self.budget.context_of(active_id),
+        )
     }
 
     pub(super) fn budget_meters(&self) -> Vec<Meter> {
