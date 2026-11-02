@@ -19,6 +19,17 @@ use tidewatch_core::transcript_facts::Timed;
 use tidewatch_core::transcript_locate::Locator;
 
 use crate::commands::Command;
+
+/// What the screen showed of the pending Claude question's menu. Only a menu once seen can be gone:
+/// Claude draws it only when the question tool runs, which can be long after the transcript names it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) enum MenuWatch {
+    #[default]
+    Unseen,
+    Seen(u64),
+    GoneSince(u64, f64),
+}
+
 use crate::question_auto::Countdown;
 use crate::reader_feed::{Feed, Message};
 use crate::reader_rows::Rows;
@@ -171,7 +182,7 @@ pub(crate) struct Reader {
     pub(crate) rows: Rows,
     pub(crate) view: ViewState,
     pub(crate) store: ReplyStore,
-    pub(crate) menu_gone: Option<(u64, f64)>,
+    pub(crate) menu_watch: MenuWatch,
     sent_file: Option<PathBuf>,
     sent_len: u64,
     sent_looked: f64,
@@ -215,7 +226,7 @@ impl Reader {
             rows: Rows::default(),
             view: ViewState::started_at(started_ms),
             store: ReplyStore::default(),
-            menu_gone: None,
+            menu_watch: MenuWatch::Unseen,
             sent_file: None,
             sent_len: 0,
             sent_looked: f64::NEG_INFINITY,
