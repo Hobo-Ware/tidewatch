@@ -34,7 +34,7 @@ use crate::pr_cards_view::Data as PrData;
 use crate::question_auto::Poll;
 use crate::question_bulk;
 use crate::question_screen::{Look, ShowsScreen, menu_look};
-use crate::reader::{Note, Shown, Step};
+use crate::reader::{MenuWatch, Note, Shown, Step};
 use crate::reader_keys;
 use crate::reader_rows::{Asked, Kind, Origin};
 use crate::reader_view::{self, Action, Blocked, Facts, Prompt, Turn};
@@ -182,22 +182,26 @@ fn close_gone_menu<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) {
         _ => None,
     });
     let Some((seq, look)) = waiting else {
-        agent.reader.menu_gone = None;
+        agent.reader.menu_watch = MenuWatch::Unseen;
         return;
     };
-    if look != Look::Gone {
-        agent.reader.menu_gone = None;
-        return;
-    }
-    let since = match agent.reader.menu_gone {
-        Some((known, since)) if known == seq => since,
-        _ => {
-            agent.reader.menu_gone = Some((seq, now));
-            now
+    let watch = match (look, agent.reader.menu_watch) {
+        (Look::Open, _) => MenuWatch::Seen(seq),
+        (Look::Gone, MenuWatch::Seen(known)) if known == seq => MenuWatch::GoneSince(seq, now),
+        (Look::Gone, MenuWatch::GoneSince(known, since)) if known == seq => {
+            MenuWatch::GoneSince(seq, since)
         }
+        (Look::Unreadable, MenuWatch::Seen(known) | MenuWatch::GoneSince(known, _))
+            if known == seq =>
+        {
+            MenuWatch::Seen(seq)
+        }
+        _ => MenuWatch::Unseen,
     };
+    agent.reader.menu_watch = watch;
+    let MenuWatch::GoneSince(_, since) = watch else { return };
     if now - since >= MENU_GONE_AFTER_S && agent.reader.rows.set_asked(seq, Asked::Closed) {
-        agent.reader.menu_gone = None;
+        agent.reader.menu_watch = MenuWatch::Unseen;
         agent.reader.mark_answered();
         refresh_asking(agent);
     }
@@ -300,7 +304,12 @@ fn prompt_of(status: &AgentStatus) -> Option<Prompt> {
 }
 
 fn prompt_waiting(agent: &AgentTab) -> Option<Prompt> {
-    prompt_of(agent.run.status()).filter(|_| !agent.reader.prompt_answered())
+    prompt_of(agent.run.status())
+        .map(|prompt| match prompt {
+            Prompt::Permission if agent.reader.rows.claude_asks_last() => Prompt::Question,
+            other => other,
+        })
+        .filter(|_| !agent.reader.prompt_answered())
 }
 
 /// Why a ready answer cannot go to the agent now, or `None`: the reply box's own gate, which also
@@ -2106,7 +2115,9 @@ mod tests {
 
     #[test]
     fn the_card_of_a_claude_menu_closes_after_the_menu_stayed_off_the_screen() {
-        let (mut pane, seq) = claude_menu_pane(&["> ", "Where? is what I asked"]);
+        let (mut pane, seq) = claude_menu_pane(&["Where?", "\u{276f} 1. Stage", "  2. Run"]);
+        close_gone_menu(&mut pane, 9.0);
+        with_screen(&mut pane, &["> ", "Where? is what I asked"]);
         close_gone_menu(&mut pane, 10.0);
         assert_eq!(asked_of(&pane, seq), Asked::Pending, "a screen can lag for a moment");
         close_gone_menu(&mut pane, 10.0 + MENU_GONE_AFTER_S - 0.1);
@@ -2126,8 +2137,38 @@ mod tests {
     }
 
     #[test]
+    fn a_menu_claude_has_not_drawn_yet_keeps_its_card_however_long_the_tool_before_it_runs() {
+        let (mut pane, seq) = claude_menu_pane(&["> ", "Running git worktree remove"]);
+        close_gone_menu(&mut pane, 10.0);
+        close_gone_menu(&mut pane, 50.0);
+        assert_eq!(asked_of(&pane, seq), Asked::Pending);
+        with_screen(&mut pane, &["Where?", "\u{276f} 1. Stage", "  2. Run"]);
+        close_gone_menu(&mut pane, 51.0);
+        with_screen(&mut pane, &["> ", "answered"]);
+        close_gone_menu(&mut pane, 52.0);
+        close_gone_menu(&mut pane, 52.0 + MENU_GONE_AFTER_S);
+        assert_eq!(asked_of(&pane, seq), Asked::Closed);
+    }
+
+    #[test]
+    fn a_permission_prompt_behind_a_claude_question_is_that_question_never_a_tool_to_allow() {
+        let needs = AgentStatus::NeedsYou(Reason::Permission);
+        let mut plain = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
+        plain.run.set_status(needs.clone());
+        assert_eq!(prompt_waiting(&plain), Some(Prompt::Permission));
+        let (mut pane, seq) = pane(Origin::Claude);
+        let agent = pane.agent.as_mut().unwrap();
+        agent.run.set_status(needs);
+        assert_eq!(prompt_waiting(agent), Some(Prompt::Question));
+        agent.reader.rows.set_asked(seq, Asked::Closed);
+        assert_eq!(prompt_waiting(agent), Some(Prompt::Question), "a card closed too early");
+    }
+
+    #[test]
     fn a_menu_that_comes_back_restarts_the_wait() {
-        let (mut pane, seq) = claude_menu_pane(&["> ", "nothing"]);
+        let (mut pane, seq) = claude_menu_pane(&["Where?", "\u{276f} 1. Stage", "  2. Run"]);
+        close_gone_menu(&mut pane, 9.0);
+        with_screen(&mut pane, &["> ", "nothing"]);
         close_gone_menu(&mut pane, 10.0);
         with_screen(&mut pane, &["Where?", "\u{276f} 1. Stage", "  2. Run"]);
         close_gone_menu(&mut pane, 11.0);

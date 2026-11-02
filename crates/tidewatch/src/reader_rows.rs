@@ -365,6 +365,19 @@ impl Rows {
     }
 
     /// The oldest of them.
+    /// The newest row is a Claude question its transcript has not answered: a permission prompt now
+    /// is that question's own, so its keys would pick an option, never allow a tool.
+    pub(crate) fn claude_asks_last(&self) -> bool {
+        matches!(
+            self.list.back().map(|row| &row.kind),
+            Some(Kind::Question(QuestionRow {
+                origin: Origin::Claude,
+                asked: Asked::Pending | Asked::Closed,
+                ..
+            }))
+        )
+    }
+
     pub(crate) fn pending_question(&self) -> Option<&Row> {
         self.pending_questions().into_iter().next()
     }
