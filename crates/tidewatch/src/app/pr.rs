@@ -77,14 +77,10 @@ impl Tidewatch {
                 })
             })
             .collect();
-        let on_their_own: Vec<u64> = facts.iter().filter(|f| f.autonomous).map(|f| f.id).collect();
         let ms = now_ms();
         let (mut applied, wake) = self.pr.tick(&facts, paths, ctx, now, ms);
         applied.extend(self.pr.drain(now, ms));
         self.apply_pr(applied, ctx, now);
-        for tab in on_their_own {
-            self.push_left_over_commits(tab, ctx, now);
-        }
         if let Some(at) = wake {
             request_wake(ctx, (at - now).max(0.0));
         }
@@ -150,7 +146,7 @@ impl Tidewatch {
                 CardAction::Cleanup => self.begin_cleanup(tab, ctx, now),
                 CardAction::KeepIt(card) => self.pr.dismiss(tab, card, false),
                 CardAction::NotNow(card) => self.pr.dismiss(tab, card, true),
-                CardAction::PushFix(card) => self.ask_to_push(tab, card, false, ctx, now),
+                CardAction::PushFix(card) => self.ask_to_push(tab, card, ctx, now),
                 CardAction::SendNow(id) => applied.extend(self.pr.send_now(tab, id, now, ms)),
                 CardAction::Cancel(id) => self.pr.cancel(tab, id),
                 CardAction::ChangeWording => self.open_updates_settings(),
@@ -235,22 +231,7 @@ impl Tidewatch {
         }
     }
 
-    /// The commits the agent made after a message and left unpushed, for a tab that runs on its own:
-    /// the agent is asked to push them, once.
-    fn push_left_over_commits(&mut self, tab: u64, ctx: &egui::Context, now: f64) {
-        let Some(card) = self.pr.push_fix_due(tab) else { return };
-        self.ask_to_push(tab, card, true, ctx, now);
-        self.pr.dismiss(tab, card, false);
-    }
-
-    fn ask_to_push(
-        &mut self,
-        tab: u64,
-        card: u64,
-        on_its_own: bool,
-        ctx: &egui::Context,
-        now: f64,
-    ) {
+    fn ask_to_push(&mut self, tab: u64, card: u64, ctx: &egui::Context, now: f64) {
         let Some(Body::PushFix { commits, .. }) = self.pr.body(tab, card) else { return };
         let Some(repo) = self
             .tabs
@@ -262,11 +243,7 @@ impl Tidewatch {
         };
         let number = self.pr.watch(tab).and_then(|watch| watch.cards.number);
         let text = pr_ask::push_commits(number, commits, self.workflow.profile(&repo));
-        let send = if on_its_own {
-            Send::auto(&text, Reason::AutoPush, because::ASK_PUSH_OWN)
-        } else {
-            Send::by_hand(&text, Reason::PullRequest, because::ASK_PUSH_CLICK)
-        };
+        let send = Send::by_hand(&text, Reason::PullRequest, because::ASK_PUSH_CLICK);
         if let Offer::Refuse(reason) =
             flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now)
         {

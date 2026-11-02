@@ -72,13 +72,7 @@ impl Tidewatch {
             flow_glue::press_enter(&mut self.tabs, tab);
         }
         let active = self.tabs.items()[self.tabs.active()].id;
-        let facts =
-            flow_glue::facts(&self.tabs, &self.views, &self.pr, &self.done_check, active, now);
-        for tab in self.flow.waiting_for_tests(&facts) {
-            if self.done_check.is_idle(tab) {
-                self.start_done_check(tab, ctx);
-            }
-        }
+        let facts = flow_glue::facts(&self.tabs, &self.views, &self.pr, active, now);
         if let Some(at) = self.flow.tick(&facts, ctx, now, unix) {
             request_wake(ctx, (at - now).max(0.0));
         }

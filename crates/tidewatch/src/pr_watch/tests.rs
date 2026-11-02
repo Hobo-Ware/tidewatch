@@ -252,10 +252,8 @@ fn auto_fix_does_nothing_for_a_closed_pull_request() {
     let mut watch = ready(Some(42));
     watch.autonomous = true;
     watch.cards.add(1_000, Body::PushFix { commits: 1, head: "h".into() });
-    assert!(watch.push_fix_due(default).is_some(), "open: the left-over commits go out");
     watch.look_started();
     watch.polled(Ok(closed_poll()), default, "tab", 5.0, 0);
-    assert_eq!(watch.push_fix_due(default), None);
     watch.look_started();
     let mut poll = closed_poll();
     poll.events.push(Event { at_ms: 2_000, body: failed() });
@@ -920,29 +918,6 @@ fn an_ordinary_tab_in_auto_fix_answers_its_cards_until_the_loop_guard_hands_them
 }
 
 #[test]
-fn an_ordinary_tab_in_auto_fix_never_pushes_for_the_owner() {
-    let mut watch = ready(Some(42));
-    watch.set_policy(auto(), 0.0);
-    watch.committed(Some(("abc".into(), 2)), 5_000);
-    assert_eq!(watch.push_fix_due(auto()), None);
-}
-
-#[test]
-fn commits_the_agent_made_after_a_message_are_pushed_by_a_tab_on_its_own_and_offered_to_others() {
-    let default = GithubPrefs::default();
-    let mut mine = on_its_own();
-    let mut other = ready(Some(42));
-    for watch in [&mut mine, &mut other] {
-        watch.committed(Some(("abc".into(), 2)), 5_000);
-    }
-    let id = mine.cards.cards().last().unwrap().id;
-    assert_eq!(mine.push_fix_due(default), Some(id));
-    assert_eq!(other.push_fix_due(default), None);
-    mine.cards.handle(id);
-    assert_eq!(mine.push_fix_due(default), None, "once, then it is handled");
-}
-
-#[test]
 fn a_review_bot_receipt_or_status_post_saved_by_an_older_version_is_not_loaded() {
     let saved = [
         "<!-- codex-review-receipt:v1 -->",
@@ -981,10 +956,6 @@ fn merged_watch(autonomous: bool, left: usize) -> Watch {
     watch
 }
 
-fn pushing() -> GithubPrefs {
-    GithubPrefs { mode: PrMode::Auto, push: true, ..GithubPrefs::default() }
-}
-
 fn loaded(autonomous: bool) -> Watch {
     let mut watch = Watch::new(PathBuf::from("/state/pr_cards.json"));
     watch.take_load();
@@ -994,78 +965,26 @@ fn loaded(autonomous: bool) -> Watch {
 }
 
 #[test]
-fn the_push_tick_is_never_forced_on_a_tab_that_runs_on_its_own() {
-    let off = GithubPrefs { push: false, ..pushing() };
-    let cases = [
-        ("tick on", pushing(), false, true),
-        ("tick off", off, false, false),
-        (
-            "mode Ask is still Auto for a tab on its own",
-            GithubPrefs { mode: PrMode::Ask, ..pushing() },
-            false,
-            true,
-        ),
-        ("a Meeseeks hands off by itself", pushing(), true, false),
-    ];
-    for (what, default, meeseeks, auto) in cases {
-        let watch = loaded(true);
-        assert_eq!(push_of(Some(&watch), default, true, meeseeks).auto, auto, "{what}");
+fn the_delivery_is_open_for_every_tab_until_a_merge_hides_its_head() {
+    let unread = Watch::new(PathBuf::from("/state/pr_cards.json"));
+    for (what, watch) in [
+        ("no watch yet", None),
+        ("cards not read", Some(&unread)),
+        ("on its own", Some(&loaded(true))),
+        ("ordinary", Some(&loaded(false))),
+    ] {
+        assert_eq!(push_of(watch), Push::default(), "{what}");
     }
-    let ordinary = loaded(false);
-    for mode in [PrMode::Ask, PrMode::Off] {
-        let default = GithubPrefs { mode, ..pushing() };
-        assert!(!push_of(Some(&ordinary), default, false, false).auto, "{mode:?}");
-    }
-}
-
-#[test]
-fn a_yolo_tab_with_settings_on_ask_me_auto_sends_the_fixes_and_pushes_nothing() {
-    let default = GithubPrefs { mode: PrMode::Ask, push: false, ..GithubPrefs::default() };
-    let mut watch = on_its_own();
-    watch.observe(&AgentStatus::Done);
-    watch.look_started();
-    let outs = watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
-    assert_eq!(pasted(&outs).len(), 1, "the fix goes to the idle agent");
-    assert_eq!(watch.cards.auto_sends, 1);
-    let push = push_of(Some(&watch), default, true, false);
-    assert!(!push.auto, "nothing is pushed");
-}
-
-#[test]
-fn a_tabs_own_choice_beats_the_settings_default() {
-    let mut watch = loaded(true);
-    assert!(!push_of(Some(&watch), GithubPrefs::default(), true, false).auto);
-    watch.set_policy(pushing(), 0.0);
-    assert!(push_of(Some(&watch), GithubPrefs::default(), true, false).auto);
-    watch.set_policy(GithubPrefs { push: false, ..pushing() }, 0.0);
-    assert!(!push_of(Some(&watch), pushing(), true, false).auto);
-}
-
-#[test]
-fn a_tab_that_would_push_waits_for_its_saved_cards_and_is_never_shut_otherwise() {
-    let mut unread = Watch::new(PathBuf::from("/state/pr_cards.json"));
-    let shut = |watch: Option<&Watch>, default| {
-        let push = push_of(watch, default, false, false);
-        (push.shut, push.auto)
-    };
-    assert_eq!(shut(Some(&unread), pushing()), (true, false), "cards not read");
-    assert_eq!(shut(None, pushing()), (true, false), "no watch yet");
-    assert_eq!(shut(None, GithubPrefs::default()), (false, false), "push is off");
-    unread.take_load();
-    unread.loaded(Cards::default(), 0.0);
-    assert_eq!(shut(Some(&unread), pushing()), (false, true));
 }
 
 #[test]
 fn a_merged_pull_request_hands_its_head_to_the_delivery_whoever_drives_the_tab() {
     for autonomous in [true, false] {
-        let watch = merged_watch(autonomous, 1);
-        let push = push_of(Some(&watch), pushing(), autonomous, false);
+        let push = push_of(Some(&merged_watch(autonomous, 1)));
         assert_eq!(push.merged_head.as_deref(), Some("head-1"), "{autonomous}");
-        assert!(push.auto && !push.shut, "{autonomous}");
+        assert!(!push.shut, "{autonomous}");
     }
-    let open = ready(Some(42));
-    assert_eq!(push_of(Some(&open), pushing(), false, false).merged_head, None);
+    assert_eq!(push_of(Some(&ready(Some(42)))).merged_head, None);
 }
 
 #[test]
@@ -1074,23 +993,30 @@ fn a_merged_pull_request_with_no_known_head_shuts_the_delivery_for_every_tab() {
     if let Some(seen) = &mut watch.cards.seen {
         seen.head.clear();
     }
-    let push = push_of(Some(&watch), GithubPrefs::default(), false, false);
-    assert!(push.shut && !push.auto);
+    assert!(push_of(Some(&watch)).shut);
 }
 
 #[test]
-fn a_closed_pull_request_is_not_a_merged_one_and_does_not_push() {
-    let default = pushing();
+fn a_yolo_tab_with_settings_on_ask_me_auto_sends_the_fixes() {
+    let default = GithubPrefs { mode: PrMode::Ask, ..GithubPrefs::default() };
+    let mut watch = on_its_own();
+    watch.observe(&AgentStatus::Done);
+    watch.look_started();
+    let outs = watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
+    assert_eq!(pasted(&outs).len(), 1, "the fix goes to the idle agent");
+    assert_eq!(watch.cards.auto_sends, 1);
+}
+
+#[test]
+fn a_closed_pull_request_is_not_a_merged_one() {
     let mut watch = ready(Some(42));
     watch.autonomous = true;
     watch.look_started();
     let mut closed = polled(vec![Body::Closed { number: 42 }], false, true);
     closed.summary.state = State::Closed;
-    watch.polled(Ok(closed), default, "tab", 5.0, 0);
+    watch.polled(Ok(closed), GithubPrefs::default(), "tab", 5.0, 0);
     assert!(watch.closed());
-    let push = push_of(Some(&watch), default, true, false);
-    assert_eq!(push.merged_head, None);
-    assert!(!push.auto);
+    assert_eq!(push_of(Some(&watch)), Push::default());
 }
 
 #[test]

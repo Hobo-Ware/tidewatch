@@ -337,20 +337,15 @@ fn keep_it_hides_the_merged_buttons() {
 }
 
 #[test]
-fn commits_left_after_the_merge_are_not_called_undelivered_when_auto_pushes_them() {
+fn commits_left_after_the_merge_are_called_undelivered_in_every_mode() {
     let mut cards = cards_of(vec![Body::Merged { number: 42, base: "main".into() }]);
     cards.after_merge = 2;
     let cleanup = Cleanup::Checked(report(&[]));
-    for (policy, note) in [
-        (GithubPrefs { mode: PrMode::Auto, push: true, ..GithubPrefs::default() }, None),
-        (
-            GithubPrefs { mode: PrMode::Auto, push: false, ..GithubPrefs::default() },
-            Some("2 commits after merge, not delivered"),
-        ),
-    ] {
-        let context = Context { cleanup: &cleanup, policy, ..context(&cards, PrMode::Auto) };
+    for mode in [PrMode::Ask, PrMode::Auto, PrMode::Off] {
+        let policy = GithubPrefs { mode, ..GithubPrefs::default() };
+        let context = Context { cleanup: &cleanup, policy, ..context(&cards, mode) };
         let Some(Look::Card(model)) = look(0, context) else { panic!() };
-        assert_eq!(model.note.as_deref(), note, "{policy:?}");
+        assert_eq!(model.note.as_deref(), Some("2 commits after merge, not delivered"), "{mode:?}");
     }
 }
 
@@ -689,10 +684,14 @@ fn the_owner_taking_the_mode_back_brings_the_buttons_back_and_a_trigger_switched
 }
 
 #[test]
-fn commits_left_unpushed_are_pushed_by_a_tab_on_its_own_and_offered_to_the_owner_otherwise() {
+fn commits_left_unpushed_are_offered_to_the_owner_whoever_drives_the_tab() {
     let body = Body::PushFix { commits: 2, head: "abc".into() };
-    assert_eq!(labels(&handled(Handling::Owner, vec![body.clone()], &[])).len(), 2);
-    let model = handled(Handling::Agent, vec![body], &[]);
-    assert_eq!(model.buttons, []);
-    assert_eq!(model.note.as_deref(), Some("Tidewatch asks the agent to push this on its own"));
+    for handling in [Handling::Owner, Handling::Answers, Handling::Agent, Handling::Paused] {
+        let model = handled(handling, vec![body.clone()], &[]);
+        assert_eq!(
+            labels(&model),
+            [("Ask Builder to push", true), ("Not now", false)],
+            "{handling:?}"
+        );
+    }
 }

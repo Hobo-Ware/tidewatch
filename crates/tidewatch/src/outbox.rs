@@ -729,7 +729,6 @@ mod tests {
         let done = Some(&AgentStatus::Done);
         let held = [
             Reason::AutoFix,
-            Reason::AutoPush,
             Reason::DueToday,
             Reason::LedgerGuard,
             Reason::CommentGuard,

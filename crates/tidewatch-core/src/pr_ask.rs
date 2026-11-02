@@ -19,7 +19,10 @@ fn commits_text(commits: usize) -> String {
     }
 }
 
-/// The one message that asks the agent to push and open a pull request.
+const ALREADY_OPEN: &str = "If this work already has an open pull request, on any branch (match it by its commits, not the branch name), reply with its link and open no other. Otherwise:";
+
+/// The one message that asks the agent to push and open a pull request. It names an open pull
+/// request first: one the agent opened from another branch is still this work's.
 #[must_use]
 pub fn open_pull_request(opening: &Opening, workflow: Workflow) -> String {
     let Opening { branch, base, commits, merged_head } = *opening;
@@ -36,7 +39,7 @@ pub fn open_pull_request(opening: &Opening, workflow: Workflow) -> String {
             "Your earlier pull request for `{branch}` merged at `{sha}`, and {count} came after it that `{base}` does not have. Move only those commits onto a new branch off `origin/{base}`, push it as `{branch}-2` (the next free number), and open {pull_request} into `{base}`."
         ),
     };
-    format!("{how} Write the title and body yourself. Reply with the link.")
+    format!("{ALREADY_OPEN} {how} Write the title and body yourself. Reply with the link.")
 }
 
 /// The message that asks the agent to push commits the open pull request does not have yet.
@@ -109,12 +112,23 @@ mod tests {
     fn the_ask_states_the_facts_and_fills_the_pull_request_kind_from_the_profile() {
         assert_eq!(
             open_pull_request(&opening(3, None), DRAFT),
-            "3 commits on `agent/brave-otter` are not in `develop`. Push the branch and open a draft pull request into `develop`. Write the title and body yourself. Reply with the link."
+            "If this work already has an open pull request, on any branch (match it by its commits, not the branch name), reply with its link and open no other. Otherwise: 3 commits on `agent/brave-otter` are not in `develop`. Push the branch and open a draft pull request into `develop`. Write the title and body yourself. Reply with the link."
         );
         assert_eq!(
             open_pull_request(&opening(1, None), READY),
-            "1 commit on `agent/brave-otter` is not in `develop`. Push the branch and open a pull request (not a draft) into `develop`. Write the title and body yourself. Reply with the link."
+            "If this work already has an open pull request, on any branch (match it by its commits, not the branch name), reply with its link and open no other. Otherwise: 1 commit on `agent/brave-otter` is not in `develop`. Push the branch and open a pull request (not a draft) into `develop`. Write the title and body yourself. Reply with the link."
         );
+    }
+
+    #[test]
+    fn every_ask_first_says_to_reply_with_an_open_pull_request_on_any_branch_instead() {
+        for workflow in [DRAFT, READY] {
+            for merged in [None, Some("abc")] {
+                let text = open_pull_request(&opening(2, merged), workflow);
+                assert!(text.starts_with(ALREADY_OPEN), "{text}");
+                assert_eq!(text.matches("open no other").count(), 1, "{text}");
+            }
+        }
     }
 
     #[test]
@@ -143,7 +157,7 @@ mod tests {
     fn after_a_merge_the_ask_points_at_a_new_branch_named_with_the_next_number() {
         assert_eq!(
             open_pull_request(&opening(2, Some("e3dba69")), DRAFT),
-            "Your earlier pull request for `agent/brave-otter` merged at `e3dba69`, and 2 commits came after it that `develop` does not have. Move only those commits onto a new branch off `origin/develop`, push it as `agent/brave-otter-2` (the next free number), and open a draft pull request into `develop`. Write the title and body yourself. Reply with the link."
+            "If this work already has an open pull request, on any branch (match it by its commits, not the branch name), reply with its link and open no other. Otherwise: Your earlier pull request for `agent/brave-otter` merged at `e3dba69`, and 2 commits came after it that `develop` does not have. Move only those commits onto a new branch off `origin/develop`, push it as `agent/brave-otter-2` (the next free number), and open a draft pull request into `develop`. Write the title and body yourself. Reply with the link."
         );
         let ready = open_pull_request(&opening(1, Some("e3dba69")), READY);
         assert!(ready.contains("open a pull request (not a draft) into `develop`"), "{ready}");
