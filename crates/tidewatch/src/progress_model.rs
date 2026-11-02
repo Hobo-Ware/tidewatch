@@ -875,6 +875,7 @@ mod tests {
             right: Some(right.to_owned()),
             fraction,
             detail: detail.to_owned(),
+            stats: String::new(),
         })
     }
 

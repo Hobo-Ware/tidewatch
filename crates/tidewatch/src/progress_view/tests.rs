@@ -673,6 +673,7 @@ fn backfill_job() -> Card {
         right: Some("4%".to_owned()),
         fraction: 0.04,
         detail: "people \u{b7} 2,246 of 58,650 rows \u{b7} about 9h 46m left".to_owned(),
+        stats: String::new(),
     })
 }
 

@@ -99,7 +99,18 @@ fn lines_appended_to_the_progress_file_become_jobs_and_survive_a_pipe_in_front_o
     fx.tick(&mut host, &[1], NOW + 2_000);
     let job = &host.board(1).unwrap().jobs[0];
     assert_eq!((job.done, job.total, job.unit.as_str()), (20.0, Some(100.0), "rows"));
-    assert_eq!(job.samples.len(), 2);
+    assert_eq!(job.samples.len(), 1);
+}
+
+#[test]
+fn a_look_in_the_middle_of_a_second_does_not_hold_back_the_next_seconds_look() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false);
+    fx.until_loaded(&mut host, 1, NOW);
+    fx.tick(&mut host, &[1], NOW + 1_500);
+    fx.append("{\"name\":\"a\",\"done\":1}\n");
+    fx.tick(&mut host, &[1], NOW + 2_020);
+    assert!(host.board(1).is_some());
 }
 
 #[test]
@@ -122,7 +133,8 @@ fn a_running_job_wakes_the_frame_for_the_next_look_and_the_stall_moment() {
     fx.until_loaded(&mut host, 1, NOW);
     assert_eq!(fx.tick(&mut host, &[1], NOW), None);
     host.report(1, reading("orders", 5.0, 10.0), NOW);
-    assert_eq!(fx.tick(&mut host, &[1], NOW + 10), Some(NOW + 10 + RUNNING_POLL_MS));
+    assert_eq!(fx.tick(&mut host, &[1], NOW + 10), Some(NOW + 1_000));
+    assert_eq!(fx.tick(&mut host, &[1], NOW + 1_020), Some(NOW + 2_000));
 }
 
 #[test]

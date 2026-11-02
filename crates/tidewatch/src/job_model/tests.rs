@@ -62,9 +62,63 @@ fn a_running_job_is_a_bar_card_with_a_percent_counts_and_an_eta() {
     let cards = cards(&orders(), NOON, Agent::Working, &TimeZone::UTC);
     let [Card::Bar(card)] = cards.as_slice() else { panic!("{cards:?}") };
     assert_eq!(card.name, "Backfill orders");
-    assert_eq!(card.right.as_deref(), Some("21%"));
-    assert_eq!(card.detail, "12,420 of 58,650 \u{b7} about 1h 51m left");
+    assert_eq!(card.right.as_deref(), Some("21.1%"));
+    assert_eq!(card.detail, "12,420 of 58,650");
+    assert_eq!(card.stats, "6.90/s \u{b7} 1h 51m left \u{b7} 30m 00s elapsed");
     assert_eq!((card.fraction * 1000.0).round(), 212.0);
+}
+
+#[test]
+fn a_running_card_ticks_its_time_left_and_elapsed_every_second_between_readings() {
+    let board = orders();
+    let at = |secs: i64| {
+        let cards = cards(&board, NOON + 52 * MIN + secs * 1000, Agent::Working, &TimeZone::UTC);
+        let [Card::Bar(card)] = cards.as_slice() else { panic!("{cards:?}") };
+        card.stats.clone()
+    };
+    assert_eq!(at(0), "6.90/s \u{b7} 59m 40s left \u{b7} 1h 22m elapsed");
+    assert_eq!(at(1), "6.90/s \u{b7} 59m 39s left \u{b7} 1h 22m elapsed");
+    assert_eq!(at(60 * 59 + 39), "6.90/s \u{b7} 1s left \u{b7} 2h 21m elapsed");
+}
+
+#[test]
+fn clock_text_shows_seconds_under_an_hour() {
+    let cases = [(0, "0s"), (42, "42s"), (60, "1m 00s"), (245, "4m 05s"), (3_599, "59m 59s")];
+    for (secs, want) in cases {
+        assert_eq!(clock_text(secs), want, "{secs}");
+    }
+    assert_eq!(clock_text(6_700), "1h 51m");
+}
+
+#[test]
+fn a_rate_reads_per_second_when_fast_and_per_minute_when_slow() {
+    let cases = [
+        (414.0, "rows", "6.90 rows/s"),
+        (119.0, "rows", "119 rows/min"),
+        (12.34, "", "12.3/min"),
+        (0.5, "files", "0.50 files/min"),
+        (90_000.0, "rows", "1,500 rows/s"),
+        (3.0, "%", "3.00%/min"),
+    ];
+    for (per_min, unit, want) in cases {
+        assert_eq!(rate_text(per_min, unit), want, "{per_min} {unit}");
+    }
+}
+
+#[test]
+fn the_card_percent_reads_to_a_tenth_and_never_100_before_the_end() {
+    let cases = [
+        (0.0, None),
+        (f64::NAN, None),
+        (0.04, Some("<0.1%")),
+        (0.17, Some("0.1%")),
+        (21.176, Some("21.1%")),
+        (99.99, Some("99.9%")),
+        (100.0, Some("100%")),
+    ];
+    for (percent, want) in cases {
+        assert_eq!(fine_percent_text(percent).as_deref(), want, "{percent}");
+    }
 }
 
 #[test]
@@ -99,8 +153,9 @@ fn a_zero_is_never_the_headline_and_an_eta_waits_for_a_rate() {
     running(&mut board, "orders", 58_650.0, &[(MIN, 100.0)]);
     let cards = super::cards(&board, NOON + MIN, Agent::Working, &TimeZone::UTC);
     let [Card::Bar(card)] = cards.as_slice() else { panic!("{cards:?}") };
-    assert_eq!(card.right.as_deref(), Some("<1%"));
-    assert_eq!(card.detail, "100 of 58,650 \u{b7} about 9h 45m left");
+    assert_eq!(card.right.as_deref(), Some("0.1%"));
+    assert_eq!(card.detail, "100 of 58,650");
+    assert_eq!(card.stats, "100/min \u{b7} 9h 45m left \u{b7} 1m 00s elapsed");
 }
 
 #[test]
@@ -128,8 +183,8 @@ fn a_timed_job_fills_by_the_clock_and_says_about_how_long_is_left() {
     let cards = cards(&board, NOON + 5 * MIN, Agent::Working, &TimeZone::UTC);
     let [Card::Bar(card)] = cards.as_slice() else { panic!("{cards:?}") };
     assert_eq!((card.fraction * 100.0).round(), 25.0);
-    assert_eq!(card.right.as_deref(), Some("5m"));
-    assert_eq!(card.detail, "about 15m left");
+    assert_eq!(card.right.as_deref(), Some("5m 00s"));
+    assert_eq!(card.detail, "15m 00s left");
     let past = super::cards(&board, NOON + 25 * MIN, Agent::Working, &TimeZone::UTC);
     let [Card::Bar(card)] = past.as_slice() else { panic!("{past:?}") };
     assert_eq!((card.fraction, card.detail.as_str()), (1.0, "overdue by 5m"));
@@ -150,7 +205,7 @@ fn a_small_whole_total_is_segments_with_the_active_one_after_the_done_ones() {
     let cards = cards(&board, NOON, Agent::Working, &TimeZone::UTC);
     let [Card::Segments(card)] = cards.as_slice() else { panic!("{cards:?}") };
     assert_eq!(card.label, "3 of 5 checks");
-    assert_eq!(card.sub, "macOS running \u{b7} about 3m left");
+    assert_eq!(card.sub, "macOS running \u{b7} 3m 00s left");
     assert_eq!(
         card.segments,
         [Segment::Done, Segment::Done, Segment::Done, Segment::Active, Segment::Todo]
@@ -380,7 +435,7 @@ fn a_timed_job_past_its_time_says_overdue_and_a_done_agent_gets_an_ended_line_in
     assert_eq!((card.fraction, card.detail.as_str()), (1.0, "overdue by 2m"));
     let early = cards(&board, NOON + 9 * MIN, Agent::Working, &TimeZone::UTC);
     let [Card::Bar(card)] = early.as_slice() else { panic!("{early:?}") };
-    assert_eq!(card.detail, "about 1m left");
+    assert_eq!(card.detail, "1m 00s left");
     board.tick(now, Agent::Done);
     assert_eq!(
         card_words(&cards(&board, now, Agent::Working, &TimeZone::UTC)),

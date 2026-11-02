@@ -92,15 +92,16 @@ fn the_mockup_cards_say_what_the_mockup_says() {
     let frame = Frame::new(cards(&fake_board(NOW), NOW, Agent::Working, &TimeZone::UTC), 400.0);
     for want in [
         "Backfill orders",
-        "21%",
-        "12,431 of 58,650 rows \u{b7} about 1h 51m left",
+        "21.1%",
+        "12,431 of 58,650 rows",
+        "7.76 rows/s \u{b7} 1h 39m left \u{b7} 30m 00s elapsed",
         "PR checks",
         "3 of 5 checks",
         "Import users stuck at 97% for 6m",
         "Ask agent",
         "Worktree setup",
         "Deploy staging",
-        "about 14m left",
+        "14m 00s left",
         "cargo test",
         "2,246 passed \u{b7} 4m",
     ] {
@@ -240,6 +241,7 @@ fn a_value_that_leaves_a_job_name_under_80_px_goes_under_the_name_and_the_name_s
         right: Some("4% \u{b7} about 9h 46m left".to_owned()),
         fraction: 0.04,
         detail: String::new(),
+        stats: String::new(),
     });
     let narrow = Frame::new(vec![card.clone()], 200.0);
     let name = narrow.texts.iter().find(|(t, _)| t == "recap-people-backfill").unwrap().1;

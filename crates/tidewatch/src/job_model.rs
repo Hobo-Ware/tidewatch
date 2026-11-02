@@ -24,6 +24,8 @@ pub(crate) struct BarCard {
     pub(crate) right: Option<String>,
     pub(crate) fraction: f32,
     pub(crate) detail: String,
+    /// The live numbers under the detail: rate, time left and time spent.
+    pub(crate) stats: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,6 +106,33 @@ pub(crate) fn duration_text(secs: u64) -> String {
     }
 }
 
+/// A time that ticks every second while it is short enough for seconds to matter: `42s`,
+/// `4m 05s`, then `1h 52m` as [`duration_text`] says it.
+pub(crate) fn clock_text(secs: u64) -> String {
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => duration_text(secs),
+    }
+}
+
+/// How fast a job moves: per second once it does two or more a second, else per minute.
+pub(crate) fn rate_text(per_min: f64, unit: &str) -> String {
+    let (value, per) = if per_min >= 120.0 { (per_min / 60.0, "s") } else { (per_min, "min") };
+    let number = if value >= 100.0 {
+        count_text(value.round())
+    } else if value >= 10.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    };
+    match unit {
+        "" => format!("{number}/{per}"),
+        "%" => format!("{number}%/{per}"),
+        unit => format!("{number} {unit}/{per}"),
+    }
+}
+
 fn ms_text(ms: i64) -> String {
     duration_text(u64::try_from(ms.max(0) / 1000).unwrap_or(0))
 }
@@ -150,8 +179,21 @@ pub(crate) fn percent_text(percent: f64) -> Option<String> {
     }
 }
 
+/// The card's percent, to a tenth so it moves with every few rows: never 0, never 100 early.
+pub(crate) fn fine_percent_text(percent: f64) -> Option<String> {
+    if !percent.is_finite() || percent <= 0.0 {
+        None
+    } else if percent < 0.1 {
+        Some("<0.1%".to_owned())
+    } else if percent >= 100.0 {
+        Some("100%".to_owned())
+    } else {
+        Some(format!("{:.1}%", ((percent * 10.0).floor() / 10.0).min(99.9)))
+    }
+}
+
 fn percent_label(job: &Job) -> Option<String> {
-    job.percent().and_then(percent_text)
+    job.percent().and_then(fine_percent_text)
 }
 
 fn unit_suffix(job: &Job) -> String {
@@ -159,7 +201,7 @@ fn unit_suffix(job: &Job) -> String {
 }
 
 fn left_text(secs: u64) -> String {
-    format!("about {} left", duration_text(secs))
+    format!("{} left", clock_text(secs))
 }
 
 fn stalled_line(job: &Job, now_ms: i64) -> String {
@@ -174,7 +216,7 @@ pub(crate) fn ask_text(job: &Job, now_ms: i64) -> String {
     format!("{} has not moved for {}. Check on it.", job.name, ms_text(job.quiet_ms(now_ms)))
 }
 
-fn counted_detail(job: &Job, total: f64, now_ms: i64) -> String {
+fn counted_detail(job: &Job, total: f64) -> String {
     let mut parts = Vec::new();
     if !job.phase.is_empty() {
         parts.push(job.phase.clone());
@@ -189,7 +231,14 @@ fn counted_detail(job: &Job, total: f64, now_ms: i64) -> String {
             unit_suffix(job)
         ));
     }
+    parts.join(" \u{b7} ")
+}
+
+fn counted_stats(job: &Job, now_ms: i64) -> String {
+    let mut parts = Vec::new();
+    parts.extend(job.rate_per_min.map(|rate| rate_text(rate, &job.unit)));
     parts.extend(job.eta_left(now_ms).map(left_text));
+    parts.push(format!("{} elapsed", clock_text(job.elapsed_secs(now_ms))));
     parts.join(" \u{b7} ")
 }
 
@@ -209,7 +258,8 @@ fn bar_card(job: &Job, total: f64, now_ms: i64) -> BarCard {
         name: job.name.clone(),
         right: percent_label(job),
         fraction: job.fraction().unwrap_or(0.0),
-        detail: counted_detail(job, total, now_ms),
+        detail: counted_detail(job, total),
+        stats: counted_stats(job, now_ms),
     }
 }
 
@@ -217,9 +267,10 @@ fn timed_card(job: &Job, fraction: f32, now_ms: i64) -> BarCard {
     BarCard {
         id: job.id,
         name: job.name.clone(),
-        right: Some(ms_text(job.elapsed_ms(now_ms))),
+        right: Some(clock_text(job.elapsed_secs(now_ms))),
         fraction,
         detail: timed_detail(job, now_ms),
+        stats: String::new(),
     }
 }
 
@@ -350,7 +401,7 @@ pub(crate) fn tab_job(board: &JobBoard, now_ms: i64, agent: Agent) -> Option<Tab
     let percent = job.percent()?;
     let label = percent_text(percent)?;
     let mut parts = vec![format!("{}: {}", job.name, counts_text(job))];
-    parts.extend(job.eta_left(now_ms).map(|secs| format!("{} left", duration_text(secs))));
+    parts.extend(job.eta_left(now_ms).map(left_text));
     let stalled = job.state == JobState::Stalled && agent == Agent::Working;
     if stalled {
         parts.push(format!("stuck for {}", ms_text(job.quiet_ms(now_ms))));
@@ -371,7 +422,7 @@ pub(crate) fn lane_line(board: &JobBoard, now_ms: i64, agent: Agent) -> Option<S
             parts.push(format!("stuck {}", ms_text(job.quiet_ms(now_ms))));
         }
         JobState::Stalled => parts.push(format!("no report {}", ms_text(job.quiet_ms(now_ms)))),
-        _ => parts.extend(job.eta_left(now_ms).map(duration_text)),
+        _ => parts.extend(job.eta_left(now_ms).map(clock_text)),
     }
     if parts.is_empty() {
         parts.push(job.name.clone());

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use stdusk_core::terminal::GridSnap;
 use tidewatch_core::background::{Launch, Signal, Watch};
-use tidewatch_core::job::{Agent, JobBoard, JobState, Report};
+use tidewatch_core::job::{Agent, JobBoard, JobState, Report, next_second_at};
 use tidewatch_core::job_bar;
 use tidewatch_core::job_feed::Feed;
 use tidewatch_core::job_store;
@@ -16,8 +16,6 @@ use tidewatch_core::paths::{jobs_file_beside, progress_feed_file_beside};
 
 use crate::jobs::Jobs;
 
-const POLL_EVERY_MS: i64 = 1_000;
-const RUNNING_POLL_MS: i64 = 2_000;
 const SAVE_EVERY_MS: i64 = 3_000;
 const SCAN_EVERY_MS: i64 = 1_000;
 const SEEN_LINES_CAP: usize = 4_096;
@@ -164,7 +162,7 @@ impl Host {
             if !tab.loaded {
                 continue;
             }
-            if now_ms - tab.polled_ms >= POLL_EVERY_MS
+            if now_ms.div_euclid(1000) != tab.polled_ms.div_euclid(1000)
                 && let Some(files) = &tab.files
             {
                 tab.polled_ms = now_ms;
@@ -179,7 +177,7 @@ impl Host {
             });
             tab.dirty |= tab.board.tick(now_ms, agent);
             if tab.board.has_running() {
-                soonest(now_ms + RUNNING_POLL_MS);
+                soonest(next_second_at(now_ms));
             }
             if let Some(at) = tab.board.next_change_at(agent) {
                 soonest(at);
@@ -239,7 +237,7 @@ impl Host {
         for report in std::mem::take(&mut tab.pending) {
             tab.dirty |= tab.board.report(&report, now_ms);
         }
-        tab.polled_ms = 0;
+        tab.polled_ms = i64::MIN;
     }
 
     pub(crate) fn scan(
