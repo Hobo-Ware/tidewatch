@@ -1,6 +1,6 @@
 //! Reads Claude Code's next-prompt suggestion off its terminal. Claude draws the suggestion as the
 //! placeholder of its empty input line: the first character as the inverse cursor, the rest faint
-//! (SGR 2), after the `>` prompt, between the top and bottom border of the input box. The parser is
+//! (SGR 2), after the `>` prompt and a space (a no-break space in claude 2.1.316), between the top and bottom border of the input box. The parser is
 //! pure and returns nothing for any screen that does not look exactly like that, so typed text,
 //! history lines and other CLIs never produce a ghost. `Ghost` keeps the last read per tab and
 //! looks at the screen again only when the terminal printed something new.
@@ -14,6 +14,7 @@ const RULES: [char; 3] = ['\u{2500}', '\u{2501}', '\u{2550}'];
 const RULE_STARTS: [char; 7] =
     ['\u{2500}', '\u{2501}', '\u{2550}', '\u{256d}', '\u{2570}', '\u{250c}', '\u{2514}'];
 const SIDES: [char; 2] = ['\u{2502}', '\u{2503}'];
+const BLANKS: [char; 2] = [' ', '\u{a0}'];
 const MIN_RULE: usize = 8;
 const MAX_CHARS: usize = 400;
 
@@ -72,8 +73,12 @@ fn text_of(row: &[CellSnap]) -> impl Iterator<Item = &CellSnap> {
     row.iter().filter(|cell| cell.c != '\0')
 }
 
+fn is_blank(cell: &CellSnap) -> bool {
+    BLANKS.contains(&cell.c)
+}
+
 fn first_non_space(row: &[CellSnap]) -> Option<usize> {
-    row.iter().position(|cell| cell.c != ' ' && cell.c != '\0')
+    row.iter().position(|cell| !is_blank(cell) && cell.c != '\0')
 }
 
 fn is_rule(row: &[CellSnap]) -> bool {
@@ -84,21 +89,21 @@ fn is_rule(row: &[CellSnap]) -> bool {
 fn prompt_start(row: &[CellSnap]) -> Option<usize> {
     let mut at = first_non_space(row)?;
     if SIDES.contains(&row[at].c) {
-        at += 1 + row.get(at + 1..)?.iter().position(|cell| cell.c != ' ')?;
+        at += 1 + row.get(at + 1..)?.iter().position(|cell| !is_blank(cell))?;
     }
-    (PROMPTS.contains(&row[at].c) && row.get(at + 1)?.c == ' ').then_some(at + 2)
+    (PROMPTS.contains(&row[at].c) && is_blank(row.get(at + 1)?)).then_some(at + 2)
 }
 
 fn trimmed(row: &[CellSnap]) -> Vec<&CellSnap> {
     let mut cells: Vec<&CellSnap> = text_of(row).collect();
-    while cells.last().is_some_and(|cell| cell.c == ' ' || SIDES.contains(&cell.c)) {
+    while cells.last().is_some_and(|cell| is_blank(cell) || SIDES.contains(&cell.c)) {
         cells.pop();
     }
     cells
 }
 
 fn is_cursor(cell: &CellSnap, next: Option<&&CellSnap>) -> bool {
-    !cell.dim && cell.bg.is_some() && cell.c != ' ' && next.is_some_and(|next| next.dim)
+    !cell.dim && cell.bg.is_some() && !is_blank(cell) && next.is_some_and(|next| next.dim)
 }
 
 fn first_line(content: &[CellSnap]) -> Option<String> {
@@ -118,7 +123,7 @@ fn faint_text(row: &[CellSnap], first_row: bool) -> Option<String> {
         return Some(String::new());
     }
     let from = usize::from(first_row && is_cursor(cells[0], cells.get(1)));
-    let loud = cells[from..].iter().any(|cell| cell.c != ' ' && !cell.dim);
+    let loud = cells[from..].iter().any(|cell| !is_blank(cell) && !cell.dim);
     if loud {
         return None;
     }
@@ -310,6 +315,20 @@ mod tests {
         for (name, snap, want) in cases {
             assert_eq!(screen_of(&snap), want, "{name}");
         }
+    }
+
+    #[test]
+    fn claude_2_1_316_draws_a_no_break_space_after_the_prompt_and_its_box_still_reads() {
+        let real = |rest: &[(&str, Ink)]| {
+            let mut parts = vec![("\u{276f}\u{a0}", Ink::Plain)];
+            parts.extend_from_slice(rest);
+            boxed(row(&parts))
+        };
+        assert_eq!(screen_of(&real(&[])), Screen::Free);
+        let hint = real(&[("Try \"fix typecheck errors\"", Ink::Faint)]);
+        assert_eq!(screen_of(&hint), Screen::Free);
+        assert_eq!(read(&hint).as_deref(), Some("Try \"fix typecheck errors\""));
+        assert_eq!(screen_of(&real(&[("half a\u{a0}thought", Ink::Plain)])), Screen::Typed);
     }
 
     #[test]
