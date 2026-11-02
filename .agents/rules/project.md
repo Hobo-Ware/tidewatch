@@ -78,6 +78,10 @@ Deviations log). To pick up a sibling change, merge it there, then bump `rev`.
 Check the real exit code of a build (`cargo build 2>build.log; echo $?`), never a piped
 `tail`. Verify UI changes with the screenshot switch instead of asking for a manual check.
 
+Delete build output when its work ends: a worktree's `target/<name>` folder, scratch builds and
+downloaded release assets go in the same turn the PR merges or the work is dropped. Keep only the
+shared `target/debug` and `target/release`. Never end a turn leaving a folder whose work is over.
+
 ## Performance rules
 
 - Idle CPU stays at 0%: repaint only on input, pty output or finished background work.
