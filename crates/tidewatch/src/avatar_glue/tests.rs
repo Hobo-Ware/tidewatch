@@ -323,3 +323,74 @@ fn an_unreadable_saved_avatar_leaves_the_marker_so_no_prompt_asks_on_top_of_the_
     }
     assert!(marker(&fx).exists());
 }
+
+fn ask_with_goal(fx: &Fx, goal: &str, minutes_ago: u64) {
+    let text = format!("# Goal\n{goal}\n\n## Status\nstate: working\n");
+    let ledger = tidewatch_core::progress::Ledger::parse(&text);
+    let progress = tidewatch_core::paths::progress_file_beside(&fx.notes());
+    tidewatch_core::progress_store::save(&progress, &ledger).unwrap();
+    avatar_store::mark_asked(&marker(fx)).unwrap();
+    let at = std::time::SystemTime::now() - Duration::from_secs(minutes_ago * 60);
+    std::fs::File::options().write(true).open(marker(fx)).unwrap().set_modified(at).unwrap();
+}
+
+fn settle_jobs(fx: &Fx, host: &mut Host, ids: &[u64]) {
+    for _ in 0..20 {
+        fx.tick(host, ids);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_tab_still_on_its_letter_two_minutes_after_the_ask_gets_the_icon_picked_from_its_goal() {
+    let fx = Fx::new();
+    ask_with_goal(&fx, "Fix the crash on startup", 3);
+    let mut host = Host::new(true, false);
+    fx.until(&mut host, 1, |host| host.get(1).is_some());
+    let want = avatar_fallback::face("Fix the crash on startup").unwrap();
+    assert_eq!(**host.get(1).unwrap(), want);
+    assert_eq!(avatar_store::load(&fx.file()), Some(want));
+}
+
+#[test]
+fn an_ask_under_two_minutes_old_leaves_the_letter_and_writes_nothing() {
+    let fx = Fx::new();
+    ask_with_goal(&fx, "Fix the crash on startup", 0);
+    let mut host = Host::new(true, false);
+    settle_jobs(&fx, &mut host, &[1]);
+    assert!(host.get(1).is_none());
+    assert!(!fx.file().exists());
+}
+
+#[test]
+fn a_meeseeks_and_a_host_that_writes_nothing_never_get_the_fallback_icon() {
+    let fx = Fx::new();
+    ask_with_goal(&fx, "Fix the crash on startup", 3);
+    let mut meeseeks = Host::new(true, false);
+    meeseeks.fixed_faces(&[1], &fx.ctx);
+    settle_jobs(&fx, &mut meeseeks, &[1]);
+    assert_eq!(meeseeks.get(1).unwrap().svg, MEESEEKS_SVG);
+    let mut screenshot = Host::new(false, false);
+    settle_jobs(&fx, &mut screenshot, &[1]);
+    assert!(screenshot.get(1).is_none());
+    assert!(!fx.file().exists());
+}
+
+#[test]
+fn use_letter_keeps_the_letter_for_good_and_a_later_set_avatar_replaces_the_fallback() {
+    let fx = Fx::new();
+    ask_with_goal(&fx, "Fix the crash on startup", 3);
+    let mut host = Host::new(true, false);
+    fx.until(&mut host, 1, |host| host.get(1).is_some());
+    host.arrived(1, clean(SVG, "the agent's own").unwrap());
+    assert_eq!(host.get(1).unwrap().reason, "the agent's own");
+
+    host.clear(1, &fx.notes(), &fx.ctx);
+    settle_jobs(&fx, &mut host, &[1]);
+    assert!(host.get(1).is_none());
+
+    let mut restarted = Host::new(true, false);
+    settle_jobs(&fx, &mut restarted, &[1]);
+    assert!(restarted.get(1).is_none());
+    assert!(!fx.file().exists());
+}

@@ -4,6 +4,10 @@
 //! An avatar that fails the readability check when it loads (see `avatar_check.rs`) shows the letter,
 //! its file is removed and the tab is queued once for a Redraw ask.
 //!
+//! A tab still on its letter two minutes after the icon ask gets the icon Tidewatch picks from its
+//! goal (`avatar_fallback.rs`), checked off the UI thread on frames that happen anyway, with one
+//! wake for the moment it is due.
+//!
 //! `TIDEWATCH_FAKE_AVATARS=1` gives the agent tabs the mockup icons in turn, one of them too dark to
 //! read so its tab shows the letter, and writes nothing. `TIDEWATCH_FAKE_AVATARS=icons` gives them
 //! icons from the bundled Lucide set in different colors instead.
@@ -13,12 +17,17 @@ use std::sync::Arc;
 
 use tidewatch_core::avatar::{Avatar, clean};
 use tidewatch_core::avatar_check;
+use tidewatch_core::avatar_fallback::{self, Outcome};
 use tidewatch_core::avatar_icons;
 use tidewatch_core::avatar_store;
+use tidewatch_core::clock::now_ms;
 use tidewatch_core::paths::{avatar_asked_file_beside, avatar_file_beside};
 
 use crate::job_glue::Facts;
 use crate::jobs::Jobs;
+use crate::wake::request_wake;
+
+const FALLBACK_RECHECK_S: f64 = 15.0;
 
 pub(crate) const FAKE: [(&str, &str); 7] = [
     (
@@ -120,11 +129,18 @@ pub(crate) enum Done {
     Unreadable { tab: u64 },
     Marked,
     Cleared,
+    Fallback { tab: u64, outcome: Outcome },
 }
 
 enum Slot {
     Loading,
     Known(Option<Arc<Avatar>>),
+}
+
+enum Check {
+    Running,
+    At(f64),
+    Never,
 }
 
 pub(crate) struct Host {
@@ -135,6 +151,7 @@ pub(crate) struct Host {
     fake_next: usize,
     fixed: Vec<u64>,
     unreadable: Vec<u64>,
+    checks: HashMap<u64, Check>,
 }
 
 impl Host {
@@ -147,6 +164,7 @@ impl Host {
             fake_next: 0,
             fixed: Vec::new(),
             unreadable: Vec::new(),
+            checks: HashMap::new(),
         }
     }
 
@@ -177,6 +195,8 @@ impl Host {
 
     pub(crate) fn tick(&mut self, tabs: &[Facts<'_>], ctx: &egui::Context) {
         self.tabs.retain(|id, _| tabs.iter().any(|facts| facts.id == *id));
+        self.checks.retain(|id, _| tabs.iter().any(|facts| facts.id == *id));
+        let now = ctx.input(|i| i.time);
         for done in self.jobs.drain() {
             match done {
                 Done::Loaded { tab, avatar }
@@ -190,6 +210,7 @@ impl Host {
                         self.unreadable.push(tab);
                     }
                 }
+                Done::Fallback { tab, outcome } => self.fallback_done(tab, outcome, now, ctx),
                 _ => {}
             }
         }
@@ -216,6 +237,51 @@ impl Host {
                 });
                 self.tabs.insert(facts.id, Slot::Loading);
             }
+        }
+        self.check_fallbacks(tabs, now, ctx);
+    }
+
+    fn check_fallbacks(&mut self, tabs: &[Facts<'_>], now: f64, ctx: &egui::Context) {
+        if !self.writable {
+            return;
+        }
+        for facts in tabs {
+            let on_letter = matches!(self.tabs.get(&facts.id), Some(Slot::Known(None)));
+            let waiting = match self.checks.get(&facts.id) {
+                Some(Check::Running | Check::Never) => true,
+                Some(Check::At(at)) => now < *at,
+                None => false,
+            };
+            if !on_letter || waiting || self.fixed.contains(&facts.id) {
+                continue;
+            }
+            let (tab, notes) = (facts.id, facts.notes_file.to_path_buf());
+            self.jobs.spawn(ctx, move || Done::Fallback {
+                tab,
+                outcome: avatar_fallback::apply(&notes, false, now_ms()),
+            });
+            self.checks.insert(tab, Check::Running);
+        }
+    }
+
+    fn fallback_done(&mut self, tab: u64, outcome: Outcome, now: f64, ctx: &egui::Context) {
+        let next = match outcome {
+            Outcome::Saved(avatar) => {
+                if matches!(self.tabs.get(&tab), Some(Slot::Known(None))) {
+                    self.tabs.insert(tab, Slot::Known(Some(Arc::new(avatar))));
+                }
+                Check::Never
+            }
+            Outcome::Wait(left_ms) => {
+                let secs = left_ms as f64 / 1000.0;
+                request_wake(ctx, secs);
+                Check::At(now + secs)
+            }
+            Outcome::Later => Check::At(now + FALLBACK_RECHECK_S),
+            Outcome::Never => Check::Never,
+        };
+        if self.tabs.contains_key(&tab) {
+            self.checks.insert(tab, next);
         }
     }
 
@@ -251,15 +317,17 @@ impl Host {
         });
     }
 
-    /// Use letter: the avatar goes, from the tab and from disk.
+    /// Use letter: the avatar goes, from the tab and from disk, and no fallback icon replaces it.
     pub(crate) fn clear(&mut self, tab: u64, notes_file: &std::path::Path, ctx: &egui::Context) {
         if !self.tabs.contains_key(&tab) || self.fixed.contains(&tab) {
             return;
         }
         self.tabs.insert(tab, Slot::Known(None));
+        self.checks.insert(tab, Check::Never);
         if self.writable {
-            let file = avatar_file_beside(notes_file);
+            let (file, notes) = (avatar_file_beside(notes_file), notes_file.to_path_buf());
             self.jobs.spawn(ctx, move || {
+                let _ = avatar_fallback::settle(&notes);
                 let _ = avatar_store::clear(&file);
                 Done::Cleared
             });
