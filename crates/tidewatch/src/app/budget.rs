@@ -7,6 +7,7 @@ use std::time::Duration;
 use super::{Tidewatch, wall_ms};
 use crate::budget_glue;
 use crate::token_budget::{self, Mark, Meter, TabTokens};
+use crate::wake;
 
 impl Tidewatch {
     pub(super) fn drive_budget(&mut self, ctx: &egui::Context) {
@@ -24,6 +25,13 @@ impl Tidewatch {
         self.flow.outbox.set_saving(self.budget.saving());
         if let Some(reset_ms) = self.budget.next_reset_ms(now_ms) {
             ctx.request_repaint_after(Duration::from_millis((reset_ms - now_ms).max(1) as u64));
+        }
+        let minimized = ctx.input(|i| i.viewport().minimized) == Some(true);
+        if self.shell.window_hidden() || minimized {
+            return;
+        }
+        if let Some(change_ms) = token_budget::next_label_change_ms(self.budget.limits(), now_ms) {
+            wake::request_wake(ctx, change_ms as f64 / 1000.0);
         }
     }
 

@@ -266,12 +266,13 @@ enum Cancelling {
 struct MeterLayout<'a> {
     meter: &'a Meter,
     label: std::sync::Arc<egui::Galley>,
+    label_slot: f32,
     percent: std::sync::Arc<egui::Galley>,
 }
 
 impl MeterLayout<'_> {
     fn width(&self) -> f32 {
-        self.label.size().x + METER_PART_GAP + TRACK_W + METER_PART_GAP + self.percent.size().x
+        self.label_slot + METER_PART_GAP + TRACK_W + METER_PART_GAP + self.percent.size().x
     }
 }
 
@@ -282,18 +283,17 @@ impl MeterLayout<'_> {
 fn draw_meters(ui: &Ui, meters: &[Meter], y: f32, left: f32, right: f32) -> f32 {
     let laid: Vec<MeterLayout<'_>> = meters
         .iter()
-        .map(|meter| MeterLayout {
-            meter,
-            label: ui.painter().layout_no_wrap(
-                meter.label.to_owned(),
-                mono(TEXT_TAG),
-                brand::MUTED,
-            ),
-            percent: ui.painter().layout_no_wrap(
-                meter.percent_text(),
-                mono(TEXT_TAG),
-                brand::MUTED,
-            ),
+        .map(|meter| {
+            let layout =
+                |text: String| ui.painter().layout_no_wrap(text, mono(TEXT_TAG), brand::MUTED);
+            let label = layout(meter.label.clone());
+            let widest = layout(meter.widest.to_owned());
+            MeterLayout {
+                meter,
+                label_slot: label.size().x.max(widest.size().x),
+                label,
+                percent: layout(meter.percent_text()),
+            }
         })
         .collect();
     let total = |parts: &[&MeterLayout<'_>]| {
@@ -316,11 +316,11 @@ fn draw_meters(ui: &Ui, meters: &[Meter], y: f32, left: f32, right: f32) -> f32 
         let meter = part.meter;
         let hit = Rect::from_min_size(pos2(x, y - HEIGHT / 2.0), vec2(part.width(), HEIGHT));
         ui.painter().galley(
-            pos2(x, y - part.label.size().y / 2.0),
+            pos2(x + part.label_slot - part.label.size().x, y - part.label.size().y / 2.0),
             part.label.clone(),
             brand::MUTED,
         );
-        x += part.label.size().x + METER_PART_GAP;
+        x += part.label_slot + METER_PART_GAP;
         let track = Rect::from_min_size(pos2(x, y - TRACK_H / 2.0), vec2(TRACK_W, TRACK_H));
         ui.painter().rect_filled(track, CornerRadius::same(TRACK_RADIUS), brand::FIELD_LINE);
         let fill = Rect::from_min_size(track.min, vec2(TRACK_W * meter.fraction(), TRACK_H));
@@ -333,7 +333,7 @@ fn draw_meters(ui: &Ui, meters: &[Meter], y: f32, left: f32, right: f32) -> f32 
             brand::MUTED,
         );
         x += part.percent.size().x + METER_GAP;
-        ui.interact(hit, Id::new(("status-bar-meter", meter.label)), Sense::hover())
+        ui.interact(hit, Id::new(("status-bar-meter", meter.key)), Sense::hover())
             .on_hover_text(meter.tip.as_str());
     }
     start - GAP
@@ -765,7 +765,46 @@ mod tests {
     }
 
     fn meter(label: &'static str, percent: u8, hot: bool) -> Meter {
-        Meter { label, percent, hot, tip: format!("{label} tip") }
+        Meter {
+            key: label,
+            label: label.to_owned(),
+            widest: label,
+            percent,
+            hot,
+            tip: format!("{label} tip"),
+        }
+    }
+
+    fn countdown(label: &str) -> Meter {
+        Meter {
+            key: "5h",
+            label: label.to_owned(),
+            widest: "4h 59m",
+            percent: 31,
+            hot: false,
+            tip: "5h tip".to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_countdown_takes_the_same_room_whatever_its_label_says() {
+        let ctx = context();
+        let room_left = |label: &str| {
+            let meters = [countdown(label), meter("week", 84, true)];
+            let mut left = 0.0;
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 120.0))),
+                    ..egui::RawInput::default()
+                },
+                |ui| left = draw_meters(ui, &meters, 10.0, 0.0, 1200.0),
+            );
+            left
+        };
+        let wide = room_left("4h 59m");
+        for label in ["1h 16m", "42m", "1m", "5h"] {
+            assert!((room_left(label) - wide).abs() < 0.01, "{label}");
+        }
     }
 
     fn meter_bar(meters: Vec<Meter>) -> Bar {

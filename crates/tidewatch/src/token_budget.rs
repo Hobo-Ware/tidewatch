@@ -8,6 +8,9 @@ use tidewatch_core::statusline::Context;
 use tidewatch_core::token_usage::{self, Share, Tally};
 
 const MINUTE_MS: i64 = 60_000;
+const FIVE_HOUR: &str = "5h";
+const WEEK: &str = "week";
+const WIDEST_COUNTDOWN: &str = "4h 59m";
 const MIN_COST_USD: f64 = 0.005;
 const SAVING_TIP: &str = "Save mode is on: Auto sends, reminders and new Meeseeks wait until the limit resets. Turn it off in Settings, General.";
 const SAVE_OFF_TIP: &str =
@@ -33,7 +36,11 @@ pub(crate) fn tab_tokens(tally: &Tally, share: Share) -> Option<TabTokens> {
 /// The two meters at the right of the status bar, one per window whose reading is current.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Meter {
-    pub(crate) label: &'static str,
+    /// Which window it is, steady while the label counts down.
+    pub(crate) key: &'static str,
+    pub(crate) label: String,
+    /// The widest the label gets, so the track stays put as the countdown changes.
+    pub(crate) widest: &'static str,
     pub(crate) percent: u8,
     /// The window is at the save-mode threshold: the fill is drawn in the warning ink.
     pub(crate) hot: bool,
@@ -61,6 +68,22 @@ fn resets_in(resets_at_ms: i64, now_ms: i64) -> String {
     }
 }
 
+/// The five-hour meter's label: the time left to its reset, or `5h` while none is ahead.
+fn five_hour_label(resets_at_ms: Option<i64>, now_ms: i64) -> String {
+    match resets_at_ms {
+        Some(at) if at > now_ms => resets_in(at, now_ms),
+        _ => FIVE_HOUR.to_owned(),
+    }
+}
+
+/// How long until the five-hour countdown shows another minute, while its meter counts down.
+pub(crate) fn next_label_change_ms(limits: Option<PlanLimits>, now_ms: i64) -> Option<i64> {
+    let (_, window) =
+        limits?.current(now_ms).into_iter().find(|(which, _)| *which == Which::FiveHour)?;
+    let left = window.resets_at_ms? - now_ms;
+    Some((left - 1) % MINUTE_MS + 1)
+}
+
 /// `Thu 14:00` in the local zone.
 fn resets_on(resets_at_ms: i64, zone: &TimeZone) -> Option<String> {
     let at = jiff::Timestamp::from_millisecond(resets_at_ms).ok()?.to_zoned(zone.clone());
@@ -70,9 +93,14 @@ fn resets_on(resets_at_ms: i64, zone: &TimeZone) -> Option<String> {
 fn meter(which: Which, window: Window, save_mode_on: bool, now_ms: i64, zone: &TimeZone) -> Meter {
     let percent = window.used_pct.floor().clamp(0.0, 100.0) as u8;
     let hot = window.used_pct >= THRESHOLD_PCT;
-    let (label, name) = match which {
-        Which::FiveHour => ("5h", "5-hour limit"),
-        Which::Week => ("week", "Week limit"),
+    let (key, label, widest, name) = match which {
+        Which::FiveHour => (
+            FIVE_HOUR,
+            five_hour_label(window.resets_at_ms, now_ms),
+            WIDEST_COUNTDOWN,
+            "5-hour limit",
+        ),
+        Which::Week => (WEEK, WEEK.to_owned(), WEEK, "Week limit"),
     };
     let reset = window.resets_at_ms.and_then(|at| match which {
         Which::FiveHour => Some(format!("resets in {}", resets_in(at, now_ms))),
@@ -87,7 +115,7 @@ fn meter(which: Which, window: Window, save_mode_on: bool, now_ms: i64, zone: &T
         (true, false) => SAVE_OFF_TIP.to_owned(),
         (false, _) => format!("Save mode starts at {THRESHOLD_PCT}% of a limit."),
     };
-    Meter { label, percent, hot, tip: format!("{first}\n{save}") }
+    Meter { key, label, widest, percent, hot, tip: format!("{first}\n{save}") }
 }
 
 /// Every window whose reading is current, five-hour first.
@@ -241,8 +269,12 @@ mod tests {
         let utc = TimeZone::UTC;
         let got = meters(Some(both(31.4, 70.0)), true, NOW, &utc);
         assert_eq!(
-            got.iter().map(|m| (m.label, m.percent_text(), m.hot)).collect::<Vec<_>>(),
-            [("5h", "31%".to_owned(), false), ("week", "70%".to_owned(), false)]
+            got.iter().map(|m| (m.label.as_str(), m.percent_text(), m.hot)).collect::<Vec<_>>(),
+            [("2h 10m", "31%".to_owned(), false), ("week", "70%".to_owned(), false)]
+        );
+        assert_eq!(
+            got.iter().map(|m| (m.key, m.widest)).collect::<Vec<_>>(),
+            [("5h", "4h 59m"), ("week", "week")]
         );
         assert_eq!(
             got[0].tip,
@@ -267,7 +299,63 @@ mod tests {
             week: Some(window(50.0, 3 * 24 * HOUR)),
         };
         let got = meters(Some(stale), true, NOW, &utc);
-        assert_eq!(got.iter().map(|m| m.label).collect::<Vec<_>>(), ["week"]);
+        assert_eq!(got.iter().map(|m| m.key).collect::<Vec<_>>(), ["week"]);
+    }
+
+    #[test]
+    fn the_five_hour_label_counts_down_to_its_reset_and_reads_5h_without_one_ahead() {
+        let cases = [
+            (Some(NOW + 4 * HOUR + 59 * 60_000 + 30_000), "5h"),
+            (Some(NOW + 4 * HOUR + 59 * 60_000), "4h 59m"),
+            (Some(NOW + HOUR + 16 * 60_000), "1h 16m"),
+            (Some(NOW + 42 * 60_000), "42m"),
+            (Some(NOW + 1), "1m"),
+            (Some(NOW), "5h"),
+            (Some(NOW - HOUR), "5h"),
+            (None, "5h"),
+        ];
+        for (at, want) in cases {
+            assert_eq!(five_hour_label(at, NOW), want, "{at:?}");
+        }
+        let limits = |at: Option<i64>| PlanLimits {
+            five_hour: Some(Window { used_pct: 31.0, resets_at_ms: at }),
+            week: both(0.0, 12.0).week,
+        };
+        let labels = |at| {
+            meters(Some(limits(at)), true, NOW, &TimeZone::UTC)
+                .into_iter()
+                .map(|m| m.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labels(Some(NOW + 42 * 60_000)), ["42m", "week"]);
+        assert_eq!(labels(None), ["5h", "week"]);
+    }
+
+    #[test]
+    fn the_next_wake_lands_where_the_countdown_shows_another_minute() {
+        let five = |at: Option<i64>| PlanLimits {
+            five_hour: Some(Window { used_pct: 31.0, resets_at_ms: at }),
+            week: both(0.0, 12.0).week,
+        };
+        let cases = [
+            (Some(five(Some(NOW + HOUR + 16 * 60_000))), Some(60_000)),
+            (Some(five(Some(NOW + HOUR + 16 * 60_000 + 1))), Some(1)),
+            (Some(five(Some(NOW + 42 * 60_000 + 59_999))), Some(59_999)),
+            (Some(five(Some(NOW + 30_000))), Some(30_000)),
+            (Some(five(Some(NOW))), None),
+            (Some(five(Some(NOW - HOUR))), None),
+            (Some(five(None)), None),
+            (Some(PlanLimits { five_hour: None, week: both(0.0, 12.0).week }), None),
+            (None, None),
+        ];
+        for (limits, want) in cases {
+            assert_eq!(next_label_change_ms(limits, NOW), want, "{limits:?}");
+        }
+        let at = NOW + HOUR + 16 * 60_000 + 1;
+        let before = five_hour_label(Some(at), NOW);
+        let wake = next_label_change_ms(Some(five(Some(at))), NOW).unwrap();
+        assert_eq!(five_hour_label(Some(at), NOW + wake - 1), before);
+        assert_ne!(five_hour_label(Some(at), NOW + wake), before);
     }
 
     #[test]
