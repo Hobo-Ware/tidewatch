@@ -69,20 +69,20 @@ fn the_rule_waits_two_minutes_after_the_ask_and_never_touches_a_fixed_or_settled
     let ready = Facts {
         face: Face::Letter,
         settled: false,
-        has_goal: true,
+        has_words: true,
         asked_at_ms: Some(10 * MINUTE_MS),
     };
     let at = |minutes: i64| 10 * MINUTE_MS + minutes;
     let cases = [
         ("right after the ask", ready, at(0), Due::In(WAIT_MS)),
-        ("a minute after", ready, at(MINUTE_MS), Due::In(MINUTE_MS)),
-        ("just before two minutes", ready, at(WAIT_MS - 1), Due::In(1)),
-        ("at two minutes", ready, at(WAIT_MS), Due::Now),
+        ("halfway through the wait", ready, at(WAIT_MS / 2), Due::In(WAIT_MS / 2)),
+        ("just before the wait ends", ready, at(WAIT_MS - 1), Due::In(1)),
+        ("when the wait ends", ready, at(WAIT_MS), Due::Now),
         ("long after", ready, at(60 * MINUTE_MS), Due::Now),
         ("a Meeseeks", Facts { face: Face::Fixed, ..ready }, at(WAIT_MS), Due::Never),
         ("settled", Facts { settled: true, ..ready }, at(WAIT_MS), Due::Never),
         ("an icon is there", Facts { face: Face::Picture, ..ready }, at(WAIT_MS), Due::Later),
-        ("no goal", Facts { has_goal: false, ..ready }, at(WAIT_MS), Due::Later),
+        ("no words to pick from", Facts { has_words: false, ..ready }, at(WAIT_MS), Due::Later),
         ("never asked", Facts { asked_at_ms: None, ..ready }, at(WAIT_MS), Due::Later),
     ];
     for (what, facts, now, want) in cases {
@@ -113,12 +113,12 @@ fn ask_at(notes: &Path, ms: i64) {
 const ASKED_MS: i64 = 1_800_000_000_000;
 
 #[test]
-fn before_two_minutes_nothing_is_saved_and_after_them_the_picked_icon_is() {
+fn before_the_wait_nothing_is_saved_and_after_it_the_picked_icon_is() {
     let tab = tab("Fix the crash on startup");
     ask_at(&tab.notes, ASKED_MS);
     let file = avatar_file_beside(&tab.notes);
 
-    assert_eq!(apply(&tab.notes, false, ASKED_MS + MINUTE_MS), Outcome::Wait(MINUTE_MS));
+    assert_eq!(apply(&tab.notes, false, ASKED_MS + WAIT_MS / 2), Outcome::Wait(WAIT_MS / 2));
     assert!(!file.exists());
 
     let Outcome::Saved(avatar) = apply(&tab.notes, false, ASKED_MS + WAIT_MS) else {
@@ -171,4 +171,15 @@ fn a_meeseeks_a_settled_tab_a_tab_never_asked_and_a_tab_with_no_goal_get_nothing
     for tab in [meeseeks, letter, never_asked, no_goal] {
         assert!(!avatar_file_beside(&tab.notes).exists());
     }
+}
+
+#[test]
+fn with_no_goal_yet_the_icon_is_picked_from_the_message_the_ask_went_with() {
+    let tab = tab("");
+    let marker = avatar_asked_file_beside(&tab.notes);
+    avatar_store::mark_asked_for(&marker, "Fix the crash on startup").unwrap();
+    let at = SystemTime::UNIX_EPOCH + Duration::from_millis(u64::try_from(ASKED_MS).unwrap());
+    std::fs::File::options().write(true).open(&marker).unwrap().set_modified(at).unwrap();
+    let want = face("Fix the crash on startup").unwrap();
+    assert_eq!(apply(&tab.notes, false, ASKED_MS + WAIT_MS), Outcome::Saved(want));
 }

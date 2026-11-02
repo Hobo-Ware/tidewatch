@@ -4,8 +4,8 @@
 //! An avatar that fails the readability check when it loads (see `avatar_check.rs`) shows the letter,
 //! its file is removed and the tab is queued once for a Redraw ask.
 //!
-//! A tab still on its letter two minutes after the icon ask gets the icon Tidewatch picks from its
-//! goal (`avatar_fallback.rs`), checked off the UI thread on frames that happen anyway, with one
+//! A tab still on its letter 30 seconds after the icon ask gets the icon Tidewatch picks from its
+//! goal or first message (`avatar_fallback.rs`), checked off the UI thread on frames that happen anyway, with one
 //! wake for the moment it is due.
 //!
 //! `TIDEWATCH_FAKE_AVATARS=1` gives the agent tabs the mockup icons in turn, one of them too dark to

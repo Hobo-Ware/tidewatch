@@ -1,15 +1,14 @@
 //! The asks for an avatar. One is pasted into an idle agent when the owner clicks Draw avatar. The
-//! other is sent once, as soon as the tab's report has a goal: on the reply to the `update_progress`
-//! call that saved it, or on the answer to Claude's next `UserPromptSubmit` hook (see
-//! `prompt_answer.rs`), whichever comes first. It never touches the input box, and the icon is
-//! picked for a task that is known. The decision is pure; the listener reads the facts.
+//! other is sent once, with the owner's first message: on the answer to Claude's `UserPromptSubmit`
+//! hook (see `prompt_answer.rs`), so the icon shows while the agent starts on the task. It never
+//! touches the input box. The decision is pure; the listener reads the facts.
 
 use crate::agents::Wiring;
 
 /// The line pasted into an idle agent when the owner clicks Draw avatar.
 pub const ASK: &str = "Call set_avatar once for this task: pick the Lucide icon of the one object the goal is about, send its name as icon with a color, and name the object in reason. Draw an svg only when no icon fits.";
 
-pub const CONTEXT: &str = "Also call set_avatar once with an icon that fits your goal: the Lucide icon of the one object it is about, as icon with a color, and name the object in reason.";
+pub const CONTEXT: &str = "Before anything else, call set_avatar once with an icon that fits this task: the Lucide icon of the one object it is about, as icon with a color, and name the object in reason.";
 
 /// Whether the CLI gets the `set_avatar` tool: the two whose MCP config Tidewatch writes.
 #[must_use]
@@ -28,24 +27,22 @@ pub enum Face {
 pub struct Facts {
     pub face: Face,
     pub asked: bool,
-    pub has_goal: bool,
 }
 
-/// Whether the prompt that just arrived asks the tab to pick its icon: a letter face, never asked,
-/// and a goal in the saved report, so the icon is chosen for the task and not before it is known.
+/// Whether the prompt that just arrived asks the tab to pick its icon: a letter face, never asked.
 #[must_use]
 pub fn due(facts: &Facts) -> bool {
-    facts.face == Face::Letter && !facts.asked && facts.has_goal
+    facts.face == Face::Letter && !facts.asked
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const READY: Facts = Facts { face: Face::Letter, asked: false, has_goal: true };
+    const READY: Facts = Facts { face: Face::Letter, asked: false };
 
     #[test]
-    fn a_tab_with_a_goal_a_letter_and_no_earlier_ask_is_asked() {
+    fn a_tab_with_a_letter_and_no_earlier_ask_is_asked() {
         assert!(due(&READY));
     }
 
@@ -55,7 +52,6 @@ mod tests {
             ("a Meeseeks", Facts { face: Face::Fixed, ..READY }),
             ("a tab with a picture", Facts { face: Face::Picture, ..READY }),
             ("a tab asked before", Facts { asked: true, ..READY }),
-            ("a tab whose report has no goal yet", Facts { has_goal: false, ..READY }),
         ];
         for (what, facts) in cases {
             assert!(!due(&facts), "{what}");
@@ -63,9 +59,15 @@ mod tests {
     }
 
     #[test]
-    fn the_hook_line_names_the_tool_and_asks_for_an_icon_that_fits_the_goal() {
+    fn the_hook_line_names_the_tool_and_asks_for_an_icon_that_fits_the_task() {
         assert!(CONTEXT.contains(crate::avatar_mcp::SET_TOOL));
-        for want in ["fits your goal", "Lucide icon", "as icon with a color", "name the object"] {
+        for want in [
+            "Before anything else",
+            "fits this task",
+            "Lucide icon",
+            "as icon with a color",
+            "name the object",
+        ] {
             assert!(CONTEXT.contains(want), "{want} in {CONTEXT}");
         }
     }
