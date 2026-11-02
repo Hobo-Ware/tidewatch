@@ -84,9 +84,12 @@ impl SendLine {
 }
 
 /// Whether a message is a slash command: it runs at once, whatever the agent is doing, and is
-/// never held.
+/// never held. A message that starts with a path (`/Users/me/shot.png look at this`) is not one.
 pub(crate) fn is_command(text: &str) -> bool {
-    text.trim_start().starts_with('/')
+    let Some(rest) = text.trim_start().strip_prefix('/') else { return false };
+    let name = rest.split(char::is_whitespace).next().unwrap_or_default();
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
 }
 
 #[cfg(test)]
@@ -157,8 +160,19 @@ mod tests {
     }
 
     #[test]
-    fn only_a_slash_is_a_command() {
-        let cases = [("/model opus", true), ("  /clear", true), ("hello /x", false), ("", false)];
+    fn only_a_slash_and_a_command_name_is_a_command() {
+        let cases = [
+            ("/model opus", true),
+            ("  /clear", true),
+            ("/plugin:skill args", true),
+            ("/release-notes", true),
+            ("hello /x", false),
+            ("", false),
+            ("/", false),
+            ("/ hi", false),
+            ("/Users/me/.tidewatch/pastes/shot-1.png also this", false),
+            ("/tmp/q3.pdf is wrong", false),
+        ];
         for (text, want) in cases {
             assert_eq!(is_command(text), want, "{text:?}");
         }
