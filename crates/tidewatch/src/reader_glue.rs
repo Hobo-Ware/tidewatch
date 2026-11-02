@@ -793,8 +793,9 @@ fn stop(tabs: &mut Tabs<Pane<PtyTerm>>, tab: u64) {
     }
 }
 
-/// "Send now" on a held message: the turn is stopped and the message follows once the agent has
-/// taken the Esc. An agent that is not working takes it at once.
+/// "Send now" on a held message. Claude takes it at once, mid-turn, without being stopped; any other
+/// working agent is stopped and the message follows once it has taken the Esc. An agent that is
+/// not working takes it at once.
 fn send_now(
     tabs: &mut Tabs<Pane<PtyTerm>>,
     flow: &mut Flow,
@@ -805,7 +806,8 @@ fn send_now(
 ) -> Option<String> {
     let agent = tabs.agent_mut(tab)?;
     let held = agent.reader.view.line.delete(id)?;
-    if !interrupts(agent.run.status()) {
+    let takes_it_mid_turn = agent.reader.source() == Some(Source::Claude);
+    if takes_it_mid_turn || !interrupts(agent.run.status()) {
         if type_reply(tabs, flow, tab, &held.text, (ctx, now)) {
             return None;
         }
@@ -1660,8 +1662,12 @@ mod tests {
     }
 
     fn agent_in(status: AgentStatus) -> (Tabs<Pane<PtyTerm>>, u64, Flow) {
+        agent_of("claude", status)
+    }
+
+    fn agent_of(cli: &str, status: AgentStatus) -> (Tabs<Pane<PtyTerm>>, u64, Flow) {
         let mut tabs = Tabs::new(Pane::creating());
-        let mut run = AgentRun::setting_up("claude".into(), 0.0);
+        let mut run = AgentRun::setting_up(cli.into(), 0.0);
         run.set_status(status);
         let agent = AgentTab::new("Builder".into(), run);
         let pane = Pane { body: Body::Shell(idle_pty()), worktree: None, agent: Some(agent) };
@@ -1931,8 +1937,21 @@ mod tests {
     }
 
     #[test]
-    fn send_now_stops_a_working_agent_and_types_the_message_after_the_esc() {
+    fn send_now_types_into_a_working_claude_at_once_without_stopping_it() {
         let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+        say(&mut tabs, &mut flow, id, "also look at the tests", 1.0);
+        let held_id = tabs.agent_mut(id).unwrap().reader.view.line.items()[0].id;
+        let ctx = Context::default();
+        apply(vec![Action::SendNow(held_id)], &mut tabs, id, &mut flow, &ctx, 10.0);
+        assert_eq!(held(&mut tabs, id), Vec::<String>::new());
+        assert_eq!(queued(&mut tabs, id), 1);
+        assert!(flow.enter_pending(id), "the paste gets its Enter");
+        assert_eq!(tabs.agent_mut(id).unwrap().reader.take_due_step(99.0), None, "no Esc");
+    }
+
+    #[test]
+    fn send_now_stops_a_working_codex_and_types_the_message_after_the_esc() {
+        let (mut tabs, id, mut flow) = agent_of("codex", AgentStatus::Working);
         say(&mut tabs, &mut flow, id, "drop everything and do this", 1.0);
         let held_id = tabs.agent_mut(id).unwrap().reader.view.line.items()[0].id;
         let ctx = Context::default();
