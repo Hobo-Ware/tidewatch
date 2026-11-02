@@ -687,16 +687,15 @@ impl StatusTracker {
     fn tool_finished(&mut self, key: &str, id: Option<&str>, now: f64) {
         let call = id.unwrap_or(key);
         let began = self.open_tools.iter().position(|open| open.call == call);
-        if let Some(at) = began {
-            self.open_tools.remove(at);
-        }
+        let started_as = began.map(|at| self.open_tools.remove(at).key);
         if id.is_some() && began.is_none() {
             self.resume_after_finished_turn(now);
         }
         let Some(hook) = self.inputs.hook.as_mut().filter(|hook| hook.holds_permission()) else {
             return;
         };
-        if let Some(at) = hook.pending.iter().position(|call| call == key) {
+        let ours = |pending: &String| pending == key || started_as.as_ref() == Some(pending);
+        if let Some(at) = hook.pending.iter().position(ours) {
             hook.pending.remove(at);
             if hook.pending.is_empty() {
                 self.settle_permission(now);
@@ -1619,6 +1618,38 @@ mod tests {
             tracker.on_hook(&event, 5.0);
         }
         tracker
+    }
+
+    #[test]
+    fn an_answered_question_tool_lets_go_of_its_permission_though_its_finish_adds_the_answers() {
+        let questions = json!([{"question": "Where?", "options": [{"label": "Here"}]}]);
+        let mut tracker = StatusTracker::agent(0.0);
+        tracker.on_hook(&HookEvent::bare(HookKind::TurnStarted), 1.0);
+        tracker.on_hook(
+            &claude_hook(&json!({"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+                "tool_use_id": "toolu_q", "tool_input": {"questions": questions}})),
+            2.0,
+        );
+        tracker.on_hook(
+            &claude_hook(&json!({"hook_event_name": "PermissionRequest",
+                "tool_name": "AskUserQuestion", "tool_input": {"questions": questions}})),
+            2.1,
+        );
+        tracker.on_hook(
+            &claude_hook(&json!({"hook_event_name": "Notification",
+                "notification_type": "permission_prompt",
+                "message": "Claude needs your permission to use AskUserQuestion"})),
+            8.0,
+        );
+        assert_eq!(tracker.status(9.0), AgentStatus::NeedsYou(Reason::Permission));
+        tracker.on_hook(
+            &claude_hook(&json!({"hook_event_name": "PostToolUse", "tool_name": "AskUserQuestion",
+                "tool_use_id": "toolu_q", "tool_response": {},
+                "tool_input": {"annotations": {}, "answers": {"Where?": "Here"},
+                    "questions": questions}})),
+            60.0,
+        );
+        assert_eq!(tracker.status(61.0), AgentStatus::Working);
     }
 
     #[test]
