@@ -576,21 +576,24 @@ pub fn remove_watched(
     removal_log::append(paths, &entry)
         .map_err(|e| WorktreeError::Io(format!("cannot write the removal log: {e}")))?;
     unlock(worktree);
-    let mut command = git(&worktree.repo);
-    command.args(["worktree", "remove"]);
-    if terms.mode == RemoveMode::Discard || !worktree.path.exists() {
-        command.arg("--force");
-    }
-    command.arg(&worktree.path);
-    if let Err(error) = run(command) {
-        relock(worktree);
-        return Err(error);
+    if git_still_lists(worktree)? {
+        let mut command = git(&worktree.repo);
+        command.args(["worktree", "remove"]);
+        if terms.mode == RemoveMode::Discard || !worktree.path.exists() {
+            command.arg("--force");
+        }
+        command.arg(&worktree.path);
+        if let Err(error) = run(command) {
+            relock(worktree);
+            return Err(error);
+        }
     }
     let outcome = match terms.branch {
         BranchChoice::Keep => match only_here {
             Some(commits) => BranchOutcome::KeptCommits { commits },
             None => BranchOutcome::Kept,
         },
+        BranchChoice::Delete if entry.sha.is_none() => BranchOutcome::Deleted { restore: None },
         BranchChoice::Delete => {
             let force = terms.mode == RemoveMode::Discard || terms.delivered.is_some();
             delete_branch(worktree, force, entry.restore_command())
@@ -709,6 +712,13 @@ fn removal_entry(worktree: &Worktree, terms: &Terms, safety: &Safety) -> removal
         branch_kept: terms.branch == BranchChoice::Keep,
         lost,
     }
+}
+
+fn git_still_lists(worktree: &Worktree) -> Result<bool, WorktreeError> {
+    if worktree.path.exists() {
+        return Ok(true);
+    }
+    Ok(list(&worktree.repo)?.iter().any(|listed| listed.path == worktree.path))
 }
 
 fn delete_branch(worktree: &Worktree, force: bool, restore: Option<String>) -> BranchOutcome {
