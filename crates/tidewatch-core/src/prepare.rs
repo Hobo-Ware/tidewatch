@@ -882,7 +882,7 @@ mod tests {
         fx.run("claude", &profile("claude", Level::Yolo), true, "", None).unwrap();
         let text = agent_style(&fx);
         assert!(text.contains("## You run without supervision"), "{text}");
-        assert!(text.contains("product or architecture choices"));
+        assert!(text.contains("Decide product and architecture choices yourself"));
     }
 
     #[test]
