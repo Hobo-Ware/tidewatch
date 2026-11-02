@@ -1,6 +1,7 @@
 //! Which tabs run on their own: a YOLO agent and every Meeseeks. Their PR watch, done check, due items
 //! and delivery act without waiting for a click, and their house style says to decide and proceed.
-//! Only product design and architecture choices still go to the owner.
+//! They decide product and architecture choices too; only steps that lose data, spend money or
+//! cannot be undone outside the repo still go to the owner.
 
 use crate::agents::Level;
 

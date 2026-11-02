@@ -84,19 +84,20 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 - Work only in this worktree. Commit the way this repo's workflow says.
 - Set `kind` to `read-only` in your progress report for a question or an investigation (your final summary is the answer), and to `edit` as soon as you will change files.
 - When you believe you are done or cannot go further, call `meeseeks_done` once with a one-line summary (a read-only task puts its whole answer there). If you are blocked, start it with `Blocked:` and the reason. Tidewatch decides what to check and ends this session itself.
-- If a choice is left, ask it with your question tool, the recommended option first. Tidewatch picks your recommended answer after 5 minutes and tells the user it did.
+- If a choice needs the user (see the last point), ask it with your question tool, the recommended option first. Tidewatch picks your recommended answer after 5 minutes and tells the user it did.
 - You may push this branch. Do not push anything else or remove anything yourself.
 - Before `meeseeks_done`, a task that changed files pushes its branch and opens its own pull request with `gh pr create`, the way this repo's workflow says. Write the title and the body yourself (what changed and why, how you verified it, what you did not verify; short). Tidewatch does not open it for you, and the hand-off check fails until it exists. A read-only task opens none.
 - `meeseeks_done` ends your task. Your end block's Needs you says `nothing`.
 - If Tidewatch pastes a failed check, fix it and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
-- Don't ask to commit, push, rerun checks or fix CI. Ask for product design or architecture choices, or when this repo's rules tell you to stop, and keep working on whatever does not depend on the answer.
+- Don't ask to commit, push, rerun checks or fix CI. Decide product and architecture choices yourself: take the option you would recommend and write it under `decisions` in your progress report with the reason. Ask only before something that loses data, spends money or cannot be undone outside this repo, or when this repo's rules tell you to stop, and keep working on whatever does not depend on the answer.
 ";
 
 pub const AUTONOMOUS_GUIDANCE: &str = "\
 ## You run without supervision
 
-Don't ask to commit, push, open or update a pull request, or fix CI. Ask with your question tool for product or architecture choices, or when this repo's rules tell you to stop, and keep working on whatever does not depend on the answer.
+Don't ask to commit, push, open or update a pull request, or fix CI. Decide product and architecture choices yourself too: take the option you would recommend, write it under `decisions` in your progress report with the reason, and keep going. The user reads the report and changes a decision there if they want to.
+Ask with your question tool only before something that loses data, spends money or cannot be undone outside this repo, or when this repo's rules tell you to stop, and keep working on whatever does not depend on the answer.
 ";
 
 /// Which extra block an agent's house style gets after the launch text.
@@ -435,7 +436,7 @@ mod tests {
             "what changed and why, how you verified it, what you did not verify",
             "Tidewatch does not open it for you",
             "Commit the way this repo's workflow says",
-            "If a choice is left, ask it with your question tool",
+            "ask it with your question tool, the recommended option first",
             "Tidewatch picks your recommended answer after 5 minutes and tells the user it did",
         ] {
             assert!(text.contains(needle), "missing {needle}");
@@ -511,7 +512,9 @@ mod tests {
         for needle in [
             "Don't ask to commit, push, open or update a pull request, or fix CI.",
             "question tool",
-            "product or architecture choices",
+            "Decide product and architecture choices yourself",
+            "under `decisions` in your progress report",
+            "loses data, spends money or cannot be undone outside this repo",
             "or when this repo's rules tell you to stop",
             "keep working on whatever does not depend on the answer",
         ] {
