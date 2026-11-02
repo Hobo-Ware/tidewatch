@@ -38,6 +38,7 @@ pub mod elsewhere_flags;
 pub mod elsewhere_scan;
 pub mod end_block;
 pub mod events;
+pub mod extra_worktree;
 pub mod folder_repos;
 mod fsutil;
 pub mod github_clone;

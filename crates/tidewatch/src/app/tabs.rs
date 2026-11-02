@@ -299,11 +299,14 @@ impl Tidewatch {
                     self.answer_close(Answer::Pick(choice), ctx);
                 }
             }
-            Done::Removed { tab, result } => match result {
+            Done::Removed { tab, result, kept } => match result {
                 Ok(outcome) => {
                     self.tabs.remove_id(tab);
                     self.forget_tab(tab);
                     self.closed.mark_changed();
+                    if let Some(toast) = kept_extra_worktrees_toast(&kept) {
+                        self.show_toast(toast, ctx);
+                    }
                     match outcome {
                         BranchOutcome::Kept
                         | BranchOutcome::KeptCommits { .. }
@@ -363,6 +366,21 @@ impl Tidewatch {
     }
 }
 
+fn kept_extra_worktrees_toast(kept: &[std::path::PathBuf]) -> Option<String> {
+    let home = tidewatch_core::paths::home_dir();
+    let folders: Vec<String> = kept
+        .iter()
+        .map(|path| tidewatch_core::folder_repos::tilde(path, home.as_deref()))
+        .collect();
+    (!folders.is_empty()).then(|| {
+        format!(
+            "Kept {} with uncommitted or unpushed work: {}",
+            tidewatch_core::text::plural(folders.len(), "extra worktree", "extra worktrees"),
+            folders.join(", ")
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use tidewatch_core::paths::TidewatchPaths;
@@ -387,5 +405,17 @@ mod tests {
         assert!(other[0].is_file(), "another draft keeps its files");
         remove_staged(&paths.draft_dir(1));
         assert!(source.is_file(), "the original is never touched");
+    }
+
+    #[test]
+    fn closing_a_tab_names_the_extra_worktrees_it_kept_and_says_nothing_when_none() {
+        assert_eq!(super::kept_extra_worktrees_toast(&[]), None);
+        let kept = [std::path::PathBuf::from("/x/web-fix"), std::path::PathBuf::from("/x/api-fix")];
+        assert_eq!(
+            super::kept_extra_worktrees_toast(&kept).as_deref(),
+            Some(
+                "Kept 2 extra worktrees with uncommitted or unpushed work: /x/web-fix, /x/api-fix"
+            )
+        );
     }
 }

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tidewatch_core::clock::now_ms;
+use tidewatch_core::extra_worktree;
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::mcp::TabRole;
 use tidewatch_core::meeseeks::Meeseeks;
@@ -27,7 +28,7 @@ use crate::pane::{OpenFailure, Opened, Pane, Started};
 pub(crate) enum Done {
     Opened { tab: u64, result: Result<Opened, OpenFailure> },
     Inspected { tab: u64, worktree: Worktree, safety: Safety },
-    Removed { tab: u64, result: Result<BranchOutcome, String> },
+    Removed { tab: u64, result: Result<BranchOutcome, String>, kept: Vec<PathBuf> },
 }
 
 /// Where a new tab runs: a fresh worktree of the repo, or the folder itself in the Other group.
@@ -209,7 +210,12 @@ pub(crate) fn remove<T: Send + 'static>(
         {
             let _ = grant.revoke(Some(&worktree.path));
         }
-        Done::Removed { tab, result }
+        let kept = if result.is_ok() {
+            extra_worktree::remove_all_but_kept(&paths.notes_file(&worktree.repo, worktree.name()))
+        } else {
+            Vec::new()
+        };
+        Done::Removed { tab, result, kept }
     });
 }
 
@@ -536,7 +542,7 @@ mod tests {
             Terms::new(BranchChoice::Delete, RemoveMode::Safe).owner(Owner::ThisWindow),
             None,
         );
-        let Done::Removed { tab, result } = next(&jobs) else { panic!("expected Removed") };
+        let Done::Removed { tab, result, .. } = next(&jobs) else { panic!("expected Removed") };
         assert!(matches!(result, Ok(BranchOutcome::Deleted { .. })), "{result:?}");
         tabs.remove_id(tab);
 
