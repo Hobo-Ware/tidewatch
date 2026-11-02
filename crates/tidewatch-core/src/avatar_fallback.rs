@@ -1,5 +1,5 @@
-//! The icon Tidewatch picks from the goal words when the agent sets none within two minutes of
-//! the ask; a later `set_avatar` replaces it.
+//! The icon Tidewatch picks from the goal, or else the owner's first message, when the agent sets
+//! none within 30 seconds of the ask; a later `set_avatar` replaces it.
 
 use std::path::Path;
 use std::time::UNIX_EPOCH;
@@ -15,9 +15,9 @@ use crate::paths::{
 };
 use crate::progress_store;
 
-pub const WAIT_MS: i64 = 120_000;
+pub const WAIT_MS: i64 = 30_000;
 pub const GENERIC: &str = "sparkles";
-pub const REASON: &str = "Picked by Tidewatch from the goal: the agent set no icon.";
+pub const REASON: &str = "Picked by Tidewatch from the task: the agent set no icon.";
 
 /// Goal words and the icon each group stands for, the first group with a match wins, so the
 /// objects come before the verbs.
@@ -80,7 +80,7 @@ pub fn face(goal: &str) -> Option<Avatar> {
 pub struct Facts {
     pub face: Face,
     pub settled: bool,
-    pub has_goal: bool,
+    pub has_words: bool,
     pub asked_at_ms: Option<i64>,
 }
 
@@ -93,13 +93,13 @@ pub enum Due {
 }
 
 /// Whether the fallback icon is due: never for a fixed face or a settled tab, not yet without an
-/// ask or a goal or while an icon is there, and only once [`WAIT_MS`] passed since the ask.
+/// ask or words to pick from or while an icon is there, and only once [`WAIT_MS`] passed since the ask.
 #[must_use]
 pub fn due(facts: &Facts, now_ms: i64) -> Due {
     if facts.face == Face::Fixed || facts.settled {
         return Due::Never;
     }
-    let (Face::Letter, true, Some(asked)) = (facts.face, facts.has_goal, facts.asked_at_ms) else {
+    let (Face::Letter, true, Some(asked)) = (facts.face, facts.has_words, facts.asked_at_ms) else {
         return Due::Later;
     };
     let left = asked.saturating_add(WAIT_MS).saturating_sub(now_ms);
@@ -118,9 +118,11 @@ pub enum Outcome {
 #[must_use]
 pub fn apply(notes_file: &Path, fixed: bool, now_ms: i64) -> Outcome {
     let file = avatar_file_beside(notes_file);
-    let goal = progress_store::load(&progress_file_beside(notes_file))
+    let marker = avatar_asked_file_beside(notes_file);
+    let words = progress_store::load(&progress_file_beside(notes_file))
         .map(|ledger| ledger.goal)
-        .filter(|goal| !goal.trim().is_empty());
+        .filter(|goal| !goal.trim().is_empty())
+        .or_else(|| avatar_store::asked_message(&marker));
     let shown = if fixed {
         Face::Fixed
     } else if avatar_store::load(&file).is_some() {
@@ -131,15 +133,15 @@ pub fn apply(notes_file: &Path, fixed: bool, now_ms: i64) -> Outcome {
     let facts = Facts {
         face: shown,
         settled: avatar_fallback_file_beside(notes_file).exists(),
-        has_goal: goal.is_some(),
-        asked_at_ms: modified_ms(&avatar_asked_file_beside(notes_file)),
+        has_words: words.is_some(),
+        asked_at_ms: modified_ms(&marker),
     };
     match due(&facts, now_ms) {
         Due::Never => Outcome::Never,
         Due::Later => Outcome::Later,
         Due::In(left) => Outcome::Wait(left),
         Due::Now => {
-            let Some(avatar) = goal.as_deref().and_then(face) else { return Outcome::Never };
+            let Some(avatar) = words.as_deref().and_then(face) else { return Outcome::Never };
             if settle(notes_file).is_err() || avatar_store::save(&file, &avatar).is_err() {
                 return Outcome::Never;
             }

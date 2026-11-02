@@ -541,7 +541,8 @@ fn prompt_reply(
         return None;
     }
     let ledger = progress_store::load(&progress_file_beside(&entry.notes_file));
-    let (avatar, name) = asks_due(shared, entry, ledger.as_ref());
+    let message = payload.get("prompt").and_then(serde_json::Value::as_str).unwrap_or_default();
+    let (avatar, name) = asks_due(shared, entry, ledger.as_ref(), message);
     let mut contexts: Vec<String> = avatar.into_iter().collect();
     if let Some(line) = ledger.as_ref().and_then(prompt_answer::ledger_context) {
         contexts.push(line);
@@ -553,14 +554,15 @@ fn prompt_reply(
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
-/// The icon ask and the name ask that are due now, each once per tab, for a report with a goal.
+/// The icon ask and the name ask that are due now, each once per tab; `message` is the owner's
+/// message the icon ask goes with, kept for the fallback icon.
 fn asks_due(
     shared: &Shared,
     entry: &Entry,
     ledger: Option<&Ledger>,
+    message: &str,
 ) -> (Option<String>, Option<String>) {
-    let has_goal = ledger.is_some_and(|ledger| !ledger.goal.trim().is_empty());
-    let avatar = avatar_due(shared, entry, has_goal).then(|| {
+    let avatar = avatar_due(shared, entry, message).then(|| {
         tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
         avatar_ask::CONTEXT.to_owned()
     });
@@ -573,7 +575,7 @@ fn tell(entry: &Entry, reason: Reason, because: &str, text: &str) {
     let _ = sent::append(&sent_file_beside(&entry.notes_file), &record);
 }
 
-fn avatar_due(shared: &Shared, entry: &Entry, has_goal: bool) -> bool {
+fn avatar_due(shared: &Shared, entry: &Entry, message: &str) -> bool {
     let exempt = shared
         .avatar_ask_exempt
         .lock()
@@ -588,12 +590,8 @@ fn avatar_due(shared: &Shared, entry: &Entry, has_goal: bool) -> bool {
     } else {
         Face::Letter
     };
-    let due = avatar_ask::due(&avatar_ask::Facts {
-        face,
-        asked: avatar_store::was_asked(&marker),
-        has_goal,
-    });
-    due && avatar_store::mark_asked(&marker).is_ok()
+    let due = avatar_ask::due(&avatar_ask::Facts { face, asked: avatar_store::was_asked(&marker) });
+    due && avatar_store::mark_asked_for(&marker, message).is_ok()
 }
 
 fn replace_service_lines(shared: &Shared, lines: HashMap<u64, String>) {
@@ -640,7 +638,8 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
             return Vec::new();
         }
         let ledger = progress_store::load(&progress_file);
-        let (avatar, name) = asks_due(shared, entry, ledger.as_ref());
+        let goal = ledger.as_ref().map_or("", |ledger| ledger.goal.as_str());
+        let (avatar, name) = asks_due(shared, entry, ledger.as_ref(), goal);
         avatar.into_iter().chain(name).collect()
     };
     let ctx = ToolCtx {
@@ -1036,46 +1035,39 @@ mod tests {
     }
 
     #[test]
-    fn the_first_prompt_after_the_report_has_a_goal_is_answered_with_the_icon_ask_and_only_that_one()
-     {
+    fn the_first_prompt_is_answered_with_the_icon_ask_and_only_that_one() {
         let f = fixture();
         let token = f.register(1, "a");
         let notes = notes_of(&f, &token);
         let marker = avatar_asked_file_beside(&notes);
-        let before = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(before.body, "{}", "no report yet, so no goal to pick an icon for");
-        save_ledger(&f, &token, NO_GOAL);
-        assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}");
-        assert!(!marker.exists());
-        save_ledger(&f, &token, CALM);
         let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert!(asks_for_an_icon(&first), "{}", first.body);
-        assert!(marker.exists());
+        assert!(asks_for_an_icon(&first), "no report needed: {}", first.body);
+        assert_eq!(avatar_store::asked_message(&marker).as_deref(), Some("hi"));
+        save_ledger(&f, &token, CALM);
         let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(second.body, "{}");
-        assert_eq!(f.events().len(), 4, "every prompt is still a status event");
-        let told = sent::load(&sent_file_beside(&notes));
+        assert!(!asks_for_an_icon(&second), "{}", second.body);
+        assert_eq!(f.events().len(), 2, "every prompt is still a status event");
+        let told: Vec<_> = sent::load(&sent_file_beside(&notes))
+            .into_iter()
+            .filter(|record| record.reason == Reason::Avatar)
+            .collect();
         assert_eq!(told.len(), 1);
-        assert_eq!(
-            (told[0].reason, told[0].because.as_str()),
-            (Reason::Avatar, because::AVATAR_ASK)
-        );
+        assert_eq!(told[0].because, because::AVATAR_ASK);
         assert_eq!(told[0].text, avatar_ask::CONTEXT);
     }
 
     #[test]
-    fn the_icon_ask_goes_once_after_a_goal_and_to_no_other_tab() {
+    fn each_tab_is_asked_for_its_icon_once_on_its_own_first_prompt() {
         let f = fixture();
         let token = f.register(1, "a");
         let other = f.register(2, "b");
-        save_ledger(&f, &token, CALM);
         save_ledger(&f, &other, NO_GOAL);
         let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         let again = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        let none = f.send("POST", "/hook/claude", Some(&other), PROMPT);
+        let other_first = f.send("POST", "/hook/claude", Some(&other), PROMPT);
         assert_eq!(
-            (asks_for_an_icon(&first), asks_for_an_icon(&again), asks_for_an_icon(&none)),
-            (true, false, false)
+            (asks_for_an_icon(&first), asks_for_an_icon(&again), asks_for_an_icon(&other_first)),
+            (true, false, true)
         );
     }
 
