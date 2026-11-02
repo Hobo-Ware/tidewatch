@@ -14,6 +14,7 @@ use crate::agents::{Agent, Wiring};
 use crate::checklist;
 use crate::claude_memory::memory_dir;
 use crate::comment_flags::TabFiles;
+use crate::extra_worktree;
 use crate::fsutil::{write_atomic, write_private_atomic};
 use crate::guard_shim::{GuardCtx, ensure_shims};
 use crate::guards::Rule;
@@ -392,6 +393,10 @@ fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<Pat
     if let Some(block) = services_mcp::house_block(&services::services_for(paths, input.repo)) {
         text.push('\n');
         text.push_str(&block);
+    }
+    if input.worktree_tab {
+        text.push('\n');
+        text.push_str(extra_worktree::HOUSE_BLOCK);
     }
     let file = paths.tab_house_style_file(input.repo, input.tab);
     write_atomic(&file, &text)?;
@@ -878,6 +883,15 @@ mod tests {
         let text = agent_style(&fx);
         assert!(text.contains("## You run without supervision"), "{text}");
         assert!(text.contains("product or architecture choices"));
+    }
+
+    #[test]
+    fn a_worktree_agent_is_told_to_ask_for_other_checkouts_and_the_main_tab_is_not() {
+        let fx = Fixture::new();
+        fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
+        assert!(agent_style(&fx).contains("call `add_worktree`"));
+        fx.run("claude", &profile("claude", Level::Edits), false, "", None).unwrap();
+        assert!(!agent_style(&fx).contains("add_worktree"));
     }
 
     #[test]

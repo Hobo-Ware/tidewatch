@@ -32,6 +32,7 @@ use serde_json::{Map, Value, json};
 use crate::agents::asks_by_itself;
 use crate::avatar_mcp;
 use crate::events::TabEvent;
+use crate::extra_worktree;
 use crate::job_mcp;
 use crate::launch::MCP_SERVER_NAME;
 use crate::meeseeks_mcp;
@@ -307,6 +308,7 @@ pub fn tool_definitions() -> Value {
         avatar_mcp::tool_definition(),
         meeseeks_mcp::tool_definition(),
         tab_name::tool_definition(),
+        extra_worktree::tool_definition(),
     ]);
     if let Some(list) = tools.as_array_mut() {
         list.extend(services_mcp::tool_definitions());
@@ -359,6 +361,10 @@ fn call_tool(
     }
     if name == meeseeks_mcp::DONE_TOOL {
         let (text, is_error) = meeseeks_mcp::done(args, emit);
+        return Ok(tool_result(&text, is_error));
+    }
+    if name == extra_worktree::TOOL {
+        let (text, is_error) = extra_worktree::add(args, ctx.notes_file);
         return Ok(tool_result(&text, is_error));
     }
     if name == tab_name::SET_TOOL {
@@ -677,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn the_server_has_sixteen_tools_with_object_schemas_and_required_fields() {
+    fn the_server_has_seventeen_tools_with_object_schemas_and_required_fields() {
         let all = tool_definitions();
         let tools = all.as_array().unwrap();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
@@ -695,6 +701,7 @@ mod tests {
                 "set_avatar",
                 "meeseeks_done",
                 "set_name",
+                "add_worktree",
                 "list_services",
                 "add_service",
                 "restart_service",
@@ -725,6 +732,7 @@ mod tests {
                 vec!["reason"],
                 vec!["summary"],
                 vec!["name"],
+                vec!["repo", "branch"],
                 vec![],
                 vec!["name", "command"],
                 vec!["name"],
@@ -759,6 +767,7 @@ mod tests {
             "report_job",
             "set_avatar",
             "set_name",
+            "add_worktree",
             "list_services",
             "add_service",
             "restart_service",
