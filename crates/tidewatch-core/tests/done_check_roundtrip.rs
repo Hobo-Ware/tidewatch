@@ -179,6 +179,23 @@ fn a_merged_pull_request_covers_a_branch_that_was_deleted_on_the_remote() {
 }
 
 #[test]
+fn work_that_reached_main_through_another_branch_passes_with_no_pull_request_line() {
+    if !git_available() {
+        return;
+    }
+    let r = repos();
+    let head = work_branch(&r.work);
+    ok(&r.work, &["push", "-q", "origin", "HEAD:main"]);
+    ok(&r.work, &["fetch", "-q", "origin"]);
+    ok(&r.work, &["reset", "-q", "--hard", "origin/main~1"]);
+    ok(&r.work, &["cherry-pick", "-x", &head]);
+    let report = check(&Tools::system(), &r.work, PrFact::Unknown, None);
+    assert_eq!(status_of(&report, Kind::Pushed), (Status::Pass, "every commit is already on main"));
+    assert!(report.lines.iter().all(|line| line.kind != Kind::PullRequest), "{report:?}");
+    assert_eq!(report.outcome(), Outcome::Done);
+}
+
+#[test]
 fn no_pull_request_for_the_branch_is_not_checked_rather_than_an_error() {
     if !git_available() {
         return;
