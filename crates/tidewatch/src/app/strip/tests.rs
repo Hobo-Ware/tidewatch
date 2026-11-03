@@ -1363,3 +1363,91 @@ fn the_repo_menu_counts_tabs_in_the_plural() {
         assert_eq!(super::tabs_text(count), want);
     }
 }
+
+#[test]
+fn redraw_in_an_agent_tabs_right_click_menu_hands_the_choice_to_the_frame() {
+    use crate::agent_run::AgentRun;
+    use crate::pane::AgentTab;
+    let ctx = crate::fonts::test_context();
+    let mut pane = Pane::shell(1_u32);
+    pane.agent = Some(AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0)));
+    let mut tabs = Tabs::new(Pane::shell(0));
+    tabs.push_in(0, "quartz".into(), pane);
+    let id = tabs.items()[1].id;
+    let avatar = {
+        let (svg, reason) = crate::avatar_glue::FAKE[0];
+        Arc::new(tidewatch_core::avatar::clean(svg, reason).unwrap())
+    };
+    let mut time = 0.0;
+    let mut frame = |events: Vec<Event>| {
+        time += 0.05;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 300.0))),
+            events,
+            time: Some(time),
+            focused: true,
+            ..RawInput::default()
+        };
+        let mut actions = Vec::new();
+        let mut rects = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            egui::Panel::top("tabbar").exact_size(TAB_H + 6.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    rects = tab_row(
+                        ui,
+                        &tabs,
+                        220.0,
+                        0.0,
+                        &mut actions,
+                        (
+                            |_: &Pane<u32>| (Progress::default(), CmdState::default()),
+                            |_| TabExtras {
+                                tip: None,
+                                avatar: Some(avatar.clone()),
+                                can_draw: true,
+                                mood: Mood::default(),
+                            },
+                        ),
+                    );
+                });
+            });
+        });
+        let mut texts = Vec::new();
+        for clipped in &output.shapes {
+            painted_text_rects(&clipped.shape, &mut texts);
+        }
+        (rects, texts)
+    };
+    let (rects, _) = frame(Vec::new());
+    for at in [rects[0].center(), face_rect(rects[0]).center()] {
+        let press = |pressed, button| Event::PointerButton {
+            pos: at,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        frame(vec![Event::PointerMoved(at)]);
+        frame(vec![press(true, PointerButton::Secondary)]);
+        frame(vec![press(false, PointerButton::Secondary)]);
+        let (_, texts) = frame(Vec::new());
+        let redraw = texts
+            .iter()
+            .find(|(text, _)| text == "Redraw")
+            .map_or_else(|| panic!("Redraw is in the menu: {texts:?}"), |(_, rect)| rect.center());
+        let click = |pressed| Event::PointerButton {
+            pos: redraw,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        frame(vec![Event::PointerMoved(redraw)]);
+        frame(vec![click(true)]);
+        frame(vec![click(false)]);
+        frame(Vec::new());
+        assert_eq!(
+            crate::agent_avatar::take_choice(&ctx),
+            Some((id, crate::agent_avatar::Choice::Redraw)),
+            "right-click at {at:?}"
+        );
+    }
+}

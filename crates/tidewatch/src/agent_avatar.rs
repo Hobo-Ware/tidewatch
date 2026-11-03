@@ -118,13 +118,19 @@ pub(crate) fn menu_items(ui: &mut Ui, tab: u64, picture: bool) {
     if is_locked(ui.ctx(), tab) {
         return;
     }
-    for (label, choice) in choices(picture) {
+    for &(label, choice) in choices(picture) {
         if menu_item(ui, label, "").clicked() {
-            ui.ctx().data_mut(|d| d.insert_temp(Id::new(CHOICE), Some((tab, choice))));
-            ui.ctx().request_repaint();
+            choose(ui.ctx(), tab, choice);
             ui.close();
         }
     }
+}
+
+/// Stores the pick under the exact type [`take_choice`] reads back.
+fn choose(ctx: &Context, tab: u64, choice: Choice) {
+    let picked: Option<(u64, Choice)> = Some((tab, choice));
+    ctx.data_mut(|d| d.insert_temp(Id::new(CHOICE), picked));
+    ctx.request_repaint();
 }
 
 fn choices(picture: bool) -> &'static [(&'static str, Choice)] {
