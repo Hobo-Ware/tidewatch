@@ -206,7 +206,7 @@ impl Tidewatch {
             ClosePolicy::Now => {
                 self.discard_draft_files(id);
                 self.tabs.apply(Action::Close(index), || unreachable!());
-                self.forget_tab(id);
+                self.close_tab_for_good(id);
             }
             ClosePolicy::Wait => {}
             ClosePolicy::Confirm(worktree) => {
@@ -219,6 +219,12 @@ impl Tidewatch {
                 }
             }
         }
+    }
+
+    /// The tab is closed for good: its own services stop and are removed with it.
+    pub(super) fn close_tab_for_good(&mut self, id: u64) {
+        self.services.close_tab(id);
+        self.forget_tab(id);
     }
 
     pub(super) fn forget_tab(&mut self, id: u64) {
@@ -239,7 +245,7 @@ impl Tidewatch {
             Answer::Pick(Choice::KeepWorktree) => {
                 self.note_kept_tab(tab, ctx);
                 self.tabs.remove_id(tab);
-                self.forget_tab(tab);
+                self.close_tab_for_good(tab);
             }
             Answer::Pick(Choice::Remove { branch, mode }) => {
                 let Some(paths) = self.paths.clone() else { return };
@@ -302,7 +308,7 @@ impl Tidewatch {
             Done::Removed { tab, result, kept } => match result {
                 Ok(outcome) => {
                     self.tabs.remove_id(tab);
-                    self.forget_tab(tab);
+                    self.close_tab_for_good(tab);
                     self.closed.mark_changed();
                     if let Some(toast) = kept_extra_worktrees_toast(&kept) {
                         self.show_toast(toast, ctx);

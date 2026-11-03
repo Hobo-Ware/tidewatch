@@ -35,7 +35,7 @@ pub fn is_tool(name: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Call {
     List,
-    Add(Service),
+    Add { service: Service, shared: bool },
     Restart(String),
     Stop(String),
     Log { name: String, lines: usize },
@@ -91,18 +91,19 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": LIST_TOOL,
-            "description": "List the repo's services (long-running processes Tidewatch keeps running next to you, such as a database proxy or a dev server) with their command, the port each one printed that it listens on, state, uptime and last exit code.",
+            "description": "List the services you can use (long-running processes Tidewatch keeps running next to you, such as a database proxy or a dev server): the repo's shared ones and your tab's own, with their scope, command, the port each one printed that it listens on, state, uptime and last exit code.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
         }),
         json!({
             "name": ADD_TOOL,
-            "description": "Save a new repo service and start it. Use it for a long-running process the work needs (a database proxy, a dev server, a tunnel) instead of running it in your own shell. Tidewatch keeps it running, restarts it after a crash and shows it to the owner.",
+            "description": "Save a new service and start it. Use it for a long-running process the work needs (a database proxy, a dev server, a tunnel) instead of running it in your own shell. Tidewatch keeps it running, restarts it after a crash and shows it to the owner. By default it is your tab's own: it runs in your worktree and is stopped and removed when your tab closes. Check list_services first and use a shared one that already does the job.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "A short unique name, at most 40 characters, such as `db` or `api`." },
-                    "command": { "type": "string", "description": "The shell command to run in the repo's main checkout." },
+                    "command": { "type": "string", "description": "The shell command to run: in your worktree for a tab service, in the repo's main checkout for a shared one." },
                     "autostart": { "type": "boolean", "description": "Start it whenever the repo opens in Tidewatch. Defaults to true." },
+                    "shared": { "type": "boolean", "description": "Share it with every tab of the repo and keep it after your tab closes. Only for a service other tabs will reuse as it is, such as a database proxy; never for one tied to your branch or a port only your work uses. Defaults to false." },
                 },
                 "required": ["name", "command"],
                 "additionalProperties": false,
@@ -192,6 +193,22 @@ fn number_arg(
     Some(found)
 }
 
+fn bool_arg(
+    args: &Map<String, Value>,
+    key: &str,
+    default: bool,
+    problems: &mut Vec<String>,
+) -> bool {
+    match args.get(key) {
+        None | Some(Value::Null) => default,
+        Some(Value::Bool(on)) => *on,
+        Some(_) => {
+            problems.push(format!("{key} must be true or false"));
+            default
+        }
+    }
+}
+
 /// The call a tool name and its arguments stand for, or every problem with them.
 pub fn parse(tool: &str, args: &Map<String, Value>) -> Result<Call, Vec<String>> {
     let mut problems = Vec::new();
@@ -201,18 +218,12 @@ pub fn parse(tool: &str, args: &Map<String, Value>) -> Result<Call, Vec<String>>
             Call::List
         }
         ADD_TOOL => {
-            unknown_keys(args, &["name", "command", "port", "autostart"], &mut problems);
+            unknown_keys(args, &["name", "command", "port", "autostart", "shared"], &mut problems);
             let name = name_arg(args, &mut problems);
             let command = text_arg(args, "command", &mut problems);
-            let autostart = match args.get("autostart") {
-                None | Some(Value::Null) => true,
-                Some(Value::Bool(on)) => *on,
-                Some(_) => {
-                    problems.push("autostart must be true or false".to_owned());
-                    true
-                }
-            };
-            Call::Add(Service::new(&name, &command, autostart))
+            let autostart = bool_arg(args, "autostart", true, &mut problems);
+            let shared = bool_arg(args, "shared", false, &mut problems);
+            Call::Add { service: Service::new(&name, &command, autostart), shared }
         }
         RESTART_TOOL | STOP_TOOL => {
             unknown_keys(args, &["name"], &mut problems);
@@ -264,6 +275,7 @@ pub fn call_within(
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Listed {
     pub name: String,
+    pub scope: &'static str,
     pub command: String,
     pub port: Option<u16>,
     pub state: &'static str,
@@ -282,6 +294,7 @@ impl Listed {
     ) -> Self {
         Self {
             name: service.name.clone(),
+            scope: scope_word(service),
             command: service.command.clone(),
             port,
             state: word.text(),
@@ -291,27 +304,41 @@ impl Listed {
     }
 }
 
+fn scope_word(service: &Service) -> &'static str {
+    if service.is_shared() { "shared" } else { "this tab" }
+}
+
 /// The answer of `list_services`: the services as JSON, or a line that says there are none.
 #[must_use]
 pub fn list_text(listed: &[Listed]) -> String {
     if listed.is_empty() {
-        return "This repo has no services. Use add_service to save and start one.".to_owned();
+        return "There are no services you can use yet. Use add_service to save and start one."
+            .to_owned();
     }
     serde_json::to_string_pretty(&json!({ "services": listed })).unwrap_or_default()
 }
 
-/// The block of an agent's house style, `None` when the repo has no service.
+/// The block of an agent's house style, `None` when the tab sees no service.
 #[must_use]
 pub fn house_block(services: &[Service]) -> Option<String> {
+    let tools = format!(
+        "Tools: `{LIST_TOOL}` (state, uptime, last exit), `{LOG_TOOL}` (the last lines a service printed: read it before guessing why one fails), `{RESTART_TOOL}`, `{STOP_TOOL}` and `{ADD_TOOL}` (save and start a long-running process the work needs, as your tab's own unless other tabs will reuse it as it is: then pass `shared`). A tab service runs in your worktree and is removed when your tab closes."
+    );
     if services.is_empty() {
         return None;
     }
     let mut lines = String::new();
     for service in services {
-        let _ = writeln!(lines, "- `{}`: `{}`", service.name, service.command);
+        let _ = writeln!(
+            lines,
+            "- `{}` ({}): `{}`",
+            service.name,
+            scope_word(service),
+            service.command
+        );
     }
     Some(format!(
-        "## Repo services\n\nTidewatch keeps these long-running services of this repo running next to you. Use them; do not start a second copy in your own shell.\n\n{lines}\nTools: `{LIST_TOOL}` (state, uptime, last exit), `{LOG_TOOL}` (the last lines a service printed: read it before guessing why one fails), `{RESTART_TOOL}`, `{STOP_TOOL}` and `{ADD_TOOL}` (save and start a long-running process the work needs).\n"
+        "## Services\n\nTidewatch keeps these long-running services running next to you. Use them; do not start a second copy in your own shell.\n\n{lines}\n{tools}\n"
     ))
 }
 
@@ -338,7 +365,7 @@ pub fn context_line(facts: &[Fact]) -> Option<String> {
         })
         .collect();
     Some(format!(
-        "Repo services Tidewatch keeps running: {}. Use {LIST_TOOL} or {LOG_TOOL} for detail.",
+        "Services Tidewatch keeps running: {}. Use {LIST_TOOL} or {LOG_TOOL} for detail.",
         parts.join("; ")
     ))
 }
@@ -373,12 +400,20 @@ mod tests {
             (
                 ADD_TOOL,
                 json!({"name": " db ", "command": "pscale connect shop main", "port": 3309}),
-                Call::Add(Service::new("db", "pscale connect shop main", true)),
+                Call::Add {
+                    service: Service::new("db", "pscale connect shop main", true),
+                    shared: false,
+                },
             ),
             (
                 ADD_TOOL,
                 json!({"name": "api", "command": "npm run dev", "autostart": false}),
-                Call::Add(Service::new("api", "npm run dev", false)),
+                Call::Add { service: Service::new("api", "npm run dev", false), shared: false },
+            ),
+            (
+                ADD_TOOL,
+                json!({"name": "db", "command": "pscale connect", "shared": true}),
+                Call::Add { service: Service::new("db", "pscale connect", true), shared: true },
             ),
             (RESTART_TOOL, json!({"name": "db"}), Call::Restart("db".into())),
             (STOP_TOOL, json!({"name": "db"}), Call::Stop("db".into())),
@@ -400,7 +435,8 @@ mod tests {
             parse(ADD_TOOL, &args(&json!({"name": "a", "command": "b", "port": port})))
         };
         for port in [json!(3309), json!(0), json!(70000), json!("80")] {
-            assert_eq!(add(port.clone()), Ok(Call::Add(Service::new("a", "b", true))), "{port}");
+            let want = Call::Add { service: Service::new("a", "b", true), shared: false };
+            assert_eq!(add(port.clone()), Ok(want), "{port}");
         }
         let tools = tool_definitions();
         let add_tool = tools.iter().find(|tool| tool["name"] == ADD_TOOL).unwrap();
@@ -413,6 +449,7 @@ mod tests {
             (LIST_TOOL, json!({"x": 1}), 1),
             (ADD_TOOL, json!({}), 2),
             (ADD_TOOL, json!({"name": "a", "command": "b", "autostart": "yes"}), 1),
+            (ADD_TOOL, json!({"name": "a", "command": "b", "shared": "no"}), 1),
             (ADD_TOOL, json!({"name": 5, "command": ["x"], "extra": 1}), 3),
             (RESTART_TOOL, json!({}), 1),
             (STOP_TOOL, json!({"name": "  "}), 1),
@@ -480,27 +517,33 @@ mod tests {
         let value: Value = serde_json::from_str(&list_text(&listed)).unwrap();
         let first = &value["services"][0];
         assert_eq!(first["name"], "db");
+        assert_eq!(first["scope"], "shared");
         assert_eq!(first["command"], "pscale connect shop main --port 3309");
         assert_eq!(first["port"], 3309);
         assert_eq!(first["state"], "running");
         assert_eq!(first["uptime_secs"], 8040);
         assert_eq!(first["last_exit"], 1);
         assert!(list_text(&[]).contains("no services"));
+        let mine = db.clone().in_tab(Some("/wt/a".into()));
+        let listed = [Listed::new(&mine, None, Word::Stopped, None, None)];
+        let value: Value = serde_json::from_str(&list_text(&listed)).unwrap();
+        assert_eq!(value["services"][0]["scope"], "this tab");
     }
 
     #[test]
-    fn the_house_block_names_each_service_and_the_tools_and_is_absent_without_services() {
+    fn the_house_block_names_each_service_with_its_scope_and_the_tools() {
         assert_eq!(house_block(&[]), None);
         let block = house_block(&[
             Service::new("db", "pscale connect shop main --port 3309", true),
-            Service::new("api", "npm run dev", true),
+            Service::new("api", "npm run dev", true).in_tab(Some("/wt/a".into())),
         ])
         .unwrap();
-        assert!(block.contains("- `db`: `pscale connect shop main --port 3309`\n"));
-        assert!(block.contains("- `api`: `npm run dev`\n"));
+        assert!(block.contains("- `db` (shared): `pscale connect shop main --port 3309`\n"));
+        assert!(block.contains("- `api` (this tab): `npm run dev`\n"));
         for tool in TOOLS {
             assert!(block.contains(tool), "{tool}");
         }
+        assert!(block.contains("`shared`"));
         assert!(block.is_ascii());
     }
 

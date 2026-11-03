@@ -390,7 +390,8 @@ fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<Pat
         TurnEnd::of(input.agent.wiring),
         input.worktree_tab.then(|| workflow_detect::profile_for(paths, input.repo)),
     );
-    if let Some(block) = services_mcp::house_block(&services::services_for(paths, input.repo)) {
+    let seen = services::visible_to(&services::services_for(paths, input.repo), Some(input.dir));
+    if let Some(block) = services_mcp::house_block(&seen) {
         text.push('\n');
         text.push_str(&block);
     }
@@ -895,17 +896,27 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_is_told_what_services_its_repo_runs_and_which_tools_manage_them() {
+    fn the_agent_is_told_the_shared_services_not_other_tabs_ones_and_the_tools() {
         let fx = Fixture::new();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
-        assert!(!agent_style(&fx).contains("## Repo services"));
+        assert!(!agent_style(&fx).contains("## Services"));
         let db = services::Service::new("db", "pscale connect shop main --port 3309", true);
-        services::Store::update(&fx.paths, |store| store.add(Path::new("/work/web"), &db)).unwrap();
+        let theirs = services::Service::new("api", "npm run dev", true)
+            .in_tab(Some("/elsewhere/other-tab".into()));
+        services::Store::update(&fx.paths, |store| {
+            store.add(Path::new("/work/web"), &db)?;
+            store.add(Path::new("/work/web"), &theirs)
+        })
+        .unwrap();
         fx.run("claude", &profile("claude", Level::Edits), true, "", None).unwrap();
         let text = agent_style(&fx);
-        assert!(text.contains("- `db`: `pscale connect shop main --port 3309`\n"), "{text}");
+        assert!(
+            text.contains("- `db` (shared): `pscale connect shop main --port 3309`\n"),
+            "{text}"
+        );
+        assert!(!text.contains("`api`"), "another tab's service is not this tab's business");
         assert!(text.contains("`service_log`") && text.contains("`restart_service`"));
-        assert!(text.find("## Report") < text.find("## Repo services"));
+        assert!(text.find("## Report") < text.find("## Services"));
     }
 
     #[test]

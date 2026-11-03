@@ -76,12 +76,15 @@ impl Fixture {
     }
 
     fn pid(&mut self, name: &str) -> u32 {
-        self.host.term_mut(self.repo.path(), name).and_then(|term| term.shell_pid()).unwrap()
+        self.host
+            .term_mut(self.repo.path(), &Key::shared(name))
+            .and_then(|term| term.shell_pid())
+            .unwrap()
     }
 
     fn says(&self, name: &str, text: &str) -> bool {
         self.host
-            .log_tail(self.repo.path(), name, 50)
+            .log_tail(self.repo.path(), &Key::shared(name), 50)
             .is_some_and(|lines| lines.iter().any(|line| line.contains(text)))
     }
 }
@@ -101,10 +104,10 @@ fn a_service_with_autostart_runs_when_its_repo_opens_and_one_without_waits_to_be
     assert_eq!(fx.word("db"), Word::Running);
     assert_eq!(fx.word("api"), Word::Stopped);
     wait_for("db's output", || fx.says("db", "ready"));
-    let started = fx.host.command(fx.repo.path(), "API", Command::Start).unwrap();
+    let started = fx.host.command(fx.repo.path(), &Key::shared("API"), Command::Start).unwrap();
     assert_eq!(started, "Started `api`.");
     assert_eq!(fx.word("api"), Word::Running);
-    let again = fx.host.command(fx.repo.path(), "api", Command::Start).unwrap();
+    let again = fx.host.command(fx.repo.path(), &Key::shared("api"), Command::Start).unwrap();
     assert_eq!(again, "`api` was already running.");
     fx.host.shutdown();
 }
@@ -113,7 +116,7 @@ fn a_service_with_autostart_runs_when_its_repo_opens_and_one_without_waits_to_be
 fn a_screenshot_or_background_run_starts_nothing_on_its_own() {
     let mut fx = fixture_with(&[service("db", "sleep 30", true)], false);
     assert_eq!(fx.word("db"), Word::Stopped);
-    assert!(fx.host.term_mut(fx.repo.path(), "db").is_none());
+    assert!(fx.host.term_mut(fx.repo.path(), &Key::shared("db")).is_none());
 }
 
 #[test]
@@ -121,7 +124,7 @@ fn a_stop_by_hand_ends_the_process_and_nothing_starts_it_again() {
     let mut fx = fixture(&[service("db", "sleep 30", true)]);
     let pid = fx.pid("db");
     assert!(alive(pid));
-    let stopped = fx.host.command(fx.repo.path(), "db", Command::Stop).unwrap();
+    let stopped = fx.host.command(fx.repo.path(), &Key::shared("db"), Command::Stop).unwrap();
     assert!(stopped.starts_with("Stopped `db`"), "{stopped}");
     wait_for("the process to end", || !alive(pid));
     let until = Instant::now() + Duration::from_millis(1600);
@@ -131,7 +134,7 @@ fn a_stop_by_hand_ends_the_process_and_nothing_starts_it_again() {
     }
     let row = fx.host.rows(fx.repo.path()).remove(0);
     assert!(row.line.starts_with("stopped"), "{}", row.line);
-    let again = fx.host.command(fx.repo.path(), "db", Command::Stop).unwrap();
+    let again = fx.host.command(fx.repo.path(), &Key::shared("db"), Command::Stop).unwrap();
     assert_eq!(again, "`db` was not running.");
 }
 
@@ -140,15 +143,19 @@ fn a_hand_stop_reads_stopped_with_no_exit_code_though_the_killed_shell_reports_e
     let mut fx = fixture(&[service("db", "sleep 30", true)]);
     let repo = fx.repo.path().to_path_buf();
     assert_eq!(fx.word("db"), Word::Running);
-    fx.host.command(&repo, "db", Command::Stop).unwrap();
+    fx.host.command(&repo, &Key::shared("db"), Command::Stop).unwrap();
     wait_for("the killed shell's exit", || {
-        fx.host.term_mut(&repo, "db").and_then(|term| term.exited()).is_some()
+        fx.host.term_mut(&repo, &Key::shared("db")).and_then(|term| term.exited()).is_some()
     });
-    let code = fx.host.term_mut(&repo, "db").and_then(|term| term.exited()).map(|exit| exit.code);
+    let code = fx
+        .host
+        .term_mut(&repo, &Key::shared("db"))
+        .and_then(|term| term.exited())
+        .map(|exit| exit.code);
     assert_eq!(code, Some(1), "a signal death is reported as exit 1");
     assert_eq!(fx.word("db"), Word::Stopped);
     assert_eq!(fx.host.rows(&repo)[0].line, "stopped");
-    assert_eq!(fx.host.listed(&repo)[0].last_exit, None);
+    assert_eq!(fx.host.listed(&repo, &repo)[0].last_exit, None);
 }
 
 #[test]
@@ -161,10 +168,10 @@ fn the_port_comes_from_what_the_service_printed_and_goes_with_the_process() {
         fx.host.drive();
         fx.host.rows(&repo)[0].line.ends_with(" \u{b7} :55926")
     });
-    assert_eq!(fx.host.facts(&repo)[0].port, Some(55926));
-    assert_eq!(fx.host.listed(&repo)[0].port, Some(55926));
-    fx.host.command(&repo, "db", Command::Stop).unwrap();
-    assert_eq!(fx.host.facts(&repo)[0].port, None);
+    assert_eq!(fx.host.facts(&repo, &repo)[0].port, Some(55926));
+    assert_eq!(fx.host.listed(&repo, &repo)[0].port, Some(55926));
+    fx.host.command(&repo, &Key::shared("db"), Command::Stop).unwrap();
+    assert_eq!(fx.host.facts(&repo, &repo)[0].port, None);
     fx.host.shutdown();
 }
 
@@ -181,7 +188,7 @@ fn a_port_saved_by_an_older_version_shows_until_the_output_names_one() {
     std::fs::write(paths.services_file(), file).unwrap();
     let mut host = Host::new(Some(paths), spawner(), true, false);
     host.sync(&[repo.path()]);
-    assert_eq!(host.facts(repo.path())[0].port, Some(3309));
+    assert_eq!(host.facts(repo.path(), repo.path())[0].port, Some(3309));
     host.shutdown();
 }
 
@@ -191,7 +198,7 @@ fn a_service_that_exits_is_started_again_after_one_second_then_two() {
     wait_for("the first exit to be noticed", || fx.word("flaky") == Word::Restarting);
     let row = fx.host.rows(fx.repo.path()).remove(0);
     assert!(row.line.starts_with("restarting in"), "{}", row.line);
-    assert_eq!(fx.host.listed(fx.repo.path())[0].last_exit, Some(1));
+    assert_eq!(fx.host.listed(fx.repo.path(), fx.repo.path())[0].last_exit, Some(1));
     assert!(fx.says("flaky", "boom"));
     let first = fx.host.entries();
     assert!(matches!(first[0].carry.phase, Phase::Backoff { attempt: 1, .. }), "{first:?}");
@@ -217,7 +224,7 @@ fn a_service_that_gave_up_reads_crashed_needs_no_wake_up_and_a_restart_brings_it
     assert_eq!(fx.word("flaky"), Word::Crashed);
     assert_eq!(fx.host.rows(&repo)[0].line, "gave up after 5 crashes, Start to try again");
     assert_eq!(fx.host.drive(), None, "a crashed service needs no wake-up");
-    fx.host.command(&repo, "flaky", Command::Restart).unwrap();
+    fx.host.command(&repo, &Key::shared("flaky"), Command::Restart).unwrap();
     assert_eq!(fx.word("flaky"), Word::Running);
     fx.host.shutdown();
 }
@@ -226,7 +233,7 @@ fn a_service_that_gave_up_reads_crashed_needs_no_wake_up_and_a_restart_brings_it
 fn a_restart_replaces_the_process() {
     let mut fx = fixture(&[service("db", "sleep 30", true)]);
     let old = fx.pid("db");
-    fx.host.command(fx.repo.path(), "db", Command::Restart).unwrap();
+    fx.host.command(fx.repo.path(), &Key::shared("db"), Command::Restart).unwrap();
     let rows = fx.host.rows(fx.repo.path());
     assert_eq!(rows[0].word, Word::Restarting, "no new process until the old one is gone");
     assert_eq!(fx.pid("db"), old);
@@ -242,7 +249,7 @@ fn a_restart_replaces_the_process() {
 fn a_restart_with_no_process_to_wait_for_spawns_at_once() {
     let mut fx = fixture(&[service("db", "sleep 30", true)]);
     fx.host.repos.get_mut(fx.repo.path()).unwrap()[0].term = None;
-    fx.host.command(fx.repo.path(), "db", Command::Restart).unwrap();
+    fx.host.command(fx.repo.path(), &Key::shared("db"), Command::Restart).unwrap();
     assert_eq!(fx.word("db"), Word::Running);
     fx.host.shutdown();
 }
@@ -257,7 +264,7 @@ fn a_service_the_owner_adds_is_saved_stopped_until_they_start_it() {
         tidewatch_core::services::services_for(&fx.paths, &repo),
         [service("db", "sleep 30", true)]
     );
-    fx.host.command(&repo, "db", Command::Start).unwrap();
+    fx.host.command(&repo, &Key::shared("db"), Command::Start).unwrap();
     assert_eq!(fx.word("db"), Word::Running);
     fx.host.shutdown();
 }
@@ -276,16 +283,16 @@ fn adding_saves_and_starts_even_without_autostart_editing_restarts_on_a_new_comm
     let refused = fx.host.add(&repo, &service("DB", "sleep 31", true), Begin::Now).unwrap_err();
     assert_eq!(refused.len(), 1, "{refused:?}");
     let before = fx.pid("db");
-    fx.host.edit(&repo, "db", &Service::new("db", "sleep 30", true)).unwrap();
+    fx.host.edit(&repo, &Key::shared("db"), &Service::new("db", "sleep 30", true)).unwrap();
     assert_eq!(fx.pid("db"), before, "the same command keeps the process");
-    fx.host.edit(&repo, "db", &Service::new("db", "sleep 31", true)).unwrap();
+    fx.host.edit(&repo, &Key::shared("db"), &Service::new("db", "sleep 31", true)).unwrap();
     wait_for("the new command to run", || {
         fx.host.drive();
         fx.pid("db") != before
     });
     let after = fx.pid("db");
     wait_for("the old process to end", || !alive(before));
-    fx.host.remove(&repo, "db").unwrap();
+    fx.host.remove(&repo, &Key::shared("db")).unwrap();
     assert_eq!(fx.host.rows(&repo).len(), 0);
     assert_eq!(tidewatch_core::services::services_for(&fx.paths, &repo).len(), 0);
     fx.host.shutdown();
@@ -307,12 +314,18 @@ fn quitting_stops_every_service_and_closing_a_repo_stops_its_services() {
 #[test]
 fn a_tool_error_for_an_unknown_name_lists_the_services_there_are() {
     let mut fx = fixture(&[service("db", "sleep 30", false), service("api", "sleep 30", false)]);
-    let refused = fx.host.command(fx.repo.path(), "tunnel", Command::Restart).unwrap_err();
-    assert_eq!(refused, "There is no service called `tunnel`. This repo has: `db`, `api`.");
-    let none = fixture(&[]).host.log_text(Path::new("/nowhere"), "x", 5).unwrap_err();
-    assert!(none.contains("this repo has none"), "{none}");
+    let repo = fx.repo.path();
     assert_eq!(
-        fx.host.log_text(fx.repo.path(), "db", 5),
+        fx.host.unknown(repo, repo, "tunnel"),
+        "There is no service called `tunnel`. You can use: `db`, `api`."
+    );
+    let refused = fx.host.command(repo, &Key::shared("tunnel"), Command::Restart).unwrap_err();
+    assert!(refused.contains("no service called `tunnel`"), "{refused}");
+    let nowhere = Path::new("/nowhere");
+    let none = fixture(&[]).host.unknown(nowhere, nowhere, "x");
+    assert!(none.contains("none is shared and your tab has none"), "{none}");
+    assert_eq!(
+        fx.host.log_text(fx.repo.path(), &Key::shared("db"), 5),
         Ok("`db` has printed nothing yet.".to_owned())
     );
 }
@@ -322,13 +335,16 @@ fn the_log_is_the_last_lines_the_service_printed_without_colors() {
     let mut fx =
         fixture(&[service("db", "printf '\\033[32mone\\033[0m\\ntwo\\nthree\\n'; sleep 30", true)]);
     wait_for("the output", || fx.says("db", "three"));
-    assert_eq!(fx.host.log_tail(fx.repo.path(), "db", 2).unwrap(), ["two", "three"]);
-    assert_eq!(fx.host.log_text(fx.repo.path(), "DB", 50).unwrap(), "one\ntwo\nthree");
+    assert_eq!(fx.host.log_tail(fx.repo.path(), &Key::shared("db"), 2).unwrap(), ["two", "three"]);
+    assert_eq!(
+        fx.host.log_text(fx.repo.path(), &Key::shared("DB"), 50).unwrap(),
+        "one\ntwo\nthree"
+    );
     fx.host.shutdown();
 }
 
 #[test]
-fn the_fake_services_are_three_stand_ins_that_spawn_and_write_nothing() {
+fn the_fake_services_are_four_stand_ins_that_spawn_and_write_nothing() {
     let home = tempfile::tempdir().unwrap();
     let paths = TidewatchPaths::new(home.path());
     let spawned = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -342,19 +358,28 @@ fn the_fake_services_are_three_stand_ins_that_spawn_and_write_nothing() {
     host.drive();
     let rows = host.rows(Path::new("/work/shop"));
     let seen: Vec<(&str, Word)> = rows.iter().map(|row| (row.name.as_str(), row.word)).collect();
-    assert_eq!(seen, [("db", Word::Running), ("api", Word::Running), ("tunnel", Word::Crashed)]);
+    assert_eq!(
+        seen,
+        [
+            ("db", Word::Running),
+            ("api", Word::Running),
+            ("tunnel", Word::Crashed),
+            ("web", Word::Running)
+        ]
+    );
+    assert_eq!(rows[3].key.tab.as_deref(), Some(Path::new(FAKE_TAB)));
     assert_eq!(rows[2].line, "gave up after 5 crashes, Start to try again");
     assert_eq!(rows[0].line, "up 2h 14m \u{b7} :3309");
     assert_eq!(rows[1].line, "up 12m \u{b7} :3000");
     assert!(
-        host.fake_lines(Path::new("/work/shop"), "tunnel")
+        host.fake_lines(Path::new("/work/shop"), &Key::shared("tunnel"))
             .unwrap()
             .iter()
             .any(|l| l.contains("giving up"))
     );
-    assert!(host.log_tail(Path::new("/work/shop"), "db", 3).unwrap().len() <= 3);
+    assert!(host.log_tail(Path::new("/work/shop"), &Key::shared("db"), 3).unwrap().len() <= 3);
     assert!(host.add(Path::new("/work/shop"), &service("x", "y", true), Begin::Now).is_err());
-    assert!(host.command(Path::new("/work/shop"), "db", Command::Stop).is_err());
+    assert!(host.command(Path::new("/work/shop"), &Key::shared("db"), Command::Stop).is_err());
     assert_eq!(spawned.get(), 0);
     assert!(!paths.services_file().exists());
     assert_eq!(host.entries().len(), 0);
@@ -364,16 +389,18 @@ fn the_fake_services_are_three_stand_ins_that_spawn_and_write_nothing() {
 fn a_tab_is_told_again_only_when_a_state_or_the_tabs_change() {
     let mut fx = fixture(&[service("db", "sleep 30", true)]);
     let repo = fx.repo.path().to_path_buf();
-    let tabs = [(1u64, repo.as_path()), (2, repo.as_path())];
+    let at = |id: u64, repo: &'static Path| AgentPlace { id, repo, folder: repo };
+    let repo: &'static Path = Box::leak(repo.into_boxed_path());
+    let tabs = [at(1, repo), at(2, repo)];
     let first = fx.host.lines_for(tabs.iter().copied()).unwrap();
     assert_eq!(first.len(), 2);
     assert!(first[&1].contains("db is running"), "{first:?}");
     assert_eq!(fx.host.lines_for(tabs.iter().copied()), None);
-    fx.host.command(&repo, "db", Command::Stop).unwrap();
+    fx.host.command(repo, &Key::shared("db"), Command::Stop).unwrap();
     assert!(fx.host.lines_for(tabs.iter().copied()).unwrap()[&2].contains("db is stopped"));
-    let more = [(1u64, repo.as_path()), (2, repo.as_path()), (3, repo.as_path())];
+    let more = [at(1, repo), at(2, repo), at(3, repo)];
     assert_eq!(fx.host.lines_for(more.iter().copied()).unwrap().len(), 3);
-    let elsewhere = [(1u64, Path::new("/other"))];
+    let elsewhere = [at(1, Path::new("/other"))];
     assert_eq!(fx.host.lines_for(elsewhere.iter().copied()).unwrap().len(), 0);
 }
 
@@ -381,6 +408,7 @@ fn entry(repo: &Path, name: &str, live: bool) -> crate::handoff::ServiceEntry {
     crate::handoff::ServiceEntry {
         repo: repo.to_path_buf(),
         name: name.to_owned(),
+        tab: None,
         live,
         carry: Supervisor::new().carry(0.0),
     }
@@ -516,7 +544,135 @@ fn a_service_pty_crosses_a_restart_still_running_with_its_uptime_and_the_old_win
     let row = new.rows(&repo).remove(0);
     assert!(row.line.starts_with("up "), "{}", row.line);
     assert!(new.entries()[0].live);
-    assert_eq!(new.term_mut(&repo, "db").and_then(|term| term.shell_pid()), Some(pid));
+    assert_eq!(
+        new.term_mut(&repo, &Key::shared("db")).and_then(|term| term.shell_pid()),
+        Some(pid)
+    );
     new.shutdown();
     wait_for("the adopted service to end on quit", || !alive(pid));
+}
+
+fn tab_service(name: &str, command: &str, folder: &Path) -> Service {
+    Service::new(name, command, true).in_tab(Some(folder.to_path_buf()))
+}
+
+#[test]
+fn a_tab_service_runs_in_its_tabs_folder_and_only_that_tab_sees_it() {
+    let mut fx = fixture(&[service("proxy", "sleep 30", true)]);
+    let repo = fx.repo.path().to_path_buf();
+    let mine = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let web = tab_service("web", "pwd; sleep 30", mine.path());
+    fx.host.add(&repo, &web, Begin::Now).unwrap();
+    let key = web.key();
+    let real = std::fs::canonicalize(mine.path()).unwrap();
+    wait_for("web's folder", || {
+        fx.host.log_tail(&repo, &key, 5).is_some_and(|lines| {
+            lines
+                .iter()
+                .any(|line| Path::new(line.trim()) == real || Path::new(line.trim()) == mine.path())
+        })
+    });
+    let names = |listed: Vec<Listed>| -> Vec<(String, &'static str)> {
+        listed.into_iter().map(|one| (one.name, one.scope)).collect()
+    };
+    assert_eq!(
+        names(fx.host.listed(&repo, mine.path())),
+        [("proxy".to_owned(), "shared"), ("web".to_owned(), "this tab")]
+    );
+    assert_eq!(names(fx.host.listed(&repo, other.path())), [("proxy".to_owned(), "shared")]);
+    assert_eq!(fx.host.resolve(&repo, mine.path(), "WEB"), Some(key.clone()));
+    assert_eq!(fx.host.resolve(&repo, other.path(), "web"), None);
+    assert!(fx.host.unknown(&repo, other.path(), "web").contains("`proxy`"));
+    fx.host.shutdown();
+}
+
+#[test]
+fn an_agent_means_its_own_service_before_a_shared_one_of_the_same_name() {
+    let mut fx = fixture(&[]);
+    let repo = fx.repo.path().to_path_buf();
+    let mine = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    fx.host.add(&repo, &tab_service("db", "sleep 30", mine.path()), Begin::Stopped).unwrap();
+    fx.host.add(&repo, &tab_service("db", "sleep 30", theirs.path()), Begin::Stopped).unwrap();
+    let resolved = fx.host.resolve(&repo, mine.path(), "db").unwrap();
+    assert_eq!(resolved.tab.as_deref(), Some(mine.path()));
+    fx.host.command(&repo, &resolved, Command::Start).unwrap();
+    let word = |fx: &mut Fixture, tab: &Path| {
+        fx.host.drive();
+        let key = Key { tab: Some(tab.to_path_buf()), name: "db".into() };
+        fx.host.rows(&repo).into_iter().find(|row| row.key == key).unwrap().word
+    };
+    assert_eq!(word(&mut fx, mine.path()), Word::Running);
+    assert_eq!(word(&mut fx, theirs.path()), Word::Stopped);
+    fx.host.shutdown();
+}
+
+#[test]
+fn closing_a_tab_stops_and_forgets_its_services_and_leaves_the_shared_ones() {
+    let mut fx = fixture(&[service("proxy", "sleep 30", true)]);
+    let repo = fx.repo.path().to_path_buf();
+    let mine = tempfile::tempdir().unwrap();
+    fx.host.add(&repo, &tab_service("web", "sleep 30", mine.path()), Begin::Now).unwrap();
+    let pid = fx
+        .host
+        .term_mut(&repo, &tab_service("web", "", mine.path()).key())
+        .and_then(|term| term.shell_pid())
+        .unwrap();
+    let places = [AgentPlace { id: 7, repo: &repo, folder: mine.path() }];
+    let _ = fx.host.lines_for(places.iter().copied());
+    fx.host.close_tab(7);
+    let names: Vec<String> = fx.host.rows(&repo).into_iter().map(|row| row.name).collect();
+    assert_eq!(names, ["proxy"]);
+    assert_eq!(Store::load(&fx.paths).services(&repo), [service("proxy", "sleep 30", true)]);
+    wait_for("web to stop", || !alive(pid));
+    fx.host.close_tab(99);
+    fx.host.shutdown();
+}
+
+#[test]
+fn a_tab_service_whose_folder_is_gone_is_dropped_when_the_repo_opens() {
+    let home = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    let paths = TidewatchPaths::new(home.path());
+    let kept = tempfile::tempdir().unwrap();
+    Store::update(&paths, |store| {
+        store.add(repo.path(), &tab_service("old", "sleep 30", Path::new("/no/such/worktree")))?;
+        store.add(repo.path(), &tab_service("live", "sleep 30", kept.path()))
+    })
+    .unwrap();
+    let mut host = Host::new(Some(paths.clone()), spawner(), false, false);
+    host.sync(&[repo.path()]);
+    let names: Vec<String> = host.rows(repo.path()).into_iter().map(|row| row.name).collect();
+    assert_eq!(names, ["live"]);
+    assert_eq!(Store::load(&paths).services(repo.path()).len(), 1);
+}
+
+#[test]
+fn sharing_a_tab_service_keeps_it_when_the_tab_closes() {
+    let mut fx = fixture(&[]);
+    let repo = fx.repo.path().to_path_buf();
+    let mine = tempfile::tempdir().unwrap();
+    let web = tab_service("web", "sleep 30", mine.path());
+    fx.host.add(&repo, &web, Begin::Stopped).unwrap();
+    fx.host.share(&repo, &web.key()).unwrap();
+    let places = [AgentPlace { id: 7, repo: &repo, folder: mine.path() }];
+    let _ = fx.host.lines_for(places.iter().copied());
+    fx.host.close_tab(7);
+    let rows = fx.host.rows(&repo);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key, Key::shared("web"));
+    assert!(Store::load(&fx.paths).services(&repo)[0].is_shared());
+}
+
+#[test]
+fn the_list_puts_shared_services_first() {
+    let mut fx = fixture(&[]);
+    let repo = fx.repo.path().to_path_buf();
+    let mine = tempfile::tempdir().unwrap();
+    fx.host.add(&repo, &tab_service("web", "sleep 1", mine.path()), Begin::Stopped).unwrap();
+    fx.host.add(&repo, &service("proxy", "sleep 1", false), Begin::Stopped).unwrap();
+    let rows = fx.host.rows(&repo);
+    assert_eq!(rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(), ["proxy", "web"]);
+    assert_eq!(rows[1].owner.as_deref(), mine.path().file_name().and_then(|n| n.to_str()));
 }

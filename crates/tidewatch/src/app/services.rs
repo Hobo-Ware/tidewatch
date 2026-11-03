@@ -3,9 +3,10 @@
 //! the Logs view (the service's live terminal in the place of the tab's, under a `Terminal` back
 //! button, which is readable at the terminal's width where a list in a popover would not be).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use egui::{Align, Layout, Rect, Sense, UiBuilder, pos2, vec2};
+use tidewatch_core::services::{Key, Service};
 use tidewatch_core::services_mcp::{self, Call, ServiceCall};
 
 use super::Tidewatch;
@@ -13,8 +14,8 @@ use super::terminal::{TerminalGrid, show_shell};
 use crate::brand;
 use crate::layout;
 use crate::repo::Workspace;
-use crate::screen_kit::{Size, TEXT_SECONDARY, body, mono, quiet_button};
-use crate::services_glue::{Begin, Command, Row};
+use crate::screen_kit::{Glyph, Size, TEXT_SECONDARY, body, glyph_button, mono, quiet_button};
+use crate::services_glue::{AgentPlace, Begin, Command, Row};
 use crate::services_view::{self, Action};
 use crate::wake::request_wake;
 
@@ -29,8 +30,35 @@ impl Tidewatch {
         }
     }
 
+    /// The repo's services, each tab service under its tab's title when that tab is open.
     pub(super) fn services_rows(&self) -> Vec<Row> {
-        self.repo_on_show().map(|repo| self.services.rows(repo)).unwrap_or_default()
+        let Some(repo) = self.repo_on_show() else { return Vec::new() };
+        let mut rows = self.services.rows(repo);
+        for row in &mut rows {
+            let Some(folder) = &row.key.tab else { continue };
+            if let Some(tab) = self.tabs.items().iter().find(|tab| {
+                self.tab_folder(tab.id).is_some_and(|dir| dir.components().eq(folder.components()))
+            }) {
+                row.owner = Some(tab.title.clone());
+            }
+        }
+        rows
+    }
+
+    /// The folder a tab runs in: its worktree, the folder its agent was started in, or the repo.
+    pub(super) fn tab_folder(&self, id: u64) -> Option<PathBuf> {
+        let tab = self.tabs.get(id)?;
+        if let Some(worktree) = &tab.pane.worktree {
+            return Some(worktree.path.clone());
+        }
+        let launched = tab.pane.agent.as_ref().and_then(|agent| agent.launched.as_ref());
+        if let Some(dir) = launched.and_then(|launched| launched.dir.clone()) {
+            return Some(dir);
+        }
+        match self.workspaces.get(tab.group)? {
+            Workspace::Repo(repo) => Some(repo.root.clone()),
+            Workspace::Other { .. } => None,
+        }
     }
 
     pub(super) fn open_add_service(&mut self, ctx: &egui::Context) {
@@ -54,13 +82,17 @@ impl Tidewatch {
         if let Some(wait) = self.services.drive() {
             request_wake(ctx, wait);
         }
-        let agents = self.tabs.items().iter().filter_map(|tab| {
-            tab.pane.agent.as_ref()?;
-            match self.workspaces.get(tab.group)? {
-                Workspace::Repo(repo) => Some((tab.id, repo.root.as_path())),
-                Workspace::Other { .. } => None,
-            }
-        });
+        let folders: Vec<(u64, PathBuf, PathBuf)> = self
+            .tabs
+            .items()
+            .iter()
+            .filter_map(|tab| {
+                tab.pane.agent.as_ref()?;
+                let Workspace::Repo(repo) = self.workspaces.get(tab.group)? else { return None };
+                Some((tab.id, repo.root.clone(), self.tab_folder(tab.id)?))
+            })
+            .collect();
+        let agents = folders.iter().map(|(id, repo, folder)| AgentPlace { id: *id, repo, folder });
         if let Some(lines) = self.services.lines_for(agents)
             && let Some(listener) = self.hooks.listener()
         {
@@ -81,20 +113,23 @@ impl Tidewatch {
     pub(super) fn apply_service_action(&mut self, action: Action, ctx: &egui::Context) {
         let Some(repo) = self.repo_on_show().map(Path::to_path_buf) else { return };
         let outcome = match action {
-            Action::Logs(name) => {
+            Action::Logs(key) => {
                 let tab = self.tabs.items()[self.tabs.active()].id;
-                self.services_ui.show_logs(&name, tab);
+                self.services_ui.show_logs(&key, tab);
                 Ok(())
             }
-            Action::Run(command, name) => self.services.command(&repo, &name, command).map(drop),
+            Action::Run(command, key) => self.services.command(&repo, &key, command).map(drop),
+            Action::Share(key) => {
+                self.services.share(&repo, &key).map_err(|found| found.join("; "))
+            }
             Action::Save { editing: Some(old), service } => {
                 self.services.edit(&repo, &old, &service).map_err(|found| found.join("; "))
             }
             Action::Save { editing: None, service } => {
                 self.services.add(&repo, &service, Begin::Stopped).map_err(|found| found.join("; "))
             }
-            Action::Remove(name) => {
-                self.services.remove(&repo, &name).map_err(|found| found.join("; "))
+            Action::Remove(key) => {
+                self.services.remove(&repo, &key).map_err(|found| found.join("; "))
             }
         };
         if let Err(reason) = outcome {
@@ -109,58 +144,91 @@ impl Tidewatch {
             Workspace::Repo(repo) => Some(repo.root.clone()),
             Workspace::Other { .. } => None,
         };
-        let answer = match repo {
+        let answer = match repo.zip(self.tab_folder(tab)) {
             None => {
                 Err("Services belong to a git repo, and this tab is in a plain folder.".to_owned())
             }
-            Some(repo) => self.answer_service_call(&repo, served.call),
+            Some((repo, folder)) => self.answer_service_call(&repo, &folder, served.call),
         };
         if served.reply.send(answer) {
             ctx.request_repaint();
         }
     }
 
-    fn answer_service_call(&mut self, repo: &Path, call: Call) -> services_mcp::Answer {
+    fn answer_service_call(
+        &mut self,
+        repo: &Path,
+        folder: &Path,
+        call: Call,
+    ) -> services_mcp::Answer {
+        let named = |host: &crate::services_glue::Host, name: &str| {
+            host.resolve(repo, folder, name).ok_or_else(|| host.unknown(repo, folder, name))
+        };
         match call {
-            Call::List => Ok(services_mcp::list_text(&self.services.listed(repo))),
-            Call::Add(service) => {
-                let name = service.name.clone();
-                self.services.add(repo, &service, Begin::Now).map_err(|found| {
-                    format!(
-                        "Nothing was changed. Fix these and call add_service again:\n- {}",
-                        found.join("\n- ")
-                    )
-                })?;
-                Ok(format!("Saved and started `{name}`. list_services shows its state."))
+            Call::List => Ok(services_mcp::list_text(&self.services.listed(repo, folder))),
+            Call::Add { service, shared } => self.add_for_agent(repo, folder, service, shared),
+            Call::Restart(name) => {
+                let key = named(&self.services, &name)?;
+                self.services.command(repo, &key, Command::Restart)
             }
-            Call::Restart(name) => self.services.command(repo, &name, Command::Restart),
-            Call::Stop(name) => self.services.command(repo, &name, Command::Stop),
-            Call::Log { name, lines } => self.services.log_text(repo, &name, lines),
+            Call::Stop(name) => {
+                let key = named(&self.services, &name)?;
+                self.services.command(repo, &key, Command::Stop)
+            }
+            Call::Log { name, lines } => {
+                self.services.log_text(repo, &named(&self.services, &name)?, lines)
+            }
         }
     }
 
+    fn add_for_agent(
+        &mut self,
+        repo: &Path,
+        folder: &Path,
+        service: Service,
+        shared: bool,
+    ) -> services_mcp::Answer {
+        let service = service.in_tab((!shared).then(|| folder.to_path_buf()));
+        let name = service.name.clone();
+        self.services.add(repo, &service, Begin::Now).map_err(|found| {
+            format!(
+                "Nothing was changed. Fix these and call add_service again:\n- {}",
+                found.join("\n- ")
+            )
+        })?;
+        Ok(if shared {
+            format!(
+                "Saved and started `{name}` as a shared service, in the repo's main checkout. list_services shows its state."
+            )
+        } else {
+            format!(
+                "Saved and started `{name}` as your tab's own service, in your worktree. It is stopped and removed when your tab closes. list_services shows its state."
+            )
+        })
+    }
+
     /// Whether the service named in the Logs view shows over the active tab.
-    pub(super) fn service_logs_showing(&mut self) -> Option<String> {
+    pub(super) fn service_logs_showing(&mut self) -> Option<Key> {
         let tab = self.tabs.items()[self.tabs.active()].id;
-        let name = self.services_ui.logs_over(tab)?.to_owned();
-        let shown = self.repo_on_show().is_some_and(|repo| self.services.has(repo, &name));
+        let key = self.services_ui.logs_over(tab)?.clone();
+        let shown = self.repo_on_show().is_some_and(|repo| self.services.has(repo, &key));
         if !shown {
             self.services_ui.close_logs();
         }
-        shown.then_some(name)
+        shown.then_some(key)
     }
 
     pub(super) fn show_service_logs(
         &mut self,
         ui: &mut egui::Ui,
         area: Rect,
-        name: &str,
+        key: &Key,
         keys_free: bool,
         modal_open: bool,
     ) {
         let Some(repo) = self.repo_on_show().map(Path::to_path_buf) else { return };
         let area = logs_area(area);
-        let row = self.services.rows(&repo).into_iter().find(|row| row.name == name);
+        let row = self.services.rows(&repo).into_iter().find(|row| &row.key == key);
         let header = Rect::from_min_size(area.min, vec2(area.width(), layout::CHROME_H));
         let mut command = None;
         let mut back = false;
@@ -180,13 +248,13 @@ impl Tidewatch {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     if services_view::is_running(row.word) {
-                        if quiet_button(ui, "Stop", true, Size::Compact).clicked() {
+                        if glyph_button(ui, Glyph::Stop, "Stop", Size::Compact).clicked() {
                             command = Some(Command::Stop);
                         }
-                        if quiet_button(ui, "Restart", true, Size::Compact).clicked() {
+                        if glyph_button(ui, Glyph::Restart, "Restart", Size::Compact).clicked() {
                             command = Some(Command::Restart);
                         }
-                    } else if quiet_button(ui, "Start", true, Size::Compact).clicked() {
+                    } else if glyph_button(ui, Glyph::Play, "Start", Size::Compact).clicked() {
                         command = Some(Command::Start);
                     }
                 });
@@ -196,16 +264,16 @@ impl Tidewatch {
             self.services_ui.close_logs();
         }
         if let Some(command) = command {
-            self.apply_service_action(Action::Run(command, name.to_owned()), ui.ctx());
+            self.apply_service_action(Action::Run(command, key.clone()), ui.ctx());
         }
         let body_rect = Rect::from_min_max(pos2(area.left(), header.bottom()), area.max);
-        if let Some(lines) = self.services.fake_lines(&repo, name) {
+        if let Some(lines) = self.services.fake_lines(&repo, key) {
             paint_lines(ui, body_rect, &lines);
             return;
         }
         let grid = TerminalGrid::measure(ui, body_rect, self.terminal_font.in_use());
         let config = &self.terminal_config;
-        match self.services.term_mut(&repo, name) {
+        match self.services.term_mut(&repo, key) {
             Some(term) => {
                 grid.resize(term);
                 show_shell(ui, term, &grid, config, keys_free, modal_open, &[]);

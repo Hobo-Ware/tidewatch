@@ -2,8 +2,14 @@ use egui::{Context, Event, PointerButton, Pos2, RawInput};
 
 use super::*;
 
+fn k(name: &str) -> ServiceKey {
+    ServiceKey::shared(name)
+}
+
 fn row(name: &str, word: Word, line: &str) -> Row {
     Row {
+        key: k(name),
+        owner: None,
         name: name.to_owned(),
         command: format!(
             "run {name} --with a-very-long-command-line-that-has-to-be-cut-by-an-ellipsis --port 3309"
@@ -115,12 +121,11 @@ impl Screen {
 }
 
 fn open_list() -> Memory {
-    Memory { popover: Popover::Open, selected: Some("db".to_owned()), ..Memory::default() }
+    Memory { popover: Popover::Open, selected: Some(k("db")), ..Memory::default() }
 }
 
 #[test]
-fn the_pill_draws_at_its_width_and_the_list_draws_the_selected_rows_actions_and_the_crashed_ones_start()
- {
+fn the_pill_draws_at_its_width_and_every_row_has_play_or_stop_and_the_selected_one_its_actions() {
     let mut screen = Screen::new(open_list(), rows());
     screen.settle();
     let placed = screen.placed();
@@ -128,7 +133,7 @@ fn the_pill_draws_at_its_width_and_the_list_draws_the_selected_rows_actions_and_
     assert_eq!(pill.height(), PILL_H);
     assert!(pill.width() > 120.0 && pill.width() < 220.0, "{pill:?}");
     let names: Vec<&str> = placed.buttons.iter().map(|(name, _)| *name).collect();
-    assert_eq!(names, ["Restart", "...", "Start", "Add service"]);
+    assert_eq!(names, ["Stop", "Restart", "...", "Stop", "Start", "Add service"]);
     for (name, rect) in &placed.buttons {
         if *name != "Add service" {
             assert_eq!(rect.height(), Size::Compact.height(), "{name}");
@@ -153,16 +158,20 @@ fn rows_are_48_tall_inside_the_list_and_never_overlap() {
 }
 
 #[test]
-fn restart_and_the_menu_show_on_the_hovered_row_only() {
+fn restart_and_the_menu_show_on_the_hovered_row_only_and_play_or_stop_always() {
     let mut screen = Screen::new(Memory { popover: Popover::Open, ..Memory::default() }, rows());
     screen.settle();
-    assert_eq!(screen.names(), ["Start", "Add service"], "nothing hovered, nothing selected");
+    assert_eq!(screen.names(), ["Stop", "Stop", "Start", "Add service"], "nothing hovered");
     let api = screen.row(1);
     screen.hover(api.left_center() + vec2(60.0, 0.0));
-    assert_eq!(screen.names(), ["Restart", "...", "Start", "Add service"]);
+    assert_eq!(screen.names(), ["Stop", "Stop", "Restart", "...", "Start", "Add service"]);
     let restart = screen.button("Restart");
     assert!(api.contains_rect(restart), "{restart:?} is not on the hovered row {api:?}");
-    assert!(restart.right() < screen.button("...").left());
+    assert!(screen.button("...").right() < restart.left());
+    assert!(
+        restart.right() < screen.buttons_named("Stop")[1].left(),
+        "play or stop stays rightmost"
+    );
     let db = screen.row(0);
     screen.hover(db.left_center() + vec2(60.0, 0.0));
     assert!(db.contains_rect(screen.button("Restart")));
@@ -177,7 +186,7 @@ fn a_crashed_row_keeps_its_start_and_shows_the_menu_only_on_hover() {
     assert!(tunnel.contains_rect(screen.button("Start")));
     assert_eq!(screen.buttons_named("...").len(), 0);
     screen.hover(tunnel.left_center() + vec2(60.0, 0.0));
-    assert_eq!(screen.names(), ["Start", "...", "Add service"]);
+    assert_eq!(screen.names(), ["Stop", "Stop", "Start", "...", "Add service"]);
 }
 
 #[test]
@@ -186,11 +195,11 @@ fn a_click_on_restart_emits_the_restart_action_for_that_service() {
     screen.settle();
     let at = screen.button("Restart").center();
     screen.click(at);
-    assert_eq!(screen.action, Some(Action::Run(Command::Restart, "db".to_owned())));
+    assert_eq!(screen.action, Some(Action::Run(Command::Restart, k("db"))));
 }
 
 #[test]
-fn logs_and_stop_live_in_the_menu_and_a_stopped_service_offers_start_on_its_row() {
+fn logs_live_in_the_menu_and_stop_and_start_sit_on_the_row() {
     let mut screen = Screen::new(open_list(), rows());
     screen.settle();
     let more = screen.button("...").center();
@@ -198,14 +207,13 @@ fn logs_and_stop_live_in_the_menu_and_a_stopped_service_offers_start_on_its_row(
     assert_eq!(screen.names().iter().filter(|name| **name == "Logs").count(), 1);
     let logs = screen.button("Logs").center();
     screen.click(logs);
-    assert_eq!(screen.action.take(), Some(Action::Logs("db".to_owned())));
+    assert_eq!(screen.action.take(), Some(Action::Logs(k("db"))));
     let mut screen = Screen::new(open_list(), rows());
     screen.settle();
-    let more = screen.button("...").center();
-    screen.click(more);
-    let stop = screen.button("Stop").center();
-    screen.click(stop);
-    assert_eq!(screen.action, Some(Action::Run(Command::Stop, "db".to_owned())));
+    let stop = screen.button("Stop");
+    assert!(screen.row(0).contains_rect(stop));
+    screen.click(stop.center());
+    assert_eq!(screen.action, Some(Action::Run(Command::Stop, k("db"))));
     let mut stopped = rows();
     stopped[0] = row("db", Word::Stopped, "stopped");
     let mut screen = Screen::new(open_list(), stopped);
@@ -213,37 +221,49 @@ fn logs_and_stop_live_in_the_menu_and_a_stopped_service_offers_start_on_its_row(
     assert_eq!(screen.buttons_named("Start").len(), 2, "the stopped row and the crashed one");
     let start = screen.buttons_named("Start")[0].center();
     screen.click(start);
-    assert_eq!(screen.action, Some(Action::Run(Command::Start, "db".to_owned())));
+    assert_eq!(screen.action, Some(Action::Run(Command::Start, k("db"))));
 }
 
 #[test]
-fn a_stopped_service_has_no_stop_in_its_menu_and_a_running_one_has_it() {
-    for (word, stop) in [(Word::Stopped, false), (Word::Crashed, false), (Word::Running, true)] {
+fn the_menu_holds_logs_edit_and_remove_and_share_only_for_a_tab_service() {
+    for tab in [None, Some(std::path::PathBuf::from("/wt/fix-login"))] {
         let mut shown = rows();
-        shown[0] = row("db", word, "x");
-        let mut screen = Screen::new(open_list(), shown);
+        shown[0].key.tab.clone_from(&tab);
+        let memory = Memory { selected: Some(shown[0].key.clone()), ..open_list() };
+        let mut screen = Screen::new(memory, shown);
         screen.settle();
         let more = screen.button("...").center();
         screen.click(more);
         let names = screen.names();
-        assert_eq!(names.contains(&"Stop"), stop, "{word:?} {names:?}");
         assert!(names.contains(&"Logs") && names.contains(&"Edit") && names.contains(&"Remove"));
+        assert_eq!(names.contains(&"Share"), tab.is_some(), "{tab:?} {names:?}");
+        if tab.is_some() {
+            let share = screen.button("Share").center();
+            screen.click(share);
+            assert_eq!(
+                screen.action,
+                Some(Action::Share(ServiceKey { tab: tab.clone(), name: "db".into() }))
+            );
+        }
     }
 }
 
 #[test]
-fn a_service_that_gave_up_offers_start_and_a_restarting_one_restart() {
-    for (word, first) in [
-        (Word::Crashed, "Start"),
-        (Word::Stopped, "Start"),
-        (Word::Restarting, "Restart"),
-        (Word::Starting, "Restart"),
-    ] {
+fn a_service_that_gave_up_offers_play_and_a_restarting_one_stop_and_restart() {
+    let cases: [(Word, &[&str]); 4] = [
+        (Word::Crashed, &["Start", "..."]),
+        (Word::Stopped, &["Start", "..."]),
+        (Word::Restarting, &["Stop", "Restart", "..."]),
+        (Word::Starting, &["Stop", "Restart", "..."]),
+    ];
+    for (word, first) in cases {
         let mut shown = rows();
         shown[0] = row("db", word, "x");
         let mut screen = Screen::new(open_list(), shown);
         screen.settle();
-        assert_eq!(screen.names(), [first, "...", "Start", "Add service"], "{word:?}");
+        let want: Vec<&str> =
+            first.iter().copied().chain(["Stop", "Start", "Add service"]).collect();
+        assert_eq!(screen.names(), want, "{word:?}");
     }
 }
 
@@ -251,10 +271,10 @@ fn a_service_that_gave_up_offers_start_and_a_restarting_one_restart() {
 fn a_click_on_a_row_selects_it_and_a_second_click_folds_it() {
     let mut screen = Screen::new(Memory { popover: Popover::Open, ..Memory::default() }, rows());
     screen.settle();
-    assert_eq!(screen.names(), ["Start", "Add service"]);
+    assert_eq!(screen.names(), ["Stop", "Stop", "Start", "Add service"]);
     let first_row = screen.row(0).left_center() + vec2(60.0, 0.0);
     screen.click(first_row);
-    assert_eq!(screen.memory.selected.as_deref(), Some("db"));
+    assert_eq!(screen.memory.selected, Some(k("db")));
     screen.click(first_row);
     assert_eq!(screen.memory.selected, None);
 }
@@ -339,7 +359,7 @@ fn the_form_becomes_a_service_or_lists_every_problem() {
 fn editing_may_keep_a_services_own_name() {
     let existing = rows();
     let mut keep = form("db", "x");
-    keep.editing = Some("db".to_owned());
+    keep.editing = Some(k("db"));
     assert!(form_service(&keep, &existing).is_ok());
     keep.name = "api".to_owned();
     assert!(form_service(&keep, &existing).is_err());
@@ -349,7 +369,7 @@ fn editing_may_keep_a_services_own_name() {
 fn the_card_menu_opens_the_edit_and_the_remove_dialogs_with_the_services_own_values() {
     let existing = rows();
     let edit = Form::edit(&existing[0]);
-    assert_eq!(edit.editing.as_deref(), Some("db"));
+    assert_eq!(edit.editing, Some(k("db")));
     assert_eq!(edit.name, "db");
     assert!(edit.autostart);
     let mut memory = Memory::default();
@@ -425,11 +445,11 @@ fn enter_in_the_add_dialog_saves_a_good_form_and_keeps_a_bad_one_open_with_its_p
 #[test]
 fn the_remove_dialog_asks_once_and_cancel_forgets_it() {
     let ctx = crate::fonts::test_context();
-    let mut memory = Memory { dialog: Some(Dialog::Remove("tunnel".into())), ..Memory::default() };
+    let mut memory = Memory { dialog: Some(Dialog::Remove(k("tunnel"))), ..Memory::default() };
     for _ in 0..3 {
         assert_eq!(dialog_frame_of(&ctx, &mut memory, &rows(), vec![]), None);
     }
-    assert_eq!(memory.dialog, Some(Dialog::Remove("tunnel".into())));
+    assert_eq!(memory.dialog, Some(Dialog::Remove(k("tunnel"))));
     let esc = Event::Key {
         key: Key::Escape,
         physical_key: None,
@@ -445,17 +465,17 @@ fn the_remove_dialog_asks_once_and_cancel_forgets_it() {
 #[test]
 fn the_logs_view_belongs_to_the_tab_it_was_opened_from() {
     let mut memory = Memory::default();
-    memory.show_logs("db", 7);
-    assert_eq!(memory.logs_over(7), Some("db"));
+    memory.show_logs(&k("db"), 7);
+    assert_eq!(memory.logs_over(7), Some(&k("db")));
     assert_eq!(memory.logs_over(8), None);
     assert_eq!(memory.logs_over(7), None, "another tab closed it for good");
-    memory.logs = Some(Logs { name: "db".into(), tab: None });
-    assert_eq!(memory.logs_over(3), Some("db"), "a dev switch adopts the tab in front");
+    memory.logs = Some(Logs { key: k("db"), tab: None });
+    assert_eq!(memory.logs_over(3), Some(&k("db")), "a dev switch adopts the tab in front");
     assert_eq!(memory.logs_over(4), None);
 }
 
 fn opened_by_click() -> Screen {
-    let memory = Memory { selected: Some("db".to_owned()), ..Memory::default() };
+    let memory = Memory { selected: Some(k("db")), ..Memory::default() };
     let mut screen = Screen::new(memory, rows());
     screen.settle();
     assert_eq!(screen.names(), Vec::<&str>::new());
@@ -475,11 +495,11 @@ fn the_more_button_opens_its_menu_over_the_list_and_the_list_stays_open() {
     let mut screen = opened_by_click();
     let more = screen.button("...").center();
     screen.click(more);
-    assert_eq!(screen.memory.menu.as_deref(), Some("db"));
+    assert_eq!(screen.memory.menu, Some(k("db")));
     let names = screen.names();
     assert!(names.contains(&"Edit") && names.contains(&"Remove"), "{names:?}");
     assert!(names.contains(&"Add service"), "the list is still open: {names:?}");
-    assert_eq!(screen.memory.selected.as_deref(), Some("db"));
+    assert_eq!(screen.memory.selected, Some(k("db")));
     assert_eq!(screen.memory.dialog, None);
 }
 
@@ -503,7 +523,7 @@ fn remove_asks_first_and_the_list_stays_open() {
     screen.click(more);
     let remove = screen.button("Remove").center();
     screen.click(remove);
-    assert_eq!(screen.memory.dialog, Some(Dialog::Remove("db".to_owned())));
+    assert_eq!(screen.memory.dialog, Some(Dialog::Remove(k("db"))));
     assert_eq!(screen.action, None, "nothing is removed before the dialog is confirmed");
     assert!(screen.names().contains(&"Add service"));
 }
@@ -537,7 +557,7 @@ fn a_click_inside_the_list_off_the_menu_closes_only_the_menu() {
     let second_card = screen.row(1).left_center() + vec2(60.0, 0.0);
     screen.click(second_card);
     assert_eq!(screen.memory.menu, None);
-    assert_eq!(screen.memory.selected.as_deref(), Some("api"));
+    assert_eq!(screen.memory.selected, Some(k("api")));
     assert!(screen.names().contains(&"...") && !screen.names().contains(&"Edit"));
 }
 
@@ -546,12 +566,12 @@ fn the_more_button_toggles_its_menu_and_another_cards_button_moves_it() {
     let mut screen = opened_by_click();
     let first = screen.button("...").center();
     screen.click(first);
-    assert_eq!(screen.memory.menu.as_deref(), Some("db"));
+    assert_eq!(screen.memory.menu, Some(k("db")));
     let api = screen.row(1);
     screen.hover(api.left_center() + vec2(60.0, 0.0));
     let second = screen.buttons_named("...")[1].center();
     screen.click(second);
-    assert_eq!(screen.memory.menu.as_deref(), Some("api"));
+    assert_eq!(screen.memory.menu, Some(k("api")));
     let again = screen.buttons_named("...")[1].center();
     screen.click(again);
     assert_eq!(screen.memory.menu, None);
@@ -590,4 +610,30 @@ fn the_form_footer_names_only_keys_and_actions_that_exist() {
     assert!(texts.contains(&"saves".to_owned()), "{texts:?}");
     assert!(texts.contains(&"cancels".to_owned()), "{texts:?}");
     assert_eq!(texts.iter().filter(|t| t.contains("Start runs") || t.contains(" - ")).count(), 0);
+}
+
+#[test]
+fn a_tab_service_may_share_a_name_with_another_tabs_but_not_with_a_shared_one() {
+    let mut existing = rows();
+    existing[1].key.tab = Some("/wt/other".into());
+    let mut editing = form("api", "x");
+    editing.editing = Some(ServiceKey { tab: Some("/wt/mine".into()), name: "web".into() });
+    assert!(form_service(&editing, &existing).is_ok(), "the other tab's api is not in the way");
+    editing.name = "db".to_owned();
+    assert!(form_service(&editing, &existing).is_err(), "a shared db is");
+    assert!(form_service(&form("api", "x"), &existing).is_err(), "a shared name must be free");
+}
+
+#[test]
+fn tab_services_draw_under_their_tab_after_the_shared_ones() {
+    let mut shown = rows();
+    shown[2].key.tab = Some("/wt/fix-login".into());
+    shown[2].owner = Some("fix-login".into());
+    let mut screen = Screen::new(open_list(), shown);
+    screen.settle();
+    let placed = screen.placed();
+    assert_eq!(placed.rows.len(), 3);
+    let gap = placed.rows[2].top() - placed.rows[1].bottom();
+    let shared_gap = placed.rows[1].top() - placed.rows[0].bottom();
+    assert!(gap > shared_gap + 10.0, "a section label sits before the tab's rows: {gap}");
 }
