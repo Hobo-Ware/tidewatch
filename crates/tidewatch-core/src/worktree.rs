@@ -555,6 +555,20 @@ pub fn remove_with(
     with_machine(paths, terms.owner, |watch| remove_watched(paths, worktree, terms, watch))
 }
 
+/// [`remove_with`], except a discarded folder git can no longer read (its record in the repo was
+/// pruned) goes to the Trash first, since `git worktree remove` refuses a folder git forgot.
+pub fn remove_or_trash(
+    paths: &TidewatchPaths,
+    worktree: &Worktree,
+    terms: &Terms,
+    trash: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<BranchOutcome, WorktreeError> {
+    if terms.mode == RemoveMode::Discard && is_unreadable(&worktree.path) {
+        discard_unreadable(paths, &worktree.path, Some(worktree), trash)?;
+    }
+    remove_with(paths, worktree, terms)
+}
+
 /// Removes the worktree folder and its git registration, then keeps or deletes the branch.
 /// `Safe` goes ahead only when the check proves nothing is lost: a clean tree, every commit also
 /// somewhere else, no process in the folder, no recent agent session. A branch that is deleted goes

@@ -252,6 +252,30 @@ fn discarding_a_worktree_git_already_forgot_whose_branch_is_gone_still_closes() 
 }
 
 #[test]
+fn discarding_a_folder_whose_git_record_was_pruned_trashes_it_and_closes() {
+    let f = fixture();
+    let wt = worktree::add(&f.paths, &f.repo).unwrap();
+    let link = fs::read_to_string(wt.path.join(".git")).unwrap();
+    let record = PathBuf::from(link.trim().strip_prefix("gitdir: ").unwrap());
+    fs::remove_dir_all(record).unwrap();
+    assert!(worktree::is_unreadable(&wt.path));
+    let trash = f.home.join("trash");
+    fs::create_dir_all(&trash).unwrap();
+    let terms = Terms::new(BranchChoice::Delete, RemoveMode::Discard);
+
+    let outcome = worktree::remove_or_trash(&f.paths, &wt, &terms, |path| {
+        fs::rename(path, trash.join("moved")).map_err(|e| e.to_string())
+    })
+    .unwrap();
+
+    assert!(matches!(outcome, BranchOutcome::Deleted { .. }), "{outcome:?}");
+    assert!(!wt.path.exists());
+    assert!(trash.join("moved").exists());
+    assert_only_main(&f.repo);
+    assert_eq!(branches(&f.repo), ["main"]);
+}
+
+#[test]
 fn removing_with_an_unreachable_repo_reports_git_s_error() {
     let f = fixture();
     let wt = worktree::add(&f.paths, &f.repo).unwrap();
