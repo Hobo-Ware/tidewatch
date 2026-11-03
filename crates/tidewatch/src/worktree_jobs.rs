@@ -202,7 +202,9 @@ pub(crate) fn remove<T: Send + 'static>(
         if had_shell {
             wait_for_exit(&paths, &worktree);
         }
-        let result = worktree::remove_with(&paths, &worktree, &terms).map_err(|e| e.to_string());
+        let result =
+            worktree::remove_or_trash(&paths, &worktree, &terms, crate::trash::move_to_trash)
+                .map_err(|e| e.to_string());
         if result.is_ok()
             && let Some(grant) = &trust
         {

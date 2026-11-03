@@ -203,6 +203,27 @@ fn a_path_taken_by_something_else_is_refused_and_left_as_it_is() {
 }
 
 #[test]
+fn a_folder_whose_git_record_was_pruned_is_relinked_with_its_changes() {
+    let f = fixture();
+    let (made, _) = closed_worktree(&f);
+    let closed = closed_tabs::load(&f.paths).remove(0);
+    worktree::revive(&f.paths, &closed).unwrap();
+    fs::write(made.path.join("wip.txt"), "unsaved").unwrap();
+    let link = fs::read_to_string(made.path.join(".git")).unwrap();
+    fs::remove_dir_all(link.trim().strip_prefix("gitdir: ").unwrap()).unwrap();
+    assert!(worktree::is_unreadable(&made.path));
+
+    let again = worktree::revive(&f.paths, &closed).unwrap();
+
+    assert!(!again.made_folder && !again.made_branch);
+    assert!(!worktree::is_unreadable(&made.path));
+    assert_eq!(fs::read_to_string(made.path.join("wip.txt")).unwrap(), "unsaved");
+    assert_eq!(ok(&made.path, &["status", "--porcelain"]).trim(), "?? wip.txt");
+    let aside = made.path.with_file_name(format!(".{}.relink", made.name()));
+    assert!(!aside.exists());
+}
+
+#[test]
 fn a_worktree_that_is_already_there_is_used_as_it_is_with_its_changes() {
     let f = fixture();
     let (made, _) = closed_worktree(&f);
