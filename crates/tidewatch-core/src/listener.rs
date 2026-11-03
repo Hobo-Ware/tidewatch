@@ -39,7 +39,6 @@ use crate::paths::{
     TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
     sent_file_beside,
 };
-use crate::progress::Ledger;
 use crate::sent::{self, Reason, Record, because};
 use crate::status::parse_hook;
 use crate::workflow_detect;
@@ -542,7 +541,7 @@ fn prompt_reply(
     }
     let ledger = progress_store::load(&progress_file_beside(&entry.notes_file));
     let message = payload.get("prompt").and_then(serde_json::Value::as_str).unwrap_or_default();
-    let (avatar, name) = asks_due(shared, entry, ledger.as_ref(), message);
+    let (avatar, name) = asks_due(shared, entry, message);
     let mut contexts: Vec<String> = avatar.into_iter().collect();
     if let Some(line) = ledger.as_ref().and_then(prompt_answer::ledger_context) {
         contexts.push(line);
@@ -556,17 +555,12 @@ fn prompt_reply(
 
 /// The icon ask and the name ask that are due now, each once per tab; `message` is the owner's
 /// message the icon ask goes with, kept for the fallback icon.
-fn asks_due(
-    shared: &Shared,
-    entry: &Entry,
-    ledger: Option<&Ledger>,
-    message: &str,
-) -> (Option<String>, Option<String>) {
+fn asks_due(shared: &Shared, entry: &Entry, message: &str) -> (Option<String>, Option<String>) {
     let avatar = avatar_due(shared, entry, message).then(|| {
         tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
         avatar_ask::CONTEXT.to_owned()
     });
-    let name = name_ask::line_due(&entry.notes_file, ledger).map(str::to_owned);
+    let name = name_ask::line_due(&entry.notes_file).map(str::to_owned);
     (avatar, name)
 }
 
@@ -639,7 +633,7 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
         }
         let ledger = progress_store::load(&progress_file);
         let goal = ledger.as_ref().map_or("", |ledger| ledger.goal.as_str());
-        let (avatar, name) = asks_due(shared, entry, ledger.as_ref(), goal);
+        let (avatar, name) = asks_due(shared, entry, goal);
         avatar.into_iter().chain(name).collect()
     };
     let ctx = ToolCtx {
@@ -1042,6 +1036,7 @@ mod tests {
         let marker = avatar_asked_file_beside(&notes);
         let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert!(asks_for_an_icon(&first), "no report needed: {}", first.body);
+        assert_eq!(context_of(&first), format!("{}\n{}", avatar_ask::CONTEXT, name_ask::ASK));
         assert_eq!(avatar_store::asked_message(&marker).as_deref(), Some("hi"));
         save_ledger(&f, &token, CALM);
         let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
@@ -1153,14 +1148,12 @@ mod tests {
     const SET_NAME: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_name","arguments":{"name":"fix-login-redirect"}}}"#;
 
     #[test]
-    fn a_tab_with_a_goal_and_no_name_is_asked_for_one_on_its_next_prompt_and_never_twice() {
+    fn a_tab_with_no_name_is_asked_for_one_on_its_first_prompt_and_never_twice() {
         let f = fixture();
         let token = f.register(1, "a");
         already_asked(&f, &token);
         let notes = notes_of(&f, &token);
-        assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}", "no report");
         assert!(!name_ask::was_asked(&notes));
-        save_ledger(&f, &token, CALM);
         let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
         assert_eq!(context_of(&response), name_ask::ASK);
         assert!(name_ask::was_asked(&notes), "the marker is written with the ask");
