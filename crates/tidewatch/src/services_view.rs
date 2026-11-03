@@ -1,10 +1,11 @@
 //! The services pill at the right end of the tab strip (one 8 px dot per service, then
 //! `N services`, a 1 px outline and no fill), the 400 px list it opens (a 48 px row per service
-//! under a `SERVICES` label: its actions show at the right end while the pointer is over the row
-//! or the row is selected, Restart and a `...` menu while it runs, Start and the menu while it does
-//! not, and a crashed row has a warm tint and its Start always; the menu holds Logs, Stop, Edit and
-//! Remove, opens beside the list so it hides no row, and leaves the list open), and the dialogs:
-//! Add or Edit service, and the one confirm before Remove.
+//! under a `SERVICES` label, the shared ones first and then each tab's own under its tab's name:
+//! a play or stop button always at the right end, Restart and a `...` menu to its left while the
+//! pointer is over the row or the row is selected, and a crashed row has a warm tint; the menu holds
+//! Logs, Edit, Share with every tab for a tab service, and Remove, opens beside the list so it
+//! hides no row, and leaves the list open), and the dialogs: Add or Edit service, and the one
+//! confirm before Remove.
 
 use egui::containers::menu::menu_style;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
@@ -15,14 +16,14 @@ use egui::{
 use stdusk_egui::ui::icons;
 use stdusk_egui::widgets::{menu_item, style_menu};
 use tidewatch_core::service_supervisor::Word;
-use tidewatch_core::services::{Service, problems};
+use tidewatch_core::services::{Key as ServiceKey, Service, clashing, problems};
 
 use crate::brand;
 use crate::remote_pill::Popover;
 use crate::screen_kit::{
-    DialogWidth, Glyph, MENU_ROW_H, Size, TEXT_BODY, TEXT_TAG, body, button_width, danger_button,
-    dialog_frame, field_label, footer_row, glyph_button, menu_divider, menu_label_with, menu_row,
-    mono, primary_button, primary_button_keyed, quiet_button, selected_ink, selection_row,
+    DialogWidth, Glyph, MENU_ROW_H, Size, TEXT_BODY, TEXT_TAG, body, danger_button, dialog_frame,
+    field_label, footer_row, glyph_button, menu_divider, menu_label_with, menu_row, mono,
+    primary_button_keyed, quiet_button, selected_ink, selection_row,
 };
 use crate::services_glue::{Command, Row};
 use crate::settings_ui::{switch_line, text_input};
@@ -68,15 +69,16 @@ fn note_button(ctx: &egui::Context, name: &'static str, rect: Rect) {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
-    Logs(String),
-    Run(Command, String),
-    Save { editing: Option<String>, service: Service },
-    Remove(String),
+    Logs(ServiceKey),
+    Run(Command, ServiceKey),
+    Save { editing: Option<ServiceKey>, service: Service },
+    Share(ServiceKey),
+    Remove(ServiceKey),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Form {
-    pub(crate) editing: Option<String>,
+    pub(crate) editing: Option<ServiceKey>,
     pub(crate) name: String,
     pub(crate) command: String,
     pub(crate) autostart: bool,
@@ -91,7 +93,7 @@ impl Form {
 
     fn edit(row: &Row) -> Self {
         Self {
-            editing: Some(row.name.clone()),
+            editing: Some(row.key.clone()),
             name: row.name.clone(),
             command: row.command.clone(),
             autostart: row.autostart,
@@ -104,13 +106,13 @@ impl Form {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Dialog {
     Form(Form),
-    Remove(String),
+    Remove(ServiceKey),
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct Memory {
-    selected: Option<String>,
-    menu: Option<String>,
+    selected: Option<ServiceKey>,
+    menu: Option<ServiceKey>,
     menu_rect: Option<Rect>,
     dialog: Option<Dialog>,
     logs: Option<Logs>,
@@ -122,8 +124,18 @@ pub(crate) struct Memory {
 /// until the first frame knows which one that is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Logs {
-    pub(crate) name: String,
+    pub(crate) key: ServiceKey,
     pub(crate) tab: Option<u64>,
+}
+
+fn env_key(var: &str) -> Option<ServiceKey> {
+    let name = std::env::var(var).ok().filter(|name| !name.is_empty())?;
+    Some(match name.strip_prefix("tab:") {
+        Some(name) => {
+            ServiceKey { tab: Some(crate::services_glue::FAKE_TAB.into()), name: name.to_owned() }
+        }
+        None => ServiceKey::shared(&name),
+    })
 }
 
 impl Memory {
@@ -131,16 +143,13 @@ impl Memory {
         let open = std::env::var("TIDEWATCH_DEV_SERVICES_POPOVER").is_ok_and(|v| v == "1");
         let dialog = match std::env::var("TIDEWATCH_DEV_SERVICES_DIALOG").ok().as_deref() {
             Some("add") => Some(Dialog::Form(Form::add())),
-            Some("remove") => Some(Dialog::Remove("tunnel".to_owned())),
+            Some("remove") => Some(Dialog::Remove(ServiceKey::shared("tunnel"))),
             _ => None,
         };
-        let logs = std::env::var("TIDEWATCH_DEV_SERVICES_LOGS")
-            .ok()
-            .filter(|name| !name.is_empty())
-            .map(|name| Logs { name, tab: None });
+        let logs = env_key("TIDEWATCH_DEV_SERVICES_LOGS").map(|key| Logs { key, tab: None });
         Self {
-            selected: std::env::var("TIDEWATCH_DEV_SERVICES_SELECT").ok().filter(|n| !n.is_empty()),
-            menu: std::env::var("TIDEWATCH_DEV_SERVICES_MENU").ok().filter(|n| !n.is_empty()),
+            selected: env_key("TIDEWATCH_DEV_SERVICES_SELECT"),
+            menu: env_key("TIDEWATCH_DEV_SERVICES_MENU"),
             menu_rect: None,
             dialog,
             logs,
@@ -159,16 +168,16 @@ impl Memory {
 
     /// The service whose logs show over `tab`; a tab that is not the one they were opened from
     /// closes them.
-    pub(crate) fn logs_over(&mut self, tab: u64) -> Option<&str> {
+    pub(crate) fn logs_over(&mut self, tab: u64) -> Option<&ServiceKey> {
         let logs = self.logs.as_mut()?;
         if *logs.tab.get_or_insert(tab) != tab {
             self.logs = None;
         }
-        self.logs.as_ref().map(|logs| logs.name.as_str())
+        self.logs.as_ref().map(|logs| &logs.key)
     }
 
-    pub(crate) fn show_logs(&mut self, name: &str, tab: u64) {
-        self.logs = Some(Logs { name: name.to_owned(), tab: Some(tab) });
+    pub(crate) fn show_logs(&mut self, key: &ServiceKey, tab: u64) {
+        self.logs = Some(Logs { key: key.clone(), tab: Some(tab) });
     }
 
     pub(crate) fn close_logs(&mut self) {
@@ -295,7 +304,12 @@ fn list(
             ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
             let edge = ui.min_rect().left() - f32::from(LIST_MARGIN);
             menu_label_with(ui, "Services", &format!(" \u{b7} {repo}"), "");
+            let mut section = None;
             for row in rows {
+                if rows.iter().any(|row| row.key.tab.is_some()) && section != Some(&row.key.tab) {
+                    section = Some(&row.key.tab);
+                    section_label(ui, row);
+                }
                 if let Some(done) = card(ui, row, memory, edge) {
                     action = Some(done);
                 }
@@ -331,6 +345,19 @@ fn list(
     action
 }
 
+fn section_label(ui: &mut Ui, row: &Row) {
+    let rect = match &row.owner {
+        None => menu_label_with(ui, "Shared", "", "every tab"),
+        Some(owner) => menu_label_with(ui, "Tab", &format!(" \u{b7} {owner}"), "ends with the tab"),
+    };
+    ui.interact(rect, ui.id().with(("services-section", &row.key.tab)), Sense::hover())
+        .on_hover_text(if row.owner.is_none() {
+            "Shared services run in the main checkout and every agent of the repo can use them"
+        } else {
+            "This tab's own services run in its worktree and are removed when the tab closes"
+        });
+}
+
 fn add_row(ui: &mut Ui) -> egui::Response {
     let (rect, response) = menu_row(ui, MENU_ROW_H, false, true);
     note_button(ui.ctx(), "Add service", rect);
@@ -353,54 +380,50 @@ fn add_row(ui: &mut Ui) -> egui::Response {
 }
 
 fn card(ui: &mut Ui, row: &Row, memory: &mut Memory, edge: f32) -> Option<Action> {
-    let selected = memory.selected.as_deref() == Some(row.name.as_str());
+    let selected = memory.selected.as_ref() == Some(&row.key);
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
     note_row(ui.ctx(), rect);
-    let menu_open = memory.menu.as_deref() == Some(row.name.as_str());
+    let menu_open = memory.menu.as_ref() == Some(&row.key);
     let hot = selected || menu_open || ui.rect_contains_pointer(rect);
-    let crashed = row.word == Word::Crashed;
-    if crashed {
+    let running = is_running(row.word);
+    if row.word == Word::Crashed {
         ui.painter().rect_filled(rect, CornerRadius::same(8), brand::STRUGGLE_FILL);
     }
     selection_row(ui.painter(), rect, selected, hot);
-    let start_w = button_width(ui, "Start", Size::Compact);
-    let more_w = Size::Compact.height();
-    let first_w = if is_running(row.word) { Size::Compact.height() } else { start_w };
-    let reserve = first_w + ACTION_GAP + more_w + ROW_PAD;
+    let side = Size::Compact.height();
+    let reserve = side * 3.0 + ACTION_GAP * 2.0 + ROW_PAD;
     paint_card_text(ui, rect, row, reserve, selected);
     if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-        memory.selected = if selected { None } else { Some(row.name.clone()) };
+        memory.selected = if selected { None } else { Some(row.key.clone()) };
     }
+    let slot = |from_right: f32| {
+        let right = rect.right() - ROW_PAD - from_right * (side + ACTION_GAP);
+        Rect::from_min_size(pos2(right - side, rect.center().y - side / 2.0), vec2(side, side))
+    };
     let mut action = None;
-    let top = rect.center().y - Size::Compact.height() / 2.0;
-    let more_rect = Rect::from_min_size(
-        pos2(rect.right() - ROW_PAD - more_w, top),
-        vec2(more_w, Size::Compact.height()),
-    );
-    let first_rect = Rect::from_min_size(
-        pos2(more_rect.left() - ACTION_GAP - first_w, top),
-        vec2(first_w, Size::Compact.height()),
-    );
-    if hot || crashed {
-        let mut over = ui.new_child(UiBuilder::new().max_rect(first_rect));
-        let ui = &mut over;
-        if is_running(row.word) {
-            let restart = glyph_button(ui, Glyph::Restart, "Restart", Size::Compact);
-            note_button(ui.ctx(), "Restart", restart.rect);
-            if restart.clicked() {
-                action = Some(Action::Run(Command::Restart, row.name.clone()));
-            }
-        } else {
-            let start = primary_button(ui, "Start", true, Size::Compact);
-            note_button(ui.ctx(), "Start", start.rect);
-            if start.clicked() {
-                action = Some(Action::Run(Command::Start, row.name.clone()));
-            }
+    let mut toggle = ui.new_child(UiBuilder::new().max_rect(slot(0.0)));
+    let (glyph, name, tip, command) = if running {
+        (Glyph::Stop, "Stop", "Stop it; it stays stopped until you start it", Command::Stop)
+    } else {
+        (Glyph::Play, "Start", "Start it", Command::Start)
+    };
+    let pressed = glyph_button(&mut toggle, glyph, tip, Size::Compact);
+    note_button(ui.ctx(), name, pressed.rect);
+    if pressed.clicked() {
+        action = Some(Action::Run(command, row.key.clone()));
+    }
+    let more_slot = if running { 2.0 } else { 1.0 };
+    if hot && running {
+        let mut over = ui.new_child(UiBuilder::new().max_rect(slot(1.0)));
+        let restart = glyph_button(&mut over, Glyph::Restart, "Restart", Size::Compact);
+        note_button(ui.ctx(), "Restart", restart.rect);
+        if restart.clicked() {
+            action = Some(Action::Run(Command::Restart, row.key.clone()));
         }
     }
     if hot {
-        let mut over = ui.new_child(UiBuilder::new().max_rect(more_rect));
+        let mut over = ui.new_child(UiBuilder::new().max_rect(slot(more_slot)));
         more_menu(&mut over, row, memory, (edge, rect));
     }
     if let Some(done) = memory.pending.take() {
@@ -410,13 +433,13 @@ fn card(ui: &mut Ui, row: &Row, memory: &mut Memory, edge: f32) -> Option<Action
 }
 
 fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory, (edge, row_rect): (f32, Rect)) {
-    let more = glyph_button(ui, Glyph::More, "Logs, stop, edit or remove", Size::Compact);
+    let more = glyph_button(ui, Glyph::More, "Logs, edit, share or remove", Size::Compact);
     note_button(ui.ctx(), "...", more.rect);
-    let open = memory.menu.as_deref() == Some(row.name.as_str());
+    let open = memory.menu.as_ref() == Some(&row.key);
     if more.clicked() {
-        memory.menu = if open { None } else { Some(row.name.clone()) };
+        memory.menu = if open { None } else { Some(row.key.clone()) };
     }
-    if memory.menu.as_deref() != Some(row.name.as_str()) {
+    if memory.menu.as_ref() != Some(&row.key) {
         return;
     }
     if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
@@ -444,16 +467,8 @@ fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory, (edge, row_rect): (f32
             let logs = menu_item(ui, "Logs", "");
             note_button(ui.ctx(), "Logs", logs.rect);
             if logs.clicked() {
-                memory.pending = Some(Action::Logs(row.name.clone()));
+                memory.pending = Some(Action::Logs(row.key.clone()));
                 memory.menu = None;
-            }
-            if is_running(row.word) {
-                let stop = menu_item(ui, "Stop", "");
-                note_button(ui.ctx(), "Stop", stop.rect);
-                if stop.clicked() {
-                    memory.pending = Some(Action::Run(Command::Stop, row.name.clone()));
-                    memory.menu = None;
-                }
             }
             let edit = menu_item(ui, "Edit", "");
             note_button(ui.ctx(), "Edit", edit.rect);
@@ -461,10 +476,18 @@ fn more_menu(ui: &mut Ui, row: &Row, memory: &mut Memory, (edge, row_rect): (f32
                 memory.dialog = Some(Dialog::Form(Form::edit(row)));
                 memory.menu = None;
             }
+            if row.key.tab.is_some() {
+                let share = menu_item(ui, "Share with every tab", "");
+                note_button(ui.ctx(), "Share", share.rect);
+                if share.on_hover_text("Keep it after this tab closes, for every agent").clicked() {
+                    memory.pending = Some(Action::Share(row.key.clone()));
+                    memory.menu = None;
+                }
+            }
             let remove = menu_item(ui, "Remove", "");
             note_button(ui.ctx(), "Remove", remove.rect);
             if remove.clicked() {
-                memory.dialog = Some(Dialog::Remove(row.name.clone()));
+                memory.dialog = Some(Dialog::Remove(row.key.clone()));
                 memory.menu = None;
             }
         });
@@ -515,10 +538,14 @@ fn cut_to(text: &str, width: f32) -> LayoutJob {
 
 /// A form's service, or each problem found.
 pub(crate) fn form_service(form: &Form, existing: &[Row]) -> Result<Service, Vec<String>> {
-    let service = Service::new(&form.name, &form.command, form.autostart);
-    let others: Vec<Service> =
-        existing.iter().map(|row| Service::new(&row.name, &row.command, row.autostart)).collect();
-    let found = problems(&service, &others, form.editing.as_deref());
+    let tab = form.editing.as_ref().and_then(|key| key.tab.clone());
+    let service = Service::new(&form.name, &form.command, form.autostart).in_tab(tab.clone());
+    let all: Vec<Service> = existing
+        .iter()
+        .map(|row| Service::new(&row.name, &row.command, row.autostart).in_tab(row.key.tab.clone()))
+        .collect();
+    let renaming = form.editing.as_ref().map(|key| key.name.as_str());
+    let found = problems(&service, &clashing(&all, tab.as_deref()), renaming);
     if found.is_empty() { Ok(service) } else { Err(found) }
 }
 
@@ -526,7 +553,7 @@ pub(crate) fn dialog(ctx: &egui::Context, memory: &mut Memory, existing: &[Row])
     let dialog = memory.dialog.take()?;
     let (next, action) = match dialog {
         Dialog::Form(form) => form_dialog(ctx, form, existing),
-        Dialog::Remove(name) => remove_dialog(ctx, name),
+        Dialog::Remove(key) => remove_dialog(ctx, key),
     };
     memory.dialog = next;
     action
@@ -585,7 +612,8 @@ fn form_dialog(
     (None, Some(Action::Save { editing: form.editing, service }))
 }
 
-fn remove_dialog(ctx: &egui::Context, name: String) -> (Option<Dialog>, Option<Action>) {
+fn remove_dialog(ctx: &egui::Context, key: ServiceKey) -> (Option<Dialog>, Option<Action>) {
+    let name = &key.name;
     let mut confirm = false;
     let mut cancel = false;
     let modal =
@@ -612,12 +640,12 @@ fn remove_dialog(ctx: &egui::Context, name: String) -> (Option<Dialog>, Option<A
             });
         });
     if confirm {
-        return (None, Some(Action::Remove(name)));
+        return (None, Some(Action::Remove(key)));
     }
     if cancel || modal.should_close() {
         return (None, None);
     }
-    (Some(Dialog::Remove(name)), None)
+    (Some(Dialog::Remove(key)), None)
 }
 
 #[cfg(test)]

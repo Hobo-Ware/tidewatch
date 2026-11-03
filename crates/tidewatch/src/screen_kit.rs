@@ -1038,6 +1038,8 @@ pub(crate) enum Glyph {
     Infinity,
     Up,
     Down,
+    Play,
+    Stop,
 }
 
 /// Paints `glyph` in a `size` square centered on `center`.
@@ -1079,6 +1081,14 @@ pub(crate) fn paint_glyph(
         Glyph::Down => {
             painter
                 .add(egui::Shape::line(vec![at(4.0, 6.0), at(8.0, 10.0), at(12.0, 6.0)], stroke));
+        }
+        Glyph::Play => {
+            let corners = vec![at(5.0, 3.5), at(12.5, 8.0), at(5.0, 12.5)];
+            painter.add(egui::Shape::convex_polygon(corners, ink, Stroke::new(1.0, ink)));
+        }
+        Glyph::Stop => {
+            let square = Rect::from_min_max(at(4.5, 4.5), at(11.5, 11.5));
+            painter.rect_filled(square, CornerRadius::same(2), ink);
         }
         Glyph::Infinity => {
             let curve: Vec<egui::Pos2> = (0..=40)

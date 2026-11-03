@@ -1,7 +1,8 @@
 //! Repo services in `~/.config/tidewatch/services.toml`, never in the repo, keyed by the repo's
 //! path: long-running processes (a database proxy, a dev server, a tunnel) that run next to the
-//! agents. This module is the saved list and its rules; `service_supervisor.rs` decides when one
-//! runs.
+//! agents. A shared service runs in the main checkout for every tab; a tab service belongs to one
+//! tab's folder, runs there, and is removed when that tab closes or its folder is gone. This module
+//! is the saved list and its rules; `service_supervisor.rs` decides when one runs.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,27 @@ pub struct Service {
     pub port: Option<u16>,
     #[serde(default = "yes")]
     pub autostart: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Key {
+    pub tab: Option<PathBuf>,
+    pub name: String,
+}
+
+impl Key {
+    #[must_use]
+    pub fn shared(name: &str) -> Self {
+        Self { tab: None, name: name.to_owned() }
+    }
+
+    #[must_use]
+    pub fn matches(&self, service: &Service) -> bool {
+        same_tab(self.tab.as_deref(), service.tab.as_deref())
+            && same_name(&self.name, &service.name)
+    }
 }
 
 fn yes() -> bool {
@@ -37,8 +59,56 @@ impl Service {
             command: command.trim().to_owned(),
             port: None,
             autostart,
+            tab: None,
         }
     }
+
+    #[must_use]
+    pub fn in_tab(mut self, tab: Option<PathBuf>) -> Self {
+        self.tab = tab.map(|tab| tab.components().collect());
+        self
+    }
+
+    #[must_use]
+    pub fn key(&self) -> Key {
+        Key { tab: self.tab.clone(), name: self.name.clone() }
+    }
+
+    #[must_use]
+    pub fn is_shared(&self) -> bool {
+        self.tab.is_none()
+    }
+
+    fn cleaned(&self) -> Self {
+        Self::new(&self.name, &self.command, self.autostart).in_tab(self.tab.clone())
+    }
+}
+
+#[must_use]
+pub fn same_tab(a: Option<&Path>, b: Option<&Path>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.components().eq(b.components()),
+        _ => false,
+    }
+}
+
+/// The services a name of `tab`'s must differ from: every one for a shared service, the shared
+/// ones and the tab's own for a tab service.
+#[must_use]
+pub fn clashing(all: &[Service], tab: Option<&Path>) -> Vec<Service> {
+    all.iter()
+        .filter(|other| tab.is_none() || other.is_shared() || same_tab(other.tab.as_deref(), tab))
+        .cloned()
+        .collect()
+}
+
+/// The services a tab sees: the shared ones, then its own.
+#[must_use]
+pub fn visible_to(all: &[Service], tab: Option<&Path>) -> Vec<Service> {
+    let shared = all.iter().filter(|service| service.is_shared());
+    let own = all.iter().filter(|service| tab.is_some() && same_tab(service.tab.as_deref(), tab));
+    shared.chain(own).cloned().collect()
 }
 
 /// What is wrong with `service` as an addition to `others`, each problem as a sentence that says
@@ -116,9 +186,9 @@ impl Store {
     }
 
     pub fn add(&mut self, repo: &Path, service: &Service) -> Result<(), Vec<String>> {
-        let service = Service::new(&service.name, &service.command, service.autostart);
+        let service = service.cleaned();
         let entry = self.repo.entry(key_of(repo)).or_default();
-        let found = problems(&service, &entry.service, None);
+        let found = problems(&service, &clashing(&entry.service, service.tab.as_deref()), None);
         if !found.is_empty() {
             self.forget_if_empty(repo);
             return Err(found);
@@ -127,19 +197,21 @@ impl Store {
         Ok(())
     }
 
-    /// Replaces the service called `old` (any spelling of its case) with `service`, in its place.
+    /// Replaces the service `old` (any spelling of its name's case) with `service`, in its place
+    /// and with its owner.
     pub fn replace(
         &mut self,
         repo: &Path,
-        old: &str,
+        old: &Key,
         service: &Service,
     ) -> Result<(), Vec<String>> {
-        let service = Service::new(&service.name, &service.command, service.autostart);
+        let service = service.cleaned().in_tab(old.tab.clone());
         let entry = self.repo.entry(key_of(repo)).or_default();
-        let Some(at) = entry.service.iter().position(|have| same_name(&have.name, old)) else {
-            return Err(vec![format!("there is no service called `{old}` in this repo")]);
+        let Some(at) = entry.service.iter().position(|have| old.matches(have)) else {
+            return Err(vec![format!("there is no service called `{}` in this repo", old.name)]);
         };
-        let found = problems(&service, &entry.service, Some(old));
+        let others = clashing(&entry.service, old.tab.as_deref());
+        let found = problems(&service, &others, Some(&old.name));
         if !found.is_empty() {
             return Err(found);
         }
@@ -147,12 +219,46 @@ impl Store {
         Ok(())
     }
 
-    /// Whether a service by that name was there.
-    pub fn remove(&mut self, repo: &Path, name: &str) -> bool {
-        let Some(entry) = self.repo.get_mut(&key_of(repo)) else { return false };
-        let before = entry.service.len();
-        entry.service.retain(|have| !same_name(&have.name, name));
-        let removed = entry.service.len() != before;
+    /// Whether that service was there.
+    pub fn remove(&mut self, repo: &Path, key: &Key) -> bool {
+        !self.remove_where(repo, |have| key.matches(have)).is_empty()
+    }
+
+    /// Makes a tab service shared, so every tab sees it and it outlives its tab.
+    pub fn share(&mut self, repo: &Path, key: &Key) -> Result<(), Vec<String>> {
+        let entry = self.repo.entry(key_of(repo)).or_default();
+        let Some(at) = entry.service.iter().position(|have| key.matches(have)) else {
+            return Err(vec![format!("there is no service called `{}` in this repo", key.name)]);
+        };
+        let shared = entry.service[at].clone().in_tab(None);
+        let others: Vec<Service> = entry
+            .service
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != at)
+            .map(|(_, other)| other.clone())
+            .collect();
+        let found = problems(&shared, &others, None);
+        if !found.is_empty() {
+            return Err(found);
+        }
+        entry.service[at] = shared;
+        Ok(())
+    }
+
+    pub fn drop_tab(&mut self, repo: &Path, tab: &Path) -> Vec<Key> {
+        self.remove_where(repo, |have| same_tab(have.tab.as_deref(), Some(tab)))
+    }
+
+    pub fn prune(&mut self, repo: &Path, gone: impl Fn(&Path) -> bool) -> Vec<Key> {
+        self.remove_where(repo, |have| have.tab.as_deref().is_some_and(&gone))
+    }
+
+    fn remove_where(&mut self, repo: &Path, hit: impl Fn(&Service) -> bool) -> Vec<Key> {
+        let Some(entry) = self.repo.get_mut(&key_of(repo)) else { return Vec::new() };
+        let removed: Vec<Key> =
+            entry.service.iter().filter(|have| hit(have)).map(Service::key).collect();
+        entry.service.retain(|have| !hit(have));
         self.forget_if_empty(repo);
         removed
     }
@@ -261,11 +367,11 @@ mod tests {
         assert!(store.add(repo, &clash).is_err());
         assert!(store.add(Path::new("/work/other"), &clash).is_ok());
         let recased = Service::new("DB", "pscale connect shop main", true);
-        store.replace(repo, "db", &recased).unwrap();
+        store.replace(repo, &Key::shared("db"), &recased).unwrap();
         assert_eq!(store.services(repo)[0], recased);
         let onto_other = Service::new("API", "x", true);
-        assert!(store.replace(repo, "db", &onto_other).is_err());
-        assert!(store.replace(repo, "nope", &onto_other).is_err());
+        assert!(store.replace(repo, &Key::shared("db"), &onto_other).is_err());
+        assert!(store.replace(repo, &Key::shared("nope"), &onto_other).is_err());
         assert_eq!(store.services(repo).len(), 2);
     }
 
@@ -274,8 +380,8 @@ mod tests {
         let repo = Path::new("/work/shop");
         let mut store = Store::default();
         store.add(repo, &db()).unwrap();
-        assert!(!store.remove(repo, "api"));
-        assert!(store.remove(repo, "DB"));
+        assert!(!store.remove(repo, &Key::shared("api")));
+        assert!(store.remove(repo, &Key::shared("DB")));
         assert_eq!(store, Store::default());
     }
 
@@ -308,5 +414,90 @@ mod tests {
         let mut store = Store::default();
         store.add(Path::new("/work/shop/"), &db()).unwrap();
         assert_eq!(store.services(Path::new("/work/shop")), [db()]);
+    }
+
+    fn tab_db(tab: &str) -> Service {
+        Service::new("db", "mysqld --port 3320", true).in_tab(Some(PathBuf::from(tab)))
+    }
+
+    #[test]
+    fn a_tab_service_keeps_its_folder_and_an_older_file_reads_as_shared() {
+        let repo = Path::new("/work/shop");
+        let mut store = Store::default();
+        store.add(repo, &tab_db("/wt/a/")).unwrap();
+        let text = toml::to_string_pretty(&store).unwrap();
+        assert!(text.contains("tab = \"/wt/a\""), "{text}");
+        let read: Store = toml::from_str(&text).unwrap();
+        assert_eq!(read.services(repo), [tab_db("/wt/a")]);
+        let mut shared = Store::default();
+        shared.add(repo, &db()).unwrap();
+        assert!(!toml::to_string_pretty(&shared).unwrap().contains("tab"));
+        assert!(shared.services(repo)[0].is_shared());
+    }
+
+    #[test]
+    fn two_tabs_may_each_have_a_db_but_not_next_to_a_shared_one() {
+        let repo = Path::new("/work/shop");
+        let mut store = Store::default();
+        store.add(repo, &tab_db("/wt/a")).unwrap();
+        store.add(repo, &tab_db("/wt/b")).unwrap();
+        assert!(store.add(repo, &tab_db("/wt/a")).is_err());
+        assert!(store.add(repo, &db()).is_err(), "a shared name must be free in every tab");
+        store.add(repo, &api()).unwrap();
+        let tab_api = api().in_tab(Some(PathBuf::from("/wt/c")));
+        assert!(store.add(repo, &tab_api).is_err(), "a tab sees the shared api");
+    }
+
+    #[test]
+    fn a_tab_sees_the_shared_services_then_its_own() {
+        let all = [tab_db("/wt/a"), api(), tab_db("/wt/b")];
+        let names = |tab: Option<&str>| -> Vec<Option<PathBuf>> {
+            visible_to(&all, tab.map(Path::new)).into_iter().map(|s| s.tab).collect()
+        };
+        assert_eq!(names(Some("/wt/a")), [None, Some(PathBuf::from("/wt/a"))]);
+        assert_eq!(names(None), [None]);
+    }
+
+    #[test]
+    fn keys_tell_two_tabs_services_apart_and_an_edit_keeps_the_owner() {
+        let repo = Path::new("/work/shop");
+        let mut store = Store::default();
+        store.add(repo, &tab_db("/wt/a")).unwrap();
+        store.add(repo, &tab_db("/wt/b")).unwrap();
+        let a = tab_db("/wt/a").key();
+        store.replace(repo, &a, &Service::new("db", "mysqld --port 3321", true)).unwrap();
+        assert_eq!(store.services(repo)[0].tab, Some(PathBuf::from("/wt/a")));
+        assert_eq!(store.services(repo)[0].command, "mysqld --port 3321");
+        assert_eq!(store.services(repo)[1], tab_db("/wt/b"));
+        assert!(store.remove(repo, &a));
+        assert_eq!(store.services(repo), [tab_db("/wt/b")]);
+        assert!(!store.remove(repo, &Key::shared("db")));
+    }
+
+    #[test]
+    fn sharing_a_tab_service_needs_a_name_no_other_tab_uses() {
+        let repo = Path::new("/work/shop");
+        let mut store = Store::default();
+        store.add(repo, &tab_db("/wt/a")).unwrap();
+        let proxy = Service::new("proxy", "pscale connect", true).in_tab(Some("/wt/a".into()));
+        store.add(repo, &proxy).unwrap();
+        store.add(repo, &tab_db("/wt/b")).unwrap();
+        assert!(store.share(repo, &tab_db("/wt/a").key()).is_err());
+        store.share(repo, &proxy.key()).unwrap();
+        assert!(store.services(repo).iter().any(|s| s.name == "proxy" && s.is_shared()));
+        assert!(store.share(repo, &Key::shared("nope")).is_err());
+    }
+
+    #[test]
+    fn closing_a_tab_or_losing_its_folder_drops_only_its_services() {
+        let repo = Path::new("/work/shop");
+        let mut store = Store::default();
+        store.add(repo, &api()).unwrap();
+        store.add(repo, &tab_db("/wt/a")).unwrap();
+        store.add(repo, &tab_db("/wt/b")).unwrap();
+        assert_eq!(store.drop_tab(repo, Path::new("/wt/a/")), [tab_db("/wt/a").key()]);
+        assert_eq!(store.prune(repo, |tab| tab == Path::new("/wt/b")), [tab_db("/wt/b").key()]);
+        assert_eq!(store.services(repo), [api()]);
+        assert!(store.prune(repo, |_| true).is_empty(), "a shared service is never pruned");
     }
 }

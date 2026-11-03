@@ -95,6 +95,8 @@ pub(crate) struct Handover {
 pub(crate) struct ServiceEntry {
     pub(crate) repo: PathBuf,
     pub(crate) name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tab: Option<PathBuf>,
     #[serde(default)]
     pub(crate) live: bool,
     pub(crate) carry: Carry,

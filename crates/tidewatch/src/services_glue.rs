@@ -1,6 +1,6 @@
-//! `Host`: the repo services of every repo the window holds, each a pty in the repo's main
-//! checkout and never a tab. `service_supervisor.rs` decides; this file spawns, kills and reads
-//! exits. `TIDEWATCH_FAKE_SERVICES=1` stands in three services and spawns and writes nothing.
+//! `Host`: the repo services of every repo the window holds, each a pty and never a tab: a shared
+//! one in the repo's main checkout, a tab service in its tab's folder until that tab closes. `service_supervisor.rs` decides; this file spawns, kills and reads
+//! exits. `TIDEWATCH_FAKE_SERVICES=1` stands in four services (one a tab service) and spawns and writes nothing.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::os::fd::BorrowedFd;
@@ -13,7 +13,7 @@ use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::service_log::Log;
 use tidewatch_core::service_port;
 use tidewatch_core::service_supervisor::{Carry, Effect, Event, Phase, Supervisor, Word};
-use tidewatch_core::services::{Service, Store, same_name};
+use tidewatch_core::services::{Key, Service, Store, same_name, same_tab};
 use tidewatch_core::services_mcp::{Fact, Listed};
 
 use crate::handoff::{ResumedService, ServiceEntry};
@@ -26,6 +26,7 @@ const PORT_SCAN_KNOWN_SECS: f64 = 2.0;
 const PORT_SCAN_LINES: usize = 300;
 const FAKE_UP_MAIN: f64 = 8040.0;
 const FAKE_UP_API: f64 = 720.0;
+pub(crate) const FAKE_TAB: &str = "/fake/worktrees/fix-login";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -37,6 +38,8 @@ pub(crate) enum Command {
 /// What the strip's pill and the list read about one service.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Row {
+    pub(crate) key: Key,
+    pub(crate) owner: Option<String>,
     pub(crate) name: String,
     pub(crate) command: String,
     pub(crate) autostart: bool,
@@ -77,6 +80,10 @@ impl Run {
         self.sup.wants_process().then(|| self.port.or(self.service.port)).flatten()
     }
 
+    fn visible_to(&self, tab: Option<&Path>) -> bool {
+        self.service.is_shared() || (tab.is_some() && same_tab(self.service.tab.as_deref(), tab))
+    }
+
     fn step(&mut self, event: Event, repo: &Path, now: f64, spawn: &Spawner) {
         let mut pending: VecDeque<Effect> = self.sup.step(event).into();
         while let Some(effect) = pending.pop_front() {
@@ -89,7 +96,8 @@ impl Run {
                     self.exit_seen = false;
                     self.port = None;
                     self.scanned_at = f64::NEG_INFINITY;
-                    self.term = Some(spawn(repo, &self.service.command));
+                    let dir = self.service.tab.as_deref().unwrap_or(repo);
+                    self.term = Some(spawn(dir, &self.service.command));
                     pending.extend(self.sup.step(Event::Spawned { at: now }));
                 }
                 Effect::Wake { .. } => {}
@@ -126,6 +134,8 @@ impl Run {
 
     fn row(&self, now: f64) -> Row {
         Row {
+            key: self.service.key(),
+            owner: self.service.tab.as_deref().map(folder_name),
             name: self.service.name.clone(),
             command: self.service.command.clone(),
             autostart: self.service.autostart,
@@ -149,8 +159,24 @@ impl Run {
     }
 }
 
+fn folder_name(folder: &Path) -> String {
+    folder.file_name().map_or_else(
+        || folder.to_string_lossy().into_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// An agent tab as the services see it: its id, its repo and the folder it runs in.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AgentPlace<'a> {
+    pub(crate) id: u64,
+    pub(crate) repo: &'a Path,
+    pub(crate) folder: &'a Path,
+}
+
 pub(crate) struct Host {
     repos: BTreeMap<PathBuf, Vec<Run>>,
+    places: HashMap<u64, (PathBuf, PathBuf)>,
     adopted: Vec<ResumedService<PtyTerm>>,
     paths: Option<TidewatchPaths>,
     spawn: Spawner,
@@ -170,6 +196,7 @@ impl Host {
     ) -> Self {
         let mut host = Self {
             repos: BTreeMap::new(),
+            places: HashMap::new(),
             adopted: Vec::new(),
             paths,
             spawn,
@@ -197,9 +224,21 @@ impl Host {
         self.repos.get(self.key(repo)).map_or(&[], Vec::as_slice)
     }
 
-    fn find(&mut self, repo: &Path, name: &str) -> Option<&mut Run> {
-        let key = self.key(repo).to_path_buf();
-        self.repos.get_mut(&key)?.iter_mut().find(|run| same_name(&run.service.name, name))
+    fn find(&mut self, repo: &Path, key: &Key) -> Option<&mut Run> {
+        let repo = self.key(repo).to_path_buf();
+        self.repos.get_mut(&repo)?.iter_mut().find(|run| key.matches(&run.service))
+    }
+
+    fn get(&self, repo: &Path, key: &Key) -> Option<&Run> {
+        self.runs(repo).iter().find(|run| key.matches(&run.service))
+    }
+
+    /// The service an agent in `tab` means by `name`: its tab's own first, then a shared one.
+    pub(crate) fn resolve(&self, repo: &Path, tab: &Path, name: &str) -> Option<Key> {
+        let seen = || self.runs(repo).iter().filter(|run| run.visible_to(Some(tab)));
+        let named = |run: &&Run| same_name(&run.service.name, name);
+        let own = seen().filter(|run| !run.service.is_shared()).find(named);
+        own.or_else(|| seen().find(named)).map(|run| run.service.key())
     }
 
     /// Opens the repos the window holds that are not open yet (their saved services, the
@@ -225,14 +264,23 @@ impl Host {
     }
 
     fn open(&mut self, repo: &Path) {
+        if let Some(paths) = &self.paths
+            && Store::load(paths).services(repo).iter().any(|s| s.tab.as_deref().is_some_and(gone))
+        {
+            let _ = Store::update(paths, |store| {
+                store.prune(repo, gone);
+                Ok(())
+            });
+        }
         let saved = self.paths.as_ref().map(|paths| Store::load(paths).services(repo));
         let now = self.now();
         let mut runs = Vec::new();
         for service in saved.unwrap_or_default() {
-            let kept = self
-                .adopted
-                .iter()
-                .position(|a| a.entry.repo == repo && same_name(&a.entry.name, &service.name));
+            let kept = self.adopted.iter().position(|a| {
+                a.entry.repo == repo
+                    && same_name(&a.entry.name, &service.name)
+                    && same_tab(a.entry.tab.as_deref(), service.tab.as_deref())
+            });
             let mut run = Run::new(service);
             if let Some(at) = kept {
                 let resumed = self.adopted.swap_remove(at);
@@ -272,32 +320,62 @@ impl Host {
     }
 
     /// The line each agent tab's next prompt carries, only when a state or the tabs changed since
-    /// the last call.
+    /// the last call. It also notes where each agent tab runs, for [`Self::close_tab`].
     pub(crate) fn lines_for<'a>(
         &mut self,
-        tabs: impl Iterator<Item = (u64, &'a Path)> + Clone,
+        tabs: impl Iterator<Item = AgentPlace<'a>> + Clone,
     ) -> Option<HashMap<u64, String>> {
-        let ids = tabs.clone().fold(0u64, |sum, (id, _)| sum.wrapping_mul(31).wrapping_add(id + 1));
+        let ids = tabs.clone().fold(0u64, |sum, tab| sum.wrapping_mul(31).wrapping_add(tab.id + 1));
         if self.told == (self.version, ids) {
             return None;
         }
         self.told = (self.version, ids);
+        self.places = tabs
+            .clone()
+            .map(|tab| (tab.id, (tab.repo.to_path_buf(), tab.folder.to_path_buf())))
+            .collect();
         Some(
-            tabs.filter_map(|(id, repo)| {
-                tidewatch_core::services_mcp::context_line(&self.facts(repo)).map(|line| (id, line))
+            tabs.filter_map(|tab| {
+                tidewatch_core::services_mcp::context_line(&self.facts(tab.repo, tab.folder))
+                    .map(|line| (tab.id, line))
             })
             .collect(),
         )
     }
 
-    pub(crate) fn rows(&self, repo: &Path) -> Vec<Row> {
-        let now = self.now();
-        self.runs(repo).iter().map(|run| run.row(now)).collect()
+    /// The tab closed: its own services stop and are forgotten.
+    pub(crate) fn close_tab(&mut self, id: u64) {
+        let Some((repo, folder)) = self.places.remove(&id) else { return };
+        if self.fake {
+            return;
+        }
+        let dropped = self.paths.as_ref().map(|paths| {
+            Store::update(paths, |store| {
+                store.drop_tab(&repo, &folder);
+                Ok(())
+            })
+        });
+        if let Some(Err(found)) = dropped {
+            eprintln!("tidewatch: a closed tab's services stay saved ({})", found.join("; "));
+        }
+        if let Some(runs) = self.repos.get_mut(&repo) {
+            runs.retain(|run| !same_tab(run.service.tab.as_deref(), Some(&folder)));
+        }
+        self.version += 1;
     }
 
-    pub(crate) fn facts(&self, repo: &Path) -> Vec<Fact> {
+    /// Every service of the repo: the shared ones first, then each tab's.
+    pub(crate) fn rows(&self, repo: &Path) -> Vec<Row> {
+        let now = self.now();
+        let mut rows: Vec<Row> = self.runs(repo).iter().map(|run| run.row(now)).collect();
+        rows.sort_by(|a, b| a.key.tab.cmp(&b.key.tab));
+        rows
+    }
+
+    pub(crate) fn facts(&self, repo: &Path, tab: &Path) -> Vec<Fact> {
         self.runs(repo)
             .iter()
+            .filter(|run| run.visible_to(Some(tab)))
             .map(|run| Fact {
                 name: run.service.name.clone(),
                 port: run.port(),
@@ -306,10 +384,12 @@ impl Host {
             .collect()
     }
 
-    pub(crate) fn listed(&self, repo: &Path) -> Vec<Listed> {
+    pub(crate) fn listed(&self, repo: &Path, tab: &Path) -> Vec<Listed> {
         let now = self.now();
-        self.runs(repo)
-            .iter()
+        let mut runs: Vec<&Run> =
+            self.runs(repo).iter().filter(|run| run.visible_to(Some(tab))).collect();
+        runs.sort_by_key(|run| !run.service.is_shared());
+        runs.into_iter()
             .map(|run| {
                 Listed::new(
                     &run.service,
@@ -322,16 +402,21 @@ impl Host {
             .collect()
     }
 
-    fn unknown(&self, repo: &Path, name: &str) -> String {
-        let known: Vec<&str> =
-            self.runs(repo).iter().map(|run| run.service.name.as_str()).collect();
+    /// Why an agent in `tab` cannot use a service called `name`.
+    pub(crate) fn unknown(&self, repo: &Path, tab: &Path, name: &str) -> String {
+        let known: Vec<&str> = self
+            .runs(repo)
+            .iter()
+            .filter(|run| run.visible_to(Some(tab)))
+            .map(|run| run.service.name.as_str())
+            .collect();
         if known.is_empty() {
             format!(
-                "There is no service called `{name}`: this repo has none. Use add_service to save one."
+                "There is no service called `{name}`: none is shared and your tab has none. Use add_service to save one."
             )
         } else {
             format!(
-                "There is no service called `{name}`. This repo has: {}.",
+                "There is no service called `{name}`. You can use: {}.",
                 known.iter().map(|known| format!("`{known}`")).collect::<Vec<_>>().join(", ")
             )
         }
@@ -340,20 +425,19 @@ impl Host {
     pub(crate) fn command(
         &mut self,
         repo: &Path,
-        name: &str,
+        key: &Key,
         command: Command,
     ) -> Result<String, String> {
         let now = self.now();
-        let key = self.key(repo).to_path_buf();
         if self.fake {
             return Err("This is a demo run: services are stand-ins and nothing starts.".into());
         }
         let Some(run) = self
             .repos
-            .get_mut(&key)
-            .and_then(|runs| runs.iter_mut().find(|run| same_name(&run.service.name, name)))
+            .get_mut(repo)
+            .and_then(|runs| runs.iter_mut().find(|run| key.matches(&run.service)))
         else {
-            return Err(self.unknown(repo, name));
+            return Err(format!("There is no service called `{}` any more.", key.name));
         };
         let shown = run.service.name.clone();
         let was_running = run.sup.wants_process();
@@ -362,7 +446,7 @@ impl Host {
             Command::Stop => Event::Stop,
             Command::Restart => Event::Restart { at: now },
         };
-        run.step(event, &key, now, &self.spawn);
+        run.step(event, repo, now, &self.spawn);
         self.version += 1;
         Ok(match command {
             Command::Start if was_running => format!("`{shown}` was already running."),
@@ -397,7 +481,8 @@ impl Host {
         begin: Begin,
     ) -> Result<(), Vec<String>> {
         self.saved(|store| store.add(repo, service))?;
-        let service = Service::new(&service.name, &service.command, service.autostart);
+        let service = Service::new(&service.name, &service.command, service.autostart)
+            .in_tab(service.tab.clone());
         let now = self.now();
         let mut run = Run::new(service);
         if begin == Begin::Now {
@@ -408,21 +493,23 @@ impl Host {
         Ok(())
     }
 
-    /// Replaces the service called `old`; a running one restarts when its command changed.
+    /// Replaces the service `old`, keeping its owner; a running one restarts when its command
+    /// changed.
     pub(crate) fn edit(
         &mut self,
         repo: &Path,
-        old: &str,
+        old: &Key,
         service: &Service,
     ) -> Result<(), Vec<String>> {
         self.saved(|store| store.replace(repo, old, service))?;
-        let service = Service::new(&service.name, &service.command, service.autostart);
+        let service = Service::new(&service.name, &service.command, service.autostart)
+            .in_tab(old.tab.clone());
         let now = self.now();
         let spawn = &self.spawn;
         if let Some(run) = self
             .repos
             .get_mut(repo)
-            .and_then(|runs| runs.iter_mut().find(|run| same_name(&run.service.name, old)))
+            .and_then(|runs| runs.iter_mut().find(|run| old.matches(&run.service)))
         {
             let command_changed = run.service.command != service.command;
             run.service = service;
@@ -435,44 +522,55 @@ impl Host {
     }
 
     /// Stops the service and forgets it.
-    pub(crate) fn remove(&mut self, repo: &Path, name: &str) -> Result<(), Vec<String>> {
+    pub(crate) fn remove(&mut self, repo: &Path, key: &Key) -> Result<(), Vec<String>> {
         self.saved(|store| {
-            store.remove(repo, name);
+            store.remove(repo, key);
             Ok(())
         })?;
         if let Some(runs) = self.repos.get_mut(repo) {
-            runs.retain(|run| !same_name(&run.service.name, name));
+            runs.retain(|run| !key.matches(&run.service));
         }
         self.version += 1;
         Ok(())
     }
 
-    /// The last `lines` lines a service printed, cleaned; `None` for a name the repo lacks.
-    pub(crate) fn log_tail(&self, repo: &Path, name: &str, lines: usize) -> Option<Vec<String>> {
-        let run = self.runs(repo).iter().find(|run| same_name(&run.service.name, name))?;
-        Some(Log::from_lines(run.lines()).tail(lines))
+    /// Makes a tab service shared: it keeps running where it runs until it next starts, then runs
+    /// in the main checkout.
+    pub(crate) fn share(&mut self, repo: &Path, key: &Key) -> Result<(), Vec<String>> {
+        self.saved(|store| store.share(repo, key))?;
+        if let Some(run) = self.find(repo, key) {
+            run.service.tab = None;
+        }
+        self.version += 1;
+        Ok(())
     }
 
-    pub(crate) fn log_text(&self, repo: &Path, name: &str, lines: usize) -> Result<String, String> {
-        match self.log_tail(repo, name, lines) {
-            None => Err(self.unknown(repo, name)),
+    /// The last `lines` lines a service printed, cleaned; `None` for a service the repo lacks.
+    pub(crate) fn log_tail(&self, repo: &Path, key: &Key, lines: usize) -> Option<Vec<String>> {
+        Some(Log::from_lines(self.get(repo, key)?.lines()).tail(lines))
+    }
+
+    pub(crate) fn log_text(&self, repo: &Path, key: &Key, lines: usize) -> Result<String, String> {
+        let name = &key.name;
+        match self.log_tail(repo, key, lines) {
+            None => Err(format!("There is no service called `{name}` any more.")),
             Some(tail) if tail.is_empty() => Ok(format!("`{name}` has printed nothing yet.")),
             Some(tail) => Ok(tail.join("\n")),
         }
     }
 
     /// The service's live terminal, for the Logs view.
-    pub(crate) fn term_mut(&mut self, repo: &Path, name: &str) -> Option<&mut PtyTerm> {
-        self.find(repo, name)?.term.as_mut()
+    pub(crate) fn term_mut(&mut self, repo: &Path, key: &Key) -> Option<&mut PtyTerm> {
+        self.find(repo, key)?.term.as_mut()
     }
 
-    pub(crate) fn fake_lines(&self, repo: &Path, name: &str) -> Option<Vec<String>> {
-        let run = self.runs(repo).iter().find(|run| same_name(&run.service.name, name))?;
+    pub(crate) fn fake_lines(&self, repo: &Path, key: &Key) -> Option<Vec<String>> {
+        let run = self.get(repo, key)?;
         run.fake_log.as_ref().map(|lines| Log::from_lines(lines).tail(usize::MAX))
     }
 
-    pub(crate) fn has(&self, repo: &Path, name: &str) -> bool {
-        self.runs(repo).iter().any(|run| same_name(&run.service.name, name))
+    pub(crate) fn has(&self, repo: &Path, key: &Key) -> bool {
+        self.get(repo, key).is_some()
     }
 
     /// Every service as the replacement window needs it, in the order [`Self::captures`] sends
@@ -486,6 +584,7 @@ impl Host {
                 runs.iter().map(move |run| ServiceEntry {
                     repo: repo.clone(),
                     name: run.service.name.clone(),
+                    tab: run.service.tab.clone(),
                     live: run.live(),
                     carry: run.sup.carry(now),
                 })
@@ -529,6 +628,10 @@ impl Host {
             }
         }
     }
+}
+
+fn gone(folder: &Path) -> bool {
+    !folder.exists()
 }
 
 fn fake_runs(now: f64) -> Vec<Run> {
@@ -587,6 +690,16 @@ fn fake_runs(now: f64) -> Vec<Run> {
                 now,
             );
             tunnel
+        },
+        {
+            let mut web = run(
+                "web",
+                "bun run dev --port 5174",
+                Phase::Running { up: FAKE_UP_API },
+                &["  VITE v6.0.0  ready in 412 ms", "  \u{279c}  Local:   http://localhost:5174/"],
+            );
+            web.service = web.service.clone().in_tab(Some(PathBuf::from(FAKE_TAB)));
+            web
         },
     ]
 }

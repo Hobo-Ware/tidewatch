@@ -362,7 +362,7 @@ impl Tidewatch {
         let Some(poofed) = self.meeseeks.leaving(tab) else { return };
         self.meeseeks.record(ctx, poofed.clone());
         self.show_toast(format!("{} poofed", poofed.name), ctx);
-        self.forget_tab(tab);
+        self.close_tab_for_good(tab);
         self.views.remove(&tab);
         if let Some(tab) = self.tabs.get_mut(tab) {
             tab.pane.poofed(poofed);
