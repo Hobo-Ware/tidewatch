@@ -31,6 +31,7 @@ pub(crate) enum Kind {
     Agent,
     Meeseeks,
     Shell,
+    Resume,
 }
 
 impl Kind {
@@ -39,6 +40,7 @@ impl Kind {
             Self::Agent => "New agent",
             Self::Meeseeks => "New Meeseeks",
             Self::Shell => "New shell",
+            Self::Resume => "Resume a session",
         }
     }
 }
@@ -200,6 +202,7 @@ pub(crate) struct NewTab {
     filter: String,
     agent_pick: usize,
     meeseeks_pick: usize,
+    resume_pick: usize,
     level: Level,
     remote: Switch,
     ticks: Criteria,
@@ -239,6 +242,7 @@ impl NewTab {
             filter: String::new(),
             agent_pick: 0,
             meeseeks_pick: 0,
+            resume_pick: 0,
             level: Level::Auto,
             remote: Switch::Off,
             ticks: Criteria::default(),
@@ -325,11 +329,20 @@ impl NewTab {
         match self.kind {
             Kind::Meeseeks => self.meeseeks_pick,
             Kind::Agent | Kind::Shell => self.agent_pick,
+            Kind::Resume => self.resume_pick,
         }
     }
 
+    /// Picks the closed session at `index` of the `count` the Resume list shows, held in the list.
+    pub(crate) fn pick_resume(&mut self, index: usize, count: usize) {
+        self.resume_pick = index.min(count.saturating_sub(1));
+    }
+
     pub(crate) fn offers(&self, kind: Kind) -> bool {
-        kind != Kind::Meeseeks || self.group == Group::Repo
+        match kind {
+            Kind::Agent | Kind::Shell => true,
+            Kind::Meeseeks | Kind::Resume => self.group == Group::Repo,
+        }
     }
 
     /// Whether the form has a worktree to name and a branch to start from.
@@ -338,7 +351,7 @@ impl NewTab {
     }
 
     pub(crate) fn shows_name_fields(&self) -> bool {
-        self.makes_a_worktree() && self.kind != Kind::Meeseeks
+        self.makes_a_worktree() && matches!(self.kind, Kind::Agent | Kind::Shell)
     }
 
     /// Settles the form on the catalog the first time it is known: the default profile, else the
@@ -372,9 +385,14 @@ impl NewTab {
     }
 
     pub(crate) fn jump(&mut self, preselect: &str, catalog: &Catalog) {
-        if preselect == "meeseeks" {
-            if self.offers(Kind::Meeseeks) {
-                self.enter(Kind::Meeseeks);
+        let kind = match preselect {
+            "meeseeks" => Some(Kind::Meeseeks),
+            "resume" => Some(Kind::Resume),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            if self.offers(kind) {
+                self.enter(kind);
             }
             return;
         }
@@ -389,7 +407,7 @@ impl NewTab {
         }
         match kind {
             Kind::Shell => return Some(Request::Shell),
-            Kind::Agent | Kind::Meeseeks => {
+            Kind::Agent | Kind::Meeseeks | Kind::Resume => {
                 if kind != self.kind {
                     self.enter(kind);
                 }
@@ -448,6 +466,7 @@ impl NewTab {
             }
             Kind::Meeseeks if !catalog.is_loaded() => Vec::new(),
             Kind::Meeseeks => catalog.agent_names().into_iter().map(|(id, _)| id).collect(),
+            Kind::Resume => Vec::new(),
         }
     }
 
@@ -471,6 +490,7 @@ impl NewTab {
         match self.kind {
             Kind::Meeseeks => self.selected_id(catalog).and_then(|id| catalog.agent(&id)),
             Kind::Agent | Kind::Shell => self.selected_entry(catalog).map(|(_, agent)| agent),
+            Kind::Resume => None,
         }
     }
 
@@ -485,6 +505,7 @@ impl NewTab {
             match self.kind {
                 Kind::Meeseeks => self.meeseeks_pick = index,
                 Kind::Agent | Kind::Shell => self.agent_pick = index,
+                Kind::Resume => self.resume_pick = index,
             }
             self.apply_selection(catalog);
         } else {
@@ -577,7 +598,7 @@ impl NewTab {
     }
 
     pub(crate) fn name_check(&self, facts: Option<&RepoFacts>) -> NameCheck {
-        if !self.makes_a_worktree() || self.kind == Kind::Meeseeks {
+        if !self.shows_name_fields() {
             return NameCheck::Fine;
         }
         let name = self.name(facts);
@@ -641,6 +662,7 @@ impl NewTab {
             Kind::Shell => Ok(Request::Shell),
             Kind::Agent => self.agent_request(catalog, facts),
             Kind::Meeseeks => self.meeseeks_request(catalog, facts),
+            Kind::Resume => Err("Pick a session to resume.".to_owned()),
         }
     }
 

@@ -11,6 +11,8 @@ use tidewatch_core::agents::Level;
 
 use crate::brand;
 use crate::catalog::Catalog;
+use crate::closed_state::Row as ClosedRow;
+use crate::closed_view::{self, Picked};
 use crate::commands::Command;
 use crate::new_tab::{Kind, NameCheck, NewTab, RemoteOffer, Request, level_hint, level_refusal};
 use crate::new_tab_done;
@@ -38,6 +40,7 @@ const FOOTER_HINT_GAP: f32 = 14.0;
 #[derive(Debug, PartialEq)]
 pub(crate) enum Out {
     Start(Request),
+    Resume(String),
     Close,
 }
 
@@ -53,7 +56,7 @@ pub(crate) struct Placed {
     pub(crate) name: Option<Rect>,
     pub(crate) base: Option<Rect>,
     pub(crate) message: Option<Rect>,
-    pub(crate) kinds: [Option<Rect>; 3],
+    pub(crate) kinds: [Option<Rect>; 4],
     pub(crate) ticks: [Option<Rect>; 3],
     pub(crate) selected_row: Option<Rect>,
     pub(crate) hints: Option<Rect>,
@@ -112,10 +115,8 @@ fn keys(
         state.focus_message = true;
         return None;
     }
-    for (key, kind) in [(Key::A, Kind::Agent), (Key::M, Kind::Meeseeks), (Key::S, Kind::Shell)] {
-        if pressed(ctx, key) {
-            return state.choose(kind).map(Out::Start);
-        }
+    if let Some(kind) = kind_key(ctx) {
+        return state.choose(kind).map(Out::Start);
     }
     for (index, key) in NUMBERS.into_iter().enumerate() {
         if pressed(ctx, key) {
@@ -141,6 +142,50 @@ fn keys(
     }
     (!popup_open && pressed(ctx, Key::Escape)).then_some(Out::Close)
 }
+
+const KIND_KEYS: [(Key, Kind); 4] = [
+    (Key::A, Kind::Agent),
+    (Key::M, Kind::Meeseeks),
+    (Key::S, Kind::Shell),
+    (Key::R, Kind::Resume),
+];
+
+fn kind_key(ctx: &egui::Context) -> Option<Kind> {
+    KIND_KEYS.into_iter().find(|(key, _)| pressed(ctx, *key)).map(|(_, kind)| kind)
+}
+
+/// The keys of the Resume list: a kind's letter, Up and Down move the pick, Enter resumes it and
+/// Esc closes the draft.
+fn resume_keys(ctx: &egui::Context, state: &mut NewTab, rows: &[ClosedRow]) -> Option<Out> {
+    if ctx.text_edit_focused() || egui::Popup::is_any_open(ctx) {
+        return None;
+    }
+    if let Some(kind) = kind_key(ctx) {
+        return state.choose(kind).map(Out::Start);
+    }
+    let picked = state.selected();
+    if pressed(ctx, Key::ArrowUp) {
+        state.pick_resume(picked.saturating_sub(1), rows.len());
+    }
+    if pressed(ctx, Key::ArrowDown) {
+        state.pick_resume(picked + 1, rows.len());
+    }
+    let enter = pressed(ctx, Key::Enter)
+        || ctx.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter));
+    if enter && let Some(row) = rows.get(state.selected()).filter(|row| !row.busy) {
+        return Some(Out::Resume(row.session_id.clone()));
+    }
+    pressed(ctx, Key::Escape).then_some(Out::Close)
+}
+
+const RESUME_HINT: Hint = &[
+    ("Up Down", true),
+    (" pick \u{b7} ", false),
+    ("Enter", true),
+    (" resume \u{b7} ", false),
+    ("Esc", true),
+    (" closes the tab", false),
+];
 
 fn hint_job(parts: &[(&str, bool)]) -> LayoutJob {
     let mut job = LayoutJob::default();
@@ -176,7 +221,7 @@ fn footer_hints(kind: Kind) -> [Hint; 3] {
             ],
             &[("Enter", true), (" type \u{b7} ", false), ("Esc", true), (" closes", false)],
         ],
-        Kind::Agent | Kind::Shell => [
+        Kind::Agent | Kind::Shell | Kind::Resume => [
             &[
                 ("1-9 Up Down", true),
                 (" agent \u{b7} ", false),
@@ -216,7 +261,7 @@ fn empty_text(filter: &str, loaded: bool, noun: &str) -> String {
 fn start_label(state: &NewTab, catalog: &Catalog) -> String {
     match state.kind() {
         Kind::Meeseeks => new_tab_meeseeks::summon_label(state.tasks().len()),
-        Kind::Agent | Kind::Shell => state
+        Kind::Agent | Kind::Shell | Kind::Resume => state
             .selected_entry(catalog)
             .map_or_else(|| "Start".to_owned(), |(profile, _)| format!("Start {}", profile.name)),
     }
@@ -336,15 +381,27 @@ pub(crate) fn show(
     state: &mut NewTab,
     catalog: &Catalog,
     facts: Option<&RepoFacts>,
+    resumable: &[ClosedRow],
     keys_free: bool,
 ) -> Option<Out> {
     state.settle(catalog);
     let ctx = ui.ctx().clone();
-    let mut out = if keys_free { keys(&ctx, state, catalog, facts) } else { None };
+    let resuming = state.kind() == Kind::Resume;
+    let mut out = match (keys_free, resuming) {
+        (false, _) => None,
+        (true, true) => resume_keys(&ctx, state, resumable),
+        (true, false) => keys(&ctx, state, catalog, facts),
+    };
     let columns = layout::columns(layout::form_rect(area));
     let mut header_ui = ui.new_child(UiBuilder::new().max_rect(columns.header));
     let mut placed = Placed::default();
-    out = out.or(header(&mut header_ui, state, &mut placed));
+    out = out.or(header(&mut header_ui, state, resumable.len(), &mut placed));
+    if state.kind() == Kind::Resume {
+        out = out.or(resume_list(ui, &columns, state, resumable));
+        ctx.data_mut(|data| data.insert_temp(placed_id(), placed));
+        remember_focus(&ctx);
+        return out;
+    }
     placed.selected_row = lane(ui, columns.lane, state, catalog);
     placed.lane = Some(columns.lane);
     out = out.or(pane(ui, columns.pane, state, catalog, facts, &mut placed));
@@ -353,11 +410,33 @@ pub(crate) fn show(
     out
 }
 
+fn resume_list(
+    ui: &mut Ui,
+    columns: &layout::Columns,
+    state: &mut NewTab,
+    rows: &[ClosedRow],
+) -> Option<Out> {
+    let body = columns.lane.union(columns.pane);
+    let hint_h = 24.0;
+    let list = Rect::from_min_max(body.min, pos2(body.right(), body.bottom() - hint_h));
+    let picked = closed_view::show(ui, list, rows, state.selected());
+    let galley = ui.painter().layout_job(hint_job(RESUME_HINT));
+    let at = pos2(body.left(), body.bottom() - galley.size().y);
+    ui.painter().galley(at, galley, brand::FAINT);
+    match picked? {
+        Picked::Select(index) => {
+            state.pick_resume(index, rows.len());
+            None
+        }
+        Picked::Resume(session_id) => Some(Out::Resume(session_id)),
+    }
+}
+
 fn lane(ui: &mut Ui, rect: Rect, state: &mut NewTab, catalog: &Catalog) -> Option<Rect> {
     let entries = new_tab_lane::entries(state, catalog);
     let noun = match state.kind() {
         Kind::Meeseeks => "agent",
-        Kind::Agent | Kind::Shell => "profile",
+        Kind::Agent | Kind::Shell | Kind::Resume => "profile",
     };
     let empty = empty_text(state.filter(), catalog.is_loaded(), noun);
     let scroll = std::mem::take(&mut state.scroll_to_selected);
@@ -371,7 +450,7 @@ fn lane(ui: &mut Ui, rect: Rect, state: &mut NewTab, catalog: &Catalog) -> Optio
     out.selected
 }
 
-fn header(ui: &mut Ui, state: &mut NewTab, placed: &mut Placed) -> Option<Out> {
+fn header(ui: &mut Ui, state: &mut NewTab, resumable: usize, placed: &mut Placed) -> Option<Out> {
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), layout::HEADER_H), Sense::hover());
     let painter = ui.painter();
@@ -380,7 +459,9 @@ fn header(ui: &mut Ui, state: &mut NewTab, placed: &mut Placed) -> Option<Out> {
     let faint = |color: Color32| TextFormat::simple(body(13.0), color);
     job.append("in ", 0.0, faint(brand::MUTED));
     job.append(state.label(), 0.0, faint(brand::TEAL_TEXT));
-    let tail = if state.kind() == Kind::Meeseeks {
+    let tail = if state.kind() == Kind::Resume {
+        ", a closed session back in its worktree"
+    } else if state.kind() == Kind::Meeseeks {
         ", a fresh worktree for each task"
     } else if state.makes_a_worktree() {
         ", a fresh worktree"
@@ -389,10 +470,12 @@ fn header(ui: &mut Ui, state: &mut NewTab, placed: &mut Placed) -> Option<Out> {
     };
     job.append(tail, 0.0, faint(brand::MUTED));
     painter.galley(rect.left_top() + vec2(0.0, 27.0), painter.layout_job(job), brand::MUTED);
+    let resume = resume_label(resumable);
     let choices: Vec<(&str, &str, Kind)> = [
         ("Agent", "A", Kind::Agent),
         ("Meeseeks", "M", Kind::Meeseeks),
         ("Shell", "S", Kind::Shell),
+        (resume.as_str(), "R", Kind::Resume),
     ]
     .into_iter()
     .filter(|(_, _, kind)| state.offers(*kind))
@@ -412,6 +495,10 @@ fn header(ui: &mut Ui, state: &mut NewTab, placed: &mut Placed) -> Option<Out> {
     }
     let kind = shown.clicked.map(|index| choices[index].2)?;
     state.choose(kind).map(Out::Start)
+}
+
+fn resume_label(count: usize) -> String {
+    if count == 0 { "Resume".to_owned() } else { format!("Resume {count}") }
 }
 
 fn pane(
@@ -506,7 +593,7 @@ fn message(
             "One task, one line each",
             "Bump vite to 6.3 and fix the build\nAdd a test for expired promo codes",
         ),
-        Kind::Agent | Kind::Shell => {
+        Kind::Agent | Kind::Shell | Kind::Resume => {
             ("First message", "Optional. Leave it empty to start the agent idle.")
         }
     };

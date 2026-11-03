@@ -15,6 +15,7 @@ struct Harness {
     state: NewTab,
     catalog: Catalog,
     facts: Option<RepoFacts>,
+    resumable: Vec<ClosedRow>,
     keys_free: bool,
     area: Rect,
     clock: f64,
@@ -52,6 +53,7 @@ impl Harness {
             state,
             catalog,
             facts: None,
+            resumable: Vec::new(),
             keys_free: true,
             area,
             clock: 0.0,
@@ -105,6 +107,7 @@ impl Harness {
                 &mut self.state,
                 &self.catalog,
                 self.facts.as_ref(),
+                &self.resumable,
                 self.keys_free,
             );
         });
@@ -184,6 +187,7 @@ impl Harness {
 fn started(out: Option<Out>) -> Request {
     match out {
         Some(Out::Start(request)) => request,
+        Some(Out::Resume(id)) => panic!("resumed {id}"),
         Some(Out::Close) => panic!("closed"),
         None => panic!("nothing started"),
     }
@@ -202,6 +206,76 @@ fn a_and_m_switch_the_kind_at_once() {
     assert_eq!(harness.state.kind(), Kind::Meeseeks);
     assert_eq!(harness.press(Key::A), None);
     assert_eq!(harness.state.kind(), Kind::Agent);
+}
+
+fn closed_row(id: &str, title: &str, busy: bool) -> ClosedRow {
+    ClosedRow {
+        session_id: id.to_owned(),
+        cli_id: "claude".to_owned(),
+        title: title.to_owned(),
+        summary: Some(format!("What {title} was for")),
+        branch: format!("agent/{title}"),
+        closed: "closed 2h ago".to_owned(),
+        busy,
+    }
+}
+
+fn painted(harness: &Harness) -> Vec<String> {
+    let mut out = Vec::new();
+    for clipped in &harness.shapes {
+        crate::test_support::painted_strings(&clipped.shape, &mut out);
+    }
+    out
+}
+
+#[test]
+fn r_opens_the_resume_list_in_a_repo_and_does_nothing_in_a_folder() {
+    let mut harness = Harness::new(Group::Repo);
+    assert_eq!(harness.press(Key::R), None);
+    assert_eq!(harness.state.kind(), Kind::Resume);
+    assert!(painted(&harness).iter().any(|text| text == closed_view::EMPTY));
+    let mut folder = Harness::new(Group::Other);
+    assert_eq!(folder.press(Key::R), None);
+    assert_eq!(folder.state.kind(), Kind::Agent);
+}
+
+#[test]
+fn the_list_shows_each_label_and_summary_and_the_choice_counts_them() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.resumable =
+        vec![closed_row("a", "fix-login", false), closed_row("b", "retry-sync", false)];
+    harness.press(Key::R);
+    harness.frame(Vec::new());
+    let texts = painted(&harness);
+    for want in ["Resume 2", "fix-login", "What fix-login was for", "retry-sync"] {
+        assert!(texts.iter().any(|text| text == want), "{want} in {texts:?}");
+    }
+}
+
+#[test]
+fn up_down_pick_a_session_and_enter_resumes_it_unless_it_is_already_opening() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.resumable =
+        vec![closed_row("a", "fix-login", false), closed_row("b", "retry-sync", false)];
+    harness.press(Key::R);
+    assert_eq!(harness.press(Key::ArrowDown), None);
+    assert_eq!(harness.press(Key::ArrowDown), None, "the pick stops at the last row");
+    assert_eq!(harness.press(Key::Enter), Some(Out::Resume("b".into())));
+    assert_eq!(harness.press(Key::ArrowUp), None);
+    assert_eq!(harness.press(Key::Enter), Some(Out::Resume("a".into())));
+    harness.resumable[0].busy = true;
+    assert_eq!(harness.press(Key::Enter), None);
+    assert_eq!(harness.press(Key::Escape), Some(Out::Close));
+}
+
+#[test]
+fn a_and_s_leave_the_resume_list() {
+    let mut harness = Harness::new(Group::Repo);
+    harness.press(Key::R);
+    assert_eq!(harness.press(Key::A), None);
+    assert_eq!(harness.state.kind(), Kind::Agent);
+    harness.press(Key::R);
+    assert_eq!(harness.press(Key::S), Some(Out::Start(Request::Shell)));
 }
 
 #[test]

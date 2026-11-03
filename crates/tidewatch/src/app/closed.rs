@@ -1,8 +1,9 @@
-//! Recently closed, the window's side: what a closing agent tab leaves in the list, reading the list
-//! while the Overview shows, and bringing a tab back (the job makes its worktree, the tab opens
-//! through the restore path like a taken-over session).
+//! Closed sessions, the window's side: what a closing agent tab leaves in the list, reading the list
+//! while a new-tab form shows (its Resume side lists them), and bringing a tab back (the job makes
+//! its worktree, the tab opens through the restore path like a taken-over session).
 
 use std::collections::HashSet;
+use std::path::Path;
 
 use tidewatch_core::clock::now_secs;
 use tidewatch_core::closed_tabs::Tab;
@@ -10,7 +11,9 @@ use tidewatch_core::restore::RealDisk;
 
 use super::Tidewatch;
 use crate::closed_jobs::{self, Done, Landed, ReviveSpec};
-use crate::closed_state::{Card, CardAction, fake_card, fake_requested};
+use crate::closed_state::{Row, fake_requested, fake_rows};
+use crate::pane::Body;
+use crate::tab_title;
 
 impl Tidewatch {
     pub(super) fn closed_facts(&self, id: u64) -> Option<Tab> {
@@ -24,6 +27,9 @@ impl Tidewatch {
             profile: launched.profile_id.clone(),
             level: launched.level,
             session_id: launched.session_id.clone(),
+            label: tab_title::of_agent(agent, &tab.title).1,
+            chosen_name: agent.chosen_name.clone(),
+            summary: agent.run.goal().map(str::to_owned),
         })
     }
 
@@ -48,7 +54,13 @@ impl Tidewatch {
         for done in self.closed_jobs.drain() {
             self.apply_closed_done(done, ctx);
         }
-        let shown = self.overview
+        let draft = self
+            .tabs
+            .items()
+            .get(self.tabs.active())
+            .is_some_and(|tab| matches!(tab.pane.body, Body::Draft(_)));
+        let shown = draft
+            && !self.overview
             && self.settings.is_none()
             && self.welcome.is_none()
             && !self.shell.window_hidden();
@@ -59,28 +71,22 @@ impl Tidewatch {
         }
     }
 
-    pub(super) fn closed_card(&self) -> Option<Card> {
+    pub(super) fn resumable(&self, repo: &Path) -> Vec<Row> {
         if fake_requested() {
-            return Some(fake_card(self.closed.is_open()));
+            return fake_rows();
         }
         let open = self.open_sessions();
-        self.closed.card(now_secs(), &|id| open.contains(id), &|repo| self.place_label(repo))
+        self.closed.rows(repo, now_secs(), &|id| open.contains(id))
     }
 
-    pub(super) fn closed_click(&mut self, action: CardAction, ctx: &egui::Context) {
-        match action {
-            CardAction::Toggle => self.closed.toggle(),
-            CardAction::Reopen(session_id) => self.reopen_closed(&session_id, ctx),
-        }
-    }
-
-    fn reopen_closed(&mut self, session_id: &str, ctx: &egui::Context) {
+    /// Starts bringing the session back; `false` when it could not start (a toast says why).
+    pub(super) fn reopen_closed(&mut self, session_id: &str, ctx: &egui::Context) -> bool {
         let (Some(paths), Some(profiles)) = (self.paths.clone(), self.catalog.profiles().cloned())
         else {
             self.show_toast("Profiles are still loading", ctx);
-            return;
+            return false;
         };
-        let Some(closed) = self.closed.press(session_id, now_secs()) else { return };
+        let Some(closed) = self.closed.press(session_id, now_secs()) else { return false };
         let spec = ReviveSpec {
             paths,
             closed,
@@ -89,6 +95,7 @@ impl Tidewatch {
             disk: RealDisk::from_env(),
         };
         closed_jobs::revive(&self.closed_jobs, ctx, spec);
+        true
     }
 
     fn apply_closed_done(&mut self, done: Done, ctx: &egui::Context) {

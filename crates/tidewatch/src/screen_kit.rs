@@ -78,10 +78,9 @@ pub(crate) const FACE: f32 = 20.0;
 pub(crate) const FACE_LINE_H: f32 = 34.0;
 const FACE_GAP: f32 = 10.0;
 /// How much of a one-line row a detail keeps when the name is cut: the lists that name things give
-/// the name more, the ones whose detail says when give the detail more.
+/// the name the room.
 pub(crate) const DETAIL_LESS: f32 = 0.0;
 const MIN_DETAIL: f32 = 48.0;
-pub(crate) const DETAIL_MORE: f32 = 0.65;
 
 /// The widths a one-line row gives its name and its detail out of `total`: both as they are when
 /// they fit, else the detail keeps at least `share` of the room (less when it is shorter) and the name
@@ -1611,7 +1610,7 @@ mod tests {
             (300.0, 400.0, 200.0, DETAIL_LESS, (300.0, 0.0)),
             (150.0, 100.0, 80.0, DETAIL_LESS, (150.0, 0.0)),
             (180.0, 100.0, 80.0, DETAIL_LESS, (100.0, 70.0)),
-            (300.0, 400.0, 200.0, DETAIL_MORE, (95.0, 195.0)),
+            (300.0, 400.0, 200.0, 0.65, (95.0, 195.0)),
             (300.0, 40.0, 400.0, DETAIL_LESS, (40.0, 250.0)),
         ];
         for (total, name, detail, share, want) in cases {
