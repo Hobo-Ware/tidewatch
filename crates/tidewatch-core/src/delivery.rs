@@ -49,7 +49,8 @@ impl Ahead {
         Self::build_after(tools, dir, branch, None)
     }
 
-    /// Only the commits made after `merged_head`, the head its pull request merged with.
+    /// Only the commits made after `merged_head`, the head its pull request merged with, and
+    /// never one whose patch the base already has: work that landed through another branch.
     pub fn build_after(
         tools: &Tools,
         dir: &Path,
@@ -59,16 +60,15 @@ impl Ahead {
         check_branch(branch)?;
         let base = detect_base(tools, dir).ok_or(DeliveryError::NoBase)?;
         let onto = compare_ref(tools, dir, &base);
-        let commits = match merged_head {
+        let start = match merged_head {
             Some(sha) => {
                 check_branch(sha)?;
-                let start = if is_commit(tools, dir, sha) { sha } else { &onto };
-                let after = commits_between(tools, dir, start, branch)?;
-                not_in_base(tools, dir, &onto, branch, after)
+                if is_commit(tools, dir, sha) { sha } else { &onto }
             }
-            None => commits_between(tools, dir, &onto, branch)?,
+            None => &onto,
         };
-        Ok(Self { base, commits })
+        let after = commits_between(tools, dir, start, branch)?;
+        Ok(Self { base, commits: not_in_base(tools, dir, &onto, branch, after) })
     }
 }
 

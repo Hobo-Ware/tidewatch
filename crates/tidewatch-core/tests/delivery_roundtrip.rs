@@ -175,3 +175,22 @@ fn a_merged_head_the_checkout_does_not_have_falls_back_to_what_the_base_already_
     commit_file(&r.work, "later.rs", "fn later() {}\n", "fix: after the merge");
     assert_eq!(left_after(&r, unknown), ["fix: after the merge"]);
 }
+
+#[test]
+fn work_that_reached_main_through_another_branch_is_not_ahead() {
+    if !git_available() {
+        return;
+    }
+    for how in [Merge::Rebase, Merge::Squash] {
+        let r = repos();
+        branch_with_two_commits(&r.work);
+        merge_into_main(&r, how);
+        let ahead = Ahead::build(&Tools::system(), &r.work, BRANCH).unwrap();
+        let subjects: Vec<String> = ahead.commits.into_iter().map(|c| c.subject).collect();
+        let want: &[&str] = match how {
+            Merge::Rebase => &[],
+            Merge::Squash => &["feat: add token refresh", "test: cover expiry"],
+        };
+        assert_eq!(subjects, want);
+    }
+}

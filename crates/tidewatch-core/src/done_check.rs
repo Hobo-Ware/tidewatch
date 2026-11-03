@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::branch_name::is_usable_ref;
 use crate::civil_date::Date;
-use crate::delivery::{compare_ref, detect_base};
+use crate::delivery::{Ahead, compare_ref, detect_base};
 use crate::done_proof::{self, Findings, TestsRun, Verified};
 use crate::limited;
 use crate::pr_gh::unpushed;
@@ -328,6 +328,15 @@ pub struct Input<'a> {
     pub verified: Option<Vec<Verified>>,
 }
 
+/// Whether the branch's work is already on the base, so the delivery checks no longer apply.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Landed {
+    No,
+    Merged,
+    /// Every commit's patch is already on this base: it shipped through another branch.
+    OnBase(String),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Remote {
     Head(String),
@@ -376,10 +385,14 @@ pub fn pushed_status(
     local: &str,
     remote: &Remote,
     unpushed: Option<usize>,
-    merged: bool,
+    landed: &Landed,
 ) -> (Status, String) {
-    if merged {
-        return (Status::Pass, "the pull request is merged".to_owned());
+    match landed {
+        Landed::Merged => return (Status::Pass, "the pull request is merged".to_owned()),
+        Landed::OnBase(base) => {
+            return (Status::Pass, format!("every commit is already on {base}"));
+        }
+        Landed::No => {}
     }
     match remote {
         Remote::Unreachable(why) => (Status::Unknown, format!("cannot reach {REMOTE}: {why}")),
@@ -486,6 +499,14 @@ fn commits_ahead(tools: &Tools, dir: &Path) -> Option<(String, usize)> {
     let range = format!("{against}..HEAD");
     let count = git_stdout(tools, dir, &["rev-list", "--count", &range]).ok()?.parse().ok()?;
     Some((base, count))
+}
+
+fn landed_on_base(tools: &Tools, dir: &Path) -> Landed {
+    let Some((base, ahead)) = commits_ahead(tools, dir) else { return Landed::No };
+    match Ahead::build(tools, dir, "HEAD") {
+        Ok(left) if ahead > 0 && left.commits.is_empty() => Landed::OnBase(base),
+        _ => Landed::No,
+    }
 }
 
 fn remote_head(tools: &Tools, dir: &Path, branch: &str) -> Remote {
@@ -619,29 +640,33 @@ pub fn run(input: &Input<'_>) -> Report {
     let (tools, dir) = (input.tools, input.dir);
     let head = git_stdout(tools, dir, &["rev-parse", "HEAD"]).unwrap_or_default();
     let pr = look(input);
-    let merged = matches!(&pr, Look::Found(snapshot) if snapshot.state == State::Merged);
+    let landed = if matches!(&pr, Look::Found(snapshot) if snapshot.state == State::Merged) {
+        Landed::Merged
+    } else {
+        landed_on_base(tools, dir)
+    };
+    let shipped = landed != Landed::No;
     let committed = match dirty_files(tools, dir) {
-        Ok(dirty) => committed_status(dirty, commits_ahead(tools, dir), merged),
+        Ok(dirty) => committed_status(dirty, commits_ahead(tools, dir), shipped),
         Err(why) => (Status::Unknown, format!("cannot read the work tree: {why}")),
     };
     let pushed = if head.is_empty() {
         (Status::Unknown, "cannot read the branch head".to_owned())
     } else {
-        let remote = if merged { Remote::Missing } else { remote_head(tools, dir, input.branch) };
+        let remote = if shipped { Remote::Missing } else { remote_head(tools, dir, input.branch) };
         let behind = match &remote {
             Remote::Head(sha) if *sha != head => unpushed(tools, dir, sha).map(|(_, n)| n),
             _ => None,
         };
-        pushed_status(&head, &remote, behind, merged)
+        pushed_status(&head, &remote, behind, &landed)
     };
     let (proof, found) =
-        if merged { (Vec::new(), Findings::default()) } else { proof_lines(input) };
+        if shipped { (Vec::new(), Findings::default()) } else { proof_lines(input) };
     let unverified = input.unverified.clone().unwrap_or_default();
-    let mut lines = vec![
-        Line::new(Kind::Committed, committed),
-        Line::new(Kind::Pushed, pushed),
-        Line::new(Kind::PullRequest, pull_request_line(&pr, &head)),
-    ];
+    let mut lines = vec![Line::new(Kind::Committed, committed), Line::new(Kind::Pushed, pushed)];
+    if !matches!(landed, Landed::OnBase(_)) {
+        lines.push(Line::new(Kind::PullRequest, pull_request_line(&pr, &head)));
+    }
     lines.extend(proof);
     lines.push(Line::new(
         Kind::Unverified,
@@ -716,33 +741,41 @@ mod tests {
     fn pushed_compares_the_remote_branch_head_with_the_local_one() {
         let sha = "1234567890abcdef";
         let other = Remote::Head("fedcba0987654321".to_owned());
+        let no = || Landed::No;
         let cases = [
-            (Remote::Head(sha.to_owned()), None, false, Status::Pass, "origin has 1234567"),
-            (other.clone(), Some(2), false, Status::Fail, "2 commits not pushed"),
-            (other.clone(), Some(1), false, Status::Fail, "1 commit not pushed"),
+            (Remote::Head(sha.to_owned()), None, no(), Status::Pass, "origin has 1234567"),
+            (other.clone(), Some(2), no(), Status::Fail, "2 commits not pushed"),
+            (other.clone(), Some(1), no(), Status::Fail, "1 commit not pushed"),
             (
                 other.clone(),
                 Some(0),
-                false,
+                no(),
                 Status::Fail,
                 "origin is at a different commit than the branch",
             ),
-            (other, None, false, Status::Fail, "origin is at a different commit than the branch"),
-            (Remote::Missing, None, false, Status::Fail, "the branch is not on origin yet"),
+            (other, None, no(), Status::Fail, "origin is at a different commit than the branch"),
+            (Remote::Missing, None, no(), Status::Fail, "the branch is not on origin yet"),
             (
                 Remote::Unreachable("no route".to_owned()),
                 None,
-                false,
+                no(),
                 Status::Unknown,
                 "cannot reach origin: no route",
             ),
-            (Remote::Missing, None, true, Status::Pass, "the pull request is merged"),
+            (Remote::Missing, None, Landed::Merged, Status::Pass, "the pull request is merged"),
+            (
+                Remote::Missing,
+                None,
+                Landed::OnBase("main".to_owned()),
+                Status::Pass,
+                "every commit is already on main",
+            ),
         ];
-        for (remote, behind, merged, status, detail) in cases {
+        for (remote, behind, landed, status, detail) in cases {
             assert_eq!(
-                pushed_status(sha, &remote, behind, merged),
+                pushed_status(sha, &remote, behind, &landed),
                 (status, detail.to_owned()),
-                "{remote:?} {behind:?} {merged}"
+                "{remote:?} {behind:?} {landed:?}"
             );
         }
     }
