@@ -17,6 +17,9 @@ fn closed(session: Option<&str>, age_secs: u64) -> Closed {
         session_id: session.map(str::to_owned),
         title: "heron".into(),
         branch_kept: false,
+        label: String::new(),
+        chosen_name: None,
+        summary: None,
     }
 }
 
@@ -103,6 +106,9 @@ fn a_removal_entry_and_a_kept_worktree_both_become_a_line() {
         profile: "builder".into(),
         level: Level::Auto,
         session_id: Some("s1".into()),
+        label: "fix-login".into(),
+        chosen_name: Some("fix-login".into()),
+        summary: Some("Fix the login redirect".into()),
     };
     let entry = Entry {
         at: 77,
@@ -142,4 +148,24 @@ fn the_saved_window_is_one_agent_tab_in_the_old_folder_with_its_session() {
         ("claude", "builder", Level::Edits)
     );
     assert_eq!(tab.session_id.as_deref(), Some("s1"));
+}
+
+#[test]
+fn a_line_keeps_the_label_the_name_and_the_summary_and_an_older_line_shows_its_title() {
+    let mut named = closed(Some("s1"), 0);
+    named.label = "fix-login".into();
+    named.chosen_name = Some("fix-login".into());
+    named.summary = Some("Fix the login redirect".into());
+    let text = serde_json::to_string(&named).unwrap();
+    let back: Closed = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, named);
+    assert_eq!(back.shown(), "fix-login");
+    let window = back.saved_window();
+    let [SavedTab::Agent(tab)] = window.tabs.as_slice() else { panic!("{window:?}") };
+    assert_eq!(tab.chosen_name.as_deref(), Some("fix-login"));
+    let old = closed(Some("s2"), 0);
+    let text = serde_json::to_string(&old).unwrap();
+    assert!(!text.contains("label") && !text.contains("summary"), "{text}");
+    let back: Closed = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.shown(), "heron");
 }

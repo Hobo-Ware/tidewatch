@@ -1,6 +1,6 @@
-//! The Recently closed list's data and rules (pure): the records the window last read, which rows
-//! they make (closed in the last 14 days, a session id, not open in a tab again), the fold, the
-//! rows being reopened and when the file is read again.
+//! The closed sessions a new tab can resume, as data (pure): the records the window last read, the
+//! rows of one repo (closed in the last 14 days, a session id, not open in a tab again), the rows
+//! being reopened and when the file is read again.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -13,34 +13,15 @@ pub(crate) struct Row {
     pub(crate) session_id: String,
     pub(crate) cli_id: String,
     pub(crate) title: String,
-    pub(crate) repo: String,
+    pub(crate) summary: Option<String>,
+    pub(crate) branch: String,
     pub(crate) closed: String,
     pub(crate) busy: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Card {
-    pub(crate) rows: Vec<Row>,
-    pub(crate) open: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CardAction {
-    Toggle,
-    Reopen(String),
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum Fold {
-    #[default]
-    Folded,
-    Open,
 }
 
 #[derive(Default)]
 pub(crate) struct State {
     records: Vec<Closed>,
-    fold: Fold,
     busy: HashSet<String>,
     stale: bool,
     loading: bool,
@@ -48,24 +29,12 @@ pub(crate) struct State {
 }
 
 impl State {
-    pub(crate) fn new(open: bool) -> Self {
-        Self { fold: if open { Fold::Open } else { Fold::Folded }, ..Self::default() }
-    }
-
-    pub(crate) fn is_open(&self) -> bool {
-        self.fold == Fold::Open
-    }
-
-    pub(crate) fn toggle(&mut self) {
-        self.fold = if self.is_open() { Fold::Folded } else { Fold::Open };
-    }
-
     /// A tab closed since the file was read.
     pub(crate) fn mark_changed(&mut self) {
         self.stale = true;
     }
 
-    /// Whether to read the file now, and if so it counts as started: when the Overview opens and
+    /// Whether to read the file now, and if so it counts as started: when a new-tab form shows and
     /// after a tab closed, one read at a time.
     pub(crate) fn begin_load(&mut self, shown: bool) -> bool {
         let opened = shown && !self.was_shown;
@@ -101,27 +70,24 @@ impl State {
         self.busy.remove(session_id);
     }
 
-    pub(crate) fn card(
-        &self,
-        now: u64,
-        is_open: &dyn Fn(&str) -> bool,
-        place: &dyn Fn(&Path) -> String,
-    ) -> Option<Card> {
-        let rows: Vec<Row> = closed_tabs::listing(&self.records, now, is_open)
+    /// The sessions of `repo` that can come back, newest first.
+    pub(crate) fn rows(&self, repo: &Path, now: u64, is_open: &dyn Fn(&str) -> bool) -> Vec<Row> {
+        closed_tabs::listing(&self.records, now, is_open)
             .into_iter()
+            .filter(|closed| closed.repo == repo)
             .filter_map(|closed| {
                 let id = closed.session_id.as_deref()?;
                 Some(Row {
                     session_id: id.to_owned(),
                     cli_id: closed.agent.clone(),
-                    title: closed.title.clone(),
-                    repo: place(&closed.repo),
+                    title: closed.shown().to_owned(),
+                    summary: closed.summary.clone().filter(|text| !text.trim().is_empty()),
+                    branch: closed.branch.clone(),
                     closed: closed_text(now, closed.at),
                     busy: self.busy.contains(id),
                 })
             })
-            .collect();
-        (!rows.is_empty()).then_some(Card { rows, open: self.is_open() })
+            .collect()
     }
 }
 
@@ -135,23 +101,33 @@ pub(crate) fn fake_requested() -> bool {
 }
 
 /// `TIDEWATCH_FAKE_CLOSED=1`: three stand-in rows for captures; nothing is read or reopened.
-pub(crate) fn fake_card(open: bool) -> Card {
-    let row = |n: &str, title: &str, repo: &str, closed: &str| Row {
+pub(crate) fn fake_rows() -> Vec<Row> {
+    let row = |n: &str, title: &str, summary: Option<&str>, closed: &str| Row {
         session_id: format!("fake-{n}"),
         cli_id: "claude".to_owned(),
         title: title.to_owned(),
-        repo: repo.to_owned(),
+        summary: summary.map(str::to_owned),
+        branch: format!("agent/{title}"),
         closed: closed.to_owned(),
         busy: false,
     };
-    Card {
-        rows: vec![
-            row("a", "retry-stage-gates", "acme-web", "closed 2h ago"),
-            row("b", "fix-login-redirect", "acme-api", "closed 1d ago"),
-            row("c", "upgrade-egui-0-36", "acme-app", "closed 5d ago"),
-        ],
-        open,
-    }
+    vec![
+        row(
+            "a",
+            "retry-stage-gates",
+            Some(
+                "Retry the stage gates when a runner drops, so one flaky host no longer fails a release",
+            ),
+            "closed 2h ago",
+        ),
+        row(
+            "b",
+            "fix-login-redirect",
+            Some("Send people back to the page they came from after they sign in"),
+            "closed 1d ago",
+        ),
+        row("c", "upgrade-egui-0-36", None, "closed 5d ago"),
+    ]
 }
 
 #[cfg(test)]

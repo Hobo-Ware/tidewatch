@@ -133,7 +133,7 @@ pub(crate) struct Out {
 fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
     if let Some(title) = match state.kind() {
         Kind::Meeseeks => Some("AGENT"),
-        Kind::Agent | Kind::Shell => None,
+        Kind::Agent | Kind::Shell | Kind::Resume => None,
     } {
         ui.painter().text(
             rect.left_center(),

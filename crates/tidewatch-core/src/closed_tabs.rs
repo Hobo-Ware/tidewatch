@@ -26,6 +26,9 @@ pub struct Tab {
     pub profile: String,
     pub level: Level,
     pub session_id: Option<String>,
+    pub label: String,
+    pub chosen_name: Option<String>,
+    pub summary: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +45,12 @@ pub struct Closed {
     pub session_id: Option<String>,
     pub title: String,
     pub branch_kept: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 impl Closed {
@@ -61,6 +70,9 @@ impl Closed {
             session_id: tab.session_id.clone(),
             title: tab.title.clone(),
             branch_kept: entry.branch_kept,
+            label: tab.label.clone(),
+            chosen_name: tab.chosen_name.clone(),
+            summary: tab.summary.clone(),
         }
     }
 
@@ -80,7 +92,16 @@ impl Closed {
             session_id: tab.session_id.clone(),
             title: tab.title.clone(),
             branch_kept: true,
+            label: tab.label.clone(),
+            chosen_name: tab.chosen_name.clone(),
+            summary: tab.summary.clone(),
         }
+    }
+
+    /// The label the tab showed; an older line without one gives its title.
+    #[must_use]
+    pub fn shown(&self) -> &str {
+        if self.label.trim().is_empty() { &self.title } else { &self.label }
     }
 
     #[must_use]
@@ -103,7 +124,7 @@ impl Closed {
             remote: false,
             meeseeks: None,
             folder_repo: None,
-            chosen_name: None,
+            chosen_name: self.chosen_name.clone(),
         });
         SavedWindow {
             dir: self.repo.clone(),

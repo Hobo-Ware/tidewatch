@@ -60,6 +60,9 @@ fn tab() -> Tab {
         profile: "builder".into(),
         level: Level::Edits,
         session_id: Some(SESSION.into()),
+        label: String::new(),
+        chosen_name: None,
+        summary: None,
     }
 }
 

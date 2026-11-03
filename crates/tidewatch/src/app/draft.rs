@@ -44,6 +44,10 @@ impl Tidewatch {
         frame: &FrameIntent,
     ) {
         let index = self.tabs.active();
+        let resumable = match &self.tabs.items()[index].pane.body {
+            Body::Draft(form) => self.resumable(form.repo()),
+            _ => return,
+        };
         let tab = &mut self.tabs.items_mut()[index];
         let (id, title, pane) = (tab.id, &mut tab.title, &mut tab.pane);
         let Body::Draft(form) = &mut pane.body else { return };
@@ -58,12 +62,18 @@ impl Tidewatch {
             (&mut self.slash, &mut self.files),
             self.paths.as_ref(),
         );
-        let out = new_tab_form::show(ui, area, form, &self.catalog, facts, !frame.keys.modal_open);
+        let keys_free = !frame.keys.modal_open;
+        let out = new_tab_form::show(ui, area, form, &self.catalog, facts, &resumable, keys_free);
         if title != form.title() {
             form.title().clone_into(title);
         }
         match out {
             Some(Out::Start(request)) => self.start_draft(ctx, id, request),
+            Some(Out::Resume(session_id)) => {
+                if self.reopen_closed(&session_id, ctx) {
+                    self.close_tab(index, ctx);
+                }
+            }
             Some(Out::Close) => self.close_tab(index, ctx),
             None => {}
         }

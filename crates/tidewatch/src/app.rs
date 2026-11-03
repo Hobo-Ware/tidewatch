@@ -442,7 +442,7 @@ impl Tidewatch {
                 .with_line_open(DevTakeover::line_open_from_env()),
             takeover_jobs: Jobs::new(),
             retarget: crate::retarget_glue::Host::from_env(),
-            closed: closed_state::State::new(closed_state::fake_requested()),
+            closed: closed_state::State::default(),
             closed_jobs: Jobs::new(),
             dev_takeover: DevTakeover::from_env(),
             picker: Picker::new(),

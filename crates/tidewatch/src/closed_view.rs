@@ -1,131 +1,128 @@
-//! Draws Recently closed under the Running elsewhere card at the end of the Overview's rail: a
-//! compact line with a fold button, and the rows it folds out (badge, title, repo and when it
-//! closed, a Reopen button). Drawn from plain data (`closed_state.rs`); reports what was clicked.
+//! Draws the Resume side of the new-tab form: the repo's closed sessions, one two-line row each
+//! (CLI badge, the label the tab had, when it closed, Resume; the goal it worked on, else its
+//! branch, under it), the picked one highlighted. Drawn from plain data (`closed_state.rs`);
+//! reports which row was picked or resumed.
 
-use egui::{
-    Align, Align2, CornerRadius, Id, Layout, Rect, RichText, Sense, Stroke, StrokeKind, Ui,
-    UiBuilder, pos2, vec2,
-};
+use egui::{Align2, Rect, ScrollArea, Sense, Ui, UiBuilder, pos2, vec2};
 
 use crate::brand;
-use crate::closed_state::{Card, CardAction, Row};
+use crate::closed_state::Row;
+use crate::reader_view::ellipsized;
 use crate::screen_kit::{
-    DETAIL_MORE, FaceLine, Size, body, button_width, heading, mono, paint_face_line,
-    primary_button, quiet_button,
+    FACE, Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, body, button_width, clickable,
+    paint_cli_badge, quiet_button, selected_ink, selection_row,
 };
-use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG, TEXT_TITLE};
 
-const LINE_H: f32 = 60.0;
-const LINE_GAP: f32 = 8.0;
-const LINE_TAIL: f32 = 22.0;
-const ROW_H: f32 = 40.0;
-const SIDE: f32 = 10.0;
-const TEXT_GAP: f32 = 12.0;
+pub(crate) const ROW_H: f32 = 58.0;
+const INTRO_H: f32 = 34.0;
+const PAD: f32 = 10.0;
+const FACE_GAP: f32 = 10.0;
+const LINE_SHIFT: f32 = 10.0;
+const WHEN_GAP: f32 = 12.0;
 
-fn count_text(rows: usize) -> String {
-    let noun = if rows == 1 { "agent" } else { "agents" };
-    format!("{rows} {noun} closed in the last 14 days")
+pub(crate) const EMPTY: &str = "No session of this repo closed in the last 14 days.";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Picked {
+    Select(usize),
+    Resume(String),
 }
 
-pub(crate) fn section(ui: &mut Ui, data: &Card) -> Option<CardAction> {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(vec2(width, LINE_H), Sense::hover());
-    ui.painter().rect(
-        rect,
-        CornerRadius::same(14),
-        brand::CARD,
-        Stroke::new(1.0, brand::CARD_LINE),
-        StrokeKind::Inside,
-    );
-    let painter = ui.painter_at(rect);
-    painter.text(
-        pos2(rect.left() + 14.0, rect.center().y - 9.0),
+/// The second line of a row: what the session was for, else the branch it worked on.
+pub(crate) fn detail(row: &Row) -> &str {
+    row.summary.as_deref().unwrap_or(&row.branch)
+}
+
+pub(crate) fn show(ui: &mut Ui, area: Rect, rows: &[Row], picked: usize) -> Option<Picked> {
+    let intro = Rect::from_min_size(area.min, vec2(area.width(), INTRO_H));
+    let text = if rows.is_empty() {
+        EMPTY
+    } else {
+        "Each one comes back in its worktree, with its conversation."
+    };
+    ui.painter().text(
+        intro.left_center(),
         Align2::LEFT_CENTER,
-        "Recently closed",
-        heading(TEXT_TITLE),
-        brand::TEXT,
-    );
-    painter.text(
-        pos2(rect.left() + 14.0, rect.center().y + 10.0),
-        Align2::LEFT_CENTER,
-        count_text(data.rows.len()),
-        body(12.0),
+        text,
+        body(TEXT_SECONDARY),
         brand::MUTED,
     );
-    let label = if data.open { "Hide" } else { "Show" };
+    let list = Rect::from_min_max(pos2(area.left(), intro.bottom()), area.max);
+    let mut child = ui.new_child(UiBuilder::new().max_rect(list));
+    ScrollArea::vertical()
+        .id_salt("resume-list")
+        .auto_shrink([false, false])
+        .show(&mut child, |ui| {
+            let width = ui.available_width() - brand::SCROLL_ROOM;
+            let mut out = None;
+            for (index, row) in rows.iter().enumerate() {
+                let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
+                out = out.or(draw_row(ui, rect, row, index, index == picked));
+            }
+            out
+        })
+        .inner
+}
+
+fn draw_row(ui: &mut Ui, rect: Rect, row: &Row, index: usize, picked: bool) -> Option<Picked> {
+    let response = clickable(ui, rect, ("resume-row", &row.session_id));
+    selection_row(ui.painter(), rect, picked, response.hovered());
+    let label = if row.busy { "Opening..." } else { "Resume" };
     let button_w = button_width(ui, label, Size::Compact);
     let button = Rect::from_center_size(
-        pos2(rect.right() - 14.0 - button_w / 2.0, rect.center().y),
+        pos2(rect.right() - PAD - button_w / 2.0, rect.center().y),
         vec2(button_w, Size::Compact.height()),
     );
-    let toggled = crate::overview_view::in_rect(ui, button, |ui| {
-        primary_button(ui, label, true, Size::Compact).clicked()
-    });
-    let mut action = toggled.then_some(CardAction::Toggle);
-    if data.open {
-        ui.add_space(LINE_GAP);
-        action = action.or(rows(ui, data));
-        ui.add_space(LINE_TAIL);
-    }
-    action
-}
-
-fn rows(ui: &mut Ui, data: &Card) -> Option<CardAction> {
-    let width = ui.available_width();
-    let height = data.rows.len() as f32 * ROW_H;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    ui.painter().rect(
-        rect,
-        CornerRadius::same(12),
-        brand::CARD,
-        Stroke::new(1.0, brand::CARD_LINE),
-        StrokeKind::Inside,
-    );
-    let mut action = None;
-    for (index, row) in data.rows.iter().enumerate() {
-        let top = rect.top() + index as f32 * ROW_H;
-        let row_rect = Rect::from_min_size(pos2(rect.left(), top), vec2(width, ROW_H));
-        action = action.or(draw_row(ui, row_rect, row, index > 0));
-    }
-    action
-}
-
-fn draw_row(ui: &mut Ui, rect: Rect, row: &Row, divider: bool) -> Option<CardAction> {
+    let mut button_ui = ui.new_child(UiBuilder::new().max_rect(button));
+    let resumed = quiet_button(&mut button_ui, label, !row.busy, Size::Compact)
+        .on_hover_text("Bring the worktree back and continue the conversation in a new tab")
+        .clicked();
     let painter = ui.painter_at(rect);
-    if divider {
-        painter.hline(
-            (rect.left() + 12.0)..=(rect.right() - 12.0),
-            rect.top(),
-            Stroke::new(1.0, brand::CARD_LINE),
-        );
+    let top = rect.center().y - LINE_SHIFT;
+    let bottom = rect.center().y + LINE_SHIFT;
+    let face = Rect::from_center_size(pos2(rect.left() + PAD + FACE / 2.0, top), vec2(FACE, FACE));
+    paint_cli_badge(&painter, face, &row.cli_id);
+    let left = face.right() + FACE_GAP;
+    let right = button.left() - WHEN_GAP;
+    let when = painter.layout_no_wrap(row.closed.clone(), body(TEXT_TAG), brand::MUTED);
+    let when_w = when.size().x;
+    painter.galley(pos2(right - when_w, top - when.size().y / 2.0), when, brand::MUTED);
+    let ink = selected_ink(picked, brand::TEXT);
+    let room = (right - when_w - WHEN_GAP - left).max(0.0);
+    let title = ellipsized(&painter, &row.title, body(TEXT_BODY), ink, room);
+    painter.galley(pos2(left, top - title.size().y / 2.0), title, ink);
+    let detail_room = (right - left).max(0.0);
+    let line = ellipsized(&painter, detail(row), body(TEXT_SECONDARY), brand::SOFT, detail_room);
+    painter.galley(pos2(left, bottom - line.size().y / 2.0), line, brand::SOFT);
+    if resumed {
+        return Some(Picked::Resume(row.session_id.clone()));
     }
-    let mut cluster = ui.new_child(
-        UiBuilder::new()
-            .id_salt(("closed_row", &row.session_id))
-            .max_rect(rect.shrink2(vec2(SIDE, 0.0)))
-            .layout(Layout::right_to_left(Align::Center)),
-    );
-    let label = if row.busy { "Opening..." } else { "Reopen" };
-    let response = quiet_button(&mut cluster, label, !row.busy, Size::Compact)
-        .on_hover_text("Bring the worktree back and continue the conversation in a new tab");
-    let info = format!("{} \u{b7} {}", row.repo, row.closed);
-    let line = FaceLine {
-        cli: &row.cli_id,
-        name: &row.title,
-        detail: &info,
-        key: None,
-        detail_share: DETAIL_MORE,
-        name_ink: brand::TEXT,
-        detail_ink: brand::MUTED,
-        reserve: rect.right() - cluster.min_rect().left() - 10.0 + TEXT_GAP,
-    };
-    let hover = paint_face_line(&painter, rect, &line);
-    for (part, area) in hover.into_iter().enumerate() {
-        ui.interact(area, Id::new(("closed_name", &row.session_id, part)), Sense::hover())
-            .on_hover_ui(|ui| {
-                ui.label(RichText::new(&row.title).size(TEXT_SECONDARY).color(brand::TEXT));
-                ui.label(RichText::new(&row.repo).font(mono(TEXT_TAG)).color(brand::MUTED));
-            });
+    let response = response.on_hover_text(detail(row));
+    if response.double_clicked() {
+        return Some(Picked::Resume(row.session_id.clone()));
     }
-    response.clicked().then(|| CardAction::Reopen(row.session_id.clone()))
+    response.clicked().then_some(Picked::Select(index))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(summary: Option<&str>) -> Row {
+        Row {
+            session_id: "s".into(),
+            cli_id: "claude".into(),
+            title: "fix-login".into(),
+            summary: summary.map(str::to_owned),
+            branch: "agent/heron".into(),
+            closed: "closed 2h ago".into(),
+            busy: false,
+        }
+    }
+
+    #[test]
+    fn the_second_line_is_the_summary_else_the_branch() {
+        assert_eq!(detail(&row(Some("Fix the login redirect"))), "Fix the login redirect");
+        assert_eq!(detail(&row(None)), "agent/heron");
+    }
 }

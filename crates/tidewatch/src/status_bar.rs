@@ -70,6 +70,7 @@ pub(crate) fn draft_place(kind: Kind) -> String {
     let start = match kind {
         Kind::Meeseeks => "Summon",
         Kind::Agent | Kind::Shell => "Start",
+        Kind::Resume => "Resume",
     };
     format!("New tab \u{b7} nothing starts until you press {start}")
 }
