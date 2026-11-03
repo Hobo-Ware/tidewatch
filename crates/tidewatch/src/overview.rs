@@ -110,6 +110,8 @@ pub(crate) struct Row {
     pub(crate) idle_secs: f64,
     pub(crate) next: Option<Next>,
     pub(crate) stamp: Stamp,
+    /// The goal of the agent's report: what the session is for.
+    pub(crate) summary: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -240,6 +242,7 @@ pub(crate) fn collect<T>(
                 idle_secs: agent.run.since_change(now),
                 next: None,
                 stamp: Stamp::default(),
+                summary: agent.run.goal().and_then(crate::tab_title::task_line),
             })
         })
         .collect();
@@ -649,6 +652,7 @@ mod tests {
             idle_secs: 0.0,
             stamp: Stamp::default(),
             next: None,
+            summary: None,
         }
     }
 

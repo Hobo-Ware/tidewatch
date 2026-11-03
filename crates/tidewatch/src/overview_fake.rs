@@ -136,6 +136,7 @@ fn row(id: u64, spec: &Spec) -> Row {
         idle_secs: spec.mins * 60.0,
         next: None,
         stamp: Stamp::default(),
+        summary: None,
     }
 }
 
