@@ -701,6 +701,13 @@ struct CardOut {
     answer: Option<Pick>,
 }
 
+fn with_summary(summary: Option<&str>, tip: String) -> String {
+    match summary {
+        Some(summary) => format!("{summary}\n\n{tip}"),
+        None => tip,
+    }
+}
+
 fn ask_of(row: &Row) -> Option<&Ask> {
     row.look.as_ref()?.ask.as_ref()
 }
@@ -957,10 +964,11 @@ fn card(
             Some(age) => format!("{} \u{b7} {age}", status_view::describe(&row.status)),
             None => status_view::describe(&row.status),
         };
-        match &row.tokens {
+        let status = match &row.tokens {
             Some(tokens) => format!("{status}\n{}", tokens.tip),
             None => status,
-        }
+        };
+        with_summary(row.summary.as_deref(), status)
     };
     let card_clicked =
         resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked();
@@ -1118,6 +1126,15 @@ mod tests {
     }
 
     #[test]
+    fn a_card_tip_opens_with_what_the_session_is_for() {
+        assert_eq!(
+            with_summary(Some("Fix the login"), "Working".into()),
+            "Fix the login\n\nWorking"
+        );
+        assert_eq!(with_summary(None, "Working".into()), "Working");
+    }
+
+    #[test]
     fn the_button_tip_says_what_the_badge_counts() {
         let repo = |name: &str, count: usize| (name.to_owned(), count);
         let cases = [
@@ -1161,6 +1178,7 @@ mod tests {
             idle_secs: 600.0,
             next: None,
             stamp: crate::overview::Stamp::default(),
+            summary: None,
         }
     }
 

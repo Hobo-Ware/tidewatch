@@ -85,13 +85,19 @@ pub(crate) fn label(agent: Option<&AgentTab>, name: &str) -> String {
     agent.map_or_else(|| name.to_owned(), |agent| of_agent(agent, name).1)
 }
 
-/// The second line of a tab's tooltip: the task of a Meeseeks, whose label is a short name, else the
-/// worktree's name.
+/// The lines under a tab's label in its tooltip: the task of a Meeseeks, whose label is a short
+/// name, else the goal of the agent's report over the worktree's name.
 pub(crate) fn subtitle(agent: Option<&AgentTab>, name: &str) -> String {
-    agent
+    if let Some(task) = agent
         .and_then(|agent| agent.meeseeks.as_ref())
         .and_then(|meeseeks| task_line(&meeseeks.task))
-        .unwrap_or_else(|| name.to_owned())
+    {
+        return task;
+    }
+    match agent.and_then(|agent| agent.run.goal()).and_then(task_line) {
+        Some(goal) => format!("{goal}\n{name}"),
+        None => name.to_owned(),
+    }
 }
 
 /// A task as one line of at most 300 characters. `None` for an empty one.
@@ -311,12 +317,14 @@ mod tests {
     }
 
     #[test]
-    fn the_tooltip_second_line_is_the_task_of_a_meeseeks_and_the_worktree_name_of_any_other_tab() {
+    fn the_tooltip_names_a_meeseeks_task_else_the_goal_over_the_worktree_name() {
         use crate::agent_run::AgentRun;
         use tidewatch_core::meeseeks::{Criteria, Meeseeks};
         let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
         assert_eq!(subtitle(Some(&agent), NAME), NAME);
         assert_eq!(subtitle(None, NAME), NAME);
+        agent.run.set_goal(Some("  Fix the login\nredirect "));
+        assert_eq!(subtitle(Some(&agent), NAME), format!("Fix the login redirect\n{NAME}"));
         agent.meeseeks = Some(Meeseeks::summon(
             "  Open a PR to fix https\nvalidation  ",
             Criteria::default(),
@@ -324,7 +332,7 @@ mod tests {
         ));
         assert_eq!(subtitle(Some(&agent), NAME), "Open a PR to fix https validation");
         agent.meeseeks = Some(Meeseeks::summon("", Criteria::default(), 0));
-        assert_eq!(subtitle(Some(&agent), NAME), NAME);
+        assert_eq!(subtitle(Some(&agent), NAME), format!("Fix the login redirect\n{NAME}"));
     }
 
     #[test]
