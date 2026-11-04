@@ -8,6 +8,7 @@ use jiff::tz::TimeZone;
 
 use crate::job_model::clock_label;
 use crate::reader_rows::{Kind, Row, Rows, Tool, ToolKind};
+use tidewatch_core::end_block;
 use tidewatch_core::text::plural;
 
 /// One chip of the summary row: how many calls of a kind, and how many of them failed.
@@ -54,7 +55,8 @@ pub(crate) struct Group {
     /// The `seq` of that row; the key of the turn's height and of its open list.
     pub(crate) key: u64,
     pub(crate) texts: Vec<usize>,
-    /// Where the answer starts in `texts`: the text after the last call that did real work.
+    /// Where the answer starts in `texts`: the newest text with the end block, else the text after
+    /// the last call that did real work. Calls that only report to Tidewatch do not split it.
     answer_from: usize,
     pub(crate) calls: Vec<usize>,
     /// The call the agent is on, or was on last: the newest one without a result, else the newest.
@@ -72,8 +74,7 @@ impl Group {
         Some((self.ended_ms? - self.started_ms?).max(0))
     }
 
-    /// The texts the bubble shows, in order: everything the agent wrote after its last call that
-    /// did real work. Calls that only report to Tidewatch do not split it.
+    /// The texts the bubble shows, in order, from `answer_from` on.
     pub(crate) fn answers(&self) -> &[usize] {
         &self.texts[self.answer_from..]
     }
@@ -151,6 +152,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
     let mut open: Option<usize> = None;
     let mut last_boundary = false;
     let mut worked = false;
+    let mut ended = false;
     for (index, (row, at)) in rows.stamped().enumerate() {
         match &row.kind {
             Kind::User | Kind::Tidewatch(_) | Kind::Review(_) => {
@@ -176,6 +178,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                         closed: false,
                     });
                     worked = false;
+                    ended = false;
                     out.groups.len() - 1
                 });
                 let group = &mut out.groups[at_group];
@@ -189,9 +192,11 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                     worked |= !tool.reports();
                     add_call(group, index, tool);
                 } else {
-                    if std::mem::take(&mut worked) {
+                    let closes_turn = end_block::parse(&row.text).is_some();
+                    if (std::mem::take(&mut worked) && !ended) || closes_turn {
                         group.answer_from = group.texts.len();
                     }
+                    ended |= closes_turn;
                     group.texts.push(index);
                 }
             }
@@ -812,11 +817,40 @@ mod tests {
     }
 
     const REPORT: &str = "mcp__tidewatch__update_progress";
+    const BLOCK: &str =
+        "Why.\n\n**Done**\n- checked\n\n**Needs you**\n- add it\n\n**Next**\n- run 15";
+    const BLOCK_TWO: &str = "**Done**\n- more\n\n**Needs you**\n- nothing\n\n**Next**\n- wait";
 
     #[test]
     fn only_a_real_work_call_turns_the_text_before_it_into_a_folded_note() {
         type Case<'a> = (&'a str, Vec<(&'a str, &'a str)>, Vec<&'a str>, Vec<&'a str>);
-        let cases: [Case<'_>; 9] = [
+        let cases: [Case<'_>; 12] = [
+            (
+                "answer with end block, edit, short reply",
+                vec![("text", BLOCK), ("call", "Edit"), ("text", "short reply")],
+                vec![BLOCK, "short reply"],
+                vec![],
+            ),
+            (
+                "note, bash, answer with end block, edit, reply, bash, reply",
+                vec![
+                    ("text", "note"),
+                    ("call", "Bash"),
+                    ("text", BLOCK),
+                    ("call", "Edit"),
+                    ("text", "reply"),
+                    ("call", "Bash"),
+                    ("text", "last"),
+                ],
+                vec![BLOCK, "reply", "last"],
+                vec!["note"],
+            ),
+            (
+                "first end block, bash, second end block",
+                vec![("text", BLOCK), ("call", "Bash"), ("text", BLOCK_TWO)],
+                vec![BLOCK_TWO],
+                vec![BLOCK],
+            ),
             (
                 "answer, report, done block",
                 vec![("text", "answer"), ("call", REPORT), ("text", "Done block")],
