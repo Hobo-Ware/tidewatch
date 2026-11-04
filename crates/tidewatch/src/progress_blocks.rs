@@ -94,11 +94,7 @@ pub(crate) fn asked_block(ui: &mut Ui, column: Column, asked: &Asked) {
     let mut question = Text::new();
     question.run(&asked.text, &format(body(TEXT_BODY), brand::TEXT));
     let question = question.wrapped(inner, 4).lay_out(&painter);
-    let hint = match asked.more {
-        0 => "Answer above the reply box".to_owned(),
-        1 => "Answer above the reply box \u{b7} 1 more question".to_owned(),
-        more => format!("Answer above the reply box \u{b7} {more} more questions"),
-    };
+    let hint = asked.hint();
     let mut note = Text::new();
     note.run(&hint, &format(body(TEXT_SECONDARY), brand::MUTED));
     let note = note.wrapped(inner, 2).lay_out(&painter);

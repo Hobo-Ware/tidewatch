@@ -485,7 +485,8 @@ fn a_needs_you_item_of_the_last_message_is_the_waiting_on_you_line_when_the_repo
     let panel = tall(SMALL, 420.0, turn(None, Ok(())));
     assert!(panel.drawn("Waiting on you"));
     assert!(panel.drawn("Should the filters apply to the archived column?"));
-    assert!(panel.drawn("Answer above the reply box"));
+    assert!(panel.drawn("Reply in the chat"));
+    assert!(!panel.drawn("Answer above the reply box"), "no card waits above the reply box");
 }
 
 #[test]
