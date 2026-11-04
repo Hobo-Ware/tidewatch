@@ -33,7 +33,7 @@ fn full() -> Poofed {
     ];
     record.done = vec!["Added `promo.test.ts`".into()];
     record.next = vec!["Review it".into()];
-    record.stages = vec![StageLine { name: "Build".into(), done: 3, total: 3 }];
+    record.stages = vec![StageLine { name: "Build".into(), done: 3, total: 3, steps: Vec::new() }];
     record
 }
 
@@ -146,7 +146,10 @@ fn the_last_turn_and_the_ledger_stages_come_through_as_saved() {
     let summary = summary(&full(), None, &TimeZone::UTC);
     assert_eq!(summary.done, ["Added `promo.test.ts`"]);
     assert_eq!(summary.next, ["Review it"]);
-    assert_eq!(summary.stages, [StageRow { name: "Build".into(), done: 3, total: 3 }]);
+    assert_eq!(
+        summary.stages,
+        [StageRow { name: "Build".into(), done: 3, total: 3, steps: Vec::new() }]
+    );
 }
 
 #[test]
@@ -230,12 +233,15 @@ fn the_prompt_is_kept_whole_and_stages_without_steps_are_left_out() {
     let mut record = full();
     record.task = "Why is the compile step so slow? ".repeat(30);
     record.stages = vec![
-        StageLine { name: "Understand".into(), done: 5, total: 5 },
-        StageLine { name: "Build".into(), done: 0, total: 0 },
+        StageLine { name: "Understand".into(), done: 5, total: 5, steps: Vec::new() },
+        StageLine { name: "Build".into(), done: 0, total: 0, steps: Vec::new() },
     ];
     let shown = summary(&record, None, &TimeZone::UTC);
     assert_eq!(shown.prompt.as_deref(), Some(record.task.trim()));
-    assert_eq!(shown.stages, [StageRow { name: "Understand".into(), done: 5, total: 5 }]);
+    assert_eq!(
+        shown.stages,
+        [StageRow { name: "Understand".into(), done: 5, total: 5, steps: Vec::new() }]
+    );
 }
 
 #[test]
@@ -249,4 +255,52 @@ fn the_hand_off_row_of_a_task_that_named_a_pull_request_reads_update_pr() {
     assert_eq!(names, labels);
     let unnamed = summary(&full(), None, &TimeZone::UTC);
     assert_eq!(unnamed.checks[3].label, "Hand off");
+}
+
+#[test]
+fn the_poof_keeps_each_stage_with_its_steps_and_the_reports_decisions_and_checks() {
+    let report = "# Goal\nFix the jobs page\n\n## Checklist\n### 1. Investigate\n- [x] Read the counter -- it counts only failures\n### 2. Fix\n- [x] Count every run -- commit 1a2b3c4\n- [-] Load test -- no staging db\n- [ ] Docs\n\n## Decisions\n- Alert after 3 failures -- one is a blip\n\n## Verified\n- Tests pass -- bun test: 212 passed\n\n## Not verified\n- The live page -- needs a deploy\n- nothing\n";
+    let mut record = bare();
+    keep_report(&mut record, &Ledger::parse(report), Kind::Edit);
+    let step = |text: &str, why: Option<&str>, state| StepLine {
+        text: text.into(),
+        why: why.map(Into::into),
+        state,
+    };
+    let stages: Vec<(&str, u32, u32, &[StepLine])> = record
+        .stages
+        .iter()
+        .map(|stage| (stage.name.as_str(), stage.done, stage.total, stage.steps.as_slice()))
+        .collect();
+    assert_eq!(
+        stages,
+        [
+            (
+                "Investigate",
+                1,
+                1,
+                &[step("Read the counter", Some("it counts only failures"), StepState::Done)][..]
+            ),
+            (
+                "Fix",
+                1,
+                2,
+                &[
+                    step("Count every run", Some("commit 1a2b3c4"), StepState::Done),
+                    step("Load test", Some("no staging db"), StepState::Skipped),
+                    step("Docs", None, StepState::Open),
+                ][..]
+            ),
+        ]
+    );
+    let note = |text: &str, why: &str| NoteLine { text: text.into(), why: Some(why.into()) };
+    assert_eq!(record.decisions, [note("Alert after 3 failures", "one is a blip")]);
+    assert_eq!(record.verified, [note("Tests pass", "bun test: 212 passed")]);
+    assert_eq!(record.not_verified, [note("The live page", "needs a deploy")]);
+    let shown = summary(&record, None, &TimeZone::UTC);
+    assert_eq!(shown.stages[1].steps.len(), 3);
+    assert_eq!(
+        (shown.decisions, shown.verified, shown.not_verified),
+        (record.decisions, record.verified, record.not_verified)
+    );
 }

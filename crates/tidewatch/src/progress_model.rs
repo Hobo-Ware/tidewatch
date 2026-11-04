@@ -3,7 +3,7 @@
 use tidewatch_core::kind::Kind;
 use tidewatch_core::panel_rules::{Waiting, fresh, waiting_of};
 use tidewatch_core::progress::{
-    Choice, Entry, Ledger, Mark, Phase, PhaseState, Scheduled, State, When, real,
+    Choice, Entry, Item, Ledger, Mark, Phase, PhaseState, Scheduled, State, When, real,
 };
 use tidewatch_core::progress_report::{StageKind, WaitingOn};
 use tidewatch_core::stages::{self, Group, Stage};
@@ -140,6 +140,15 @@ fn phase_label(phase: &Phase) -> String {
         ("", None) => "Phase".to_owned(),
         (title, _) => title.to_owned(),
     }
+}
+
+/// The steps under each of `bars`' stages, in the same order.
+pub(crate) fn bar_steps(ledger: &Ledger, kind: Kind) -> Vec<Vec<&Item>> {
+    let (groups, _) = grouped(ledger, kind);
+    groups
+        .iter()
+        .map(|group| phases_of(ledger, group).into_iter().flat_map(|phase| &phase.items).collect())
+        .collect()
 }
 
 pub(crate) fn bars(ledger: &Ledger, shape: StageShape) -> Vec<Bar> {

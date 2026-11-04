@@ -1,19 +1,20 @@
 //! What a poofed Meeseeks' summary tab says, as plain data: the header, the checks with their
 //! results (none, and one quiet line instead, when nothing changed), the agent's own summary, the pull request, the branch it left, the last turn and the
-//! ledger's final stages (pure, table-tested). The branch facts come from a git look at the branch,
+//! ledger's final stages with their steps, decisions and checks (pure, table-tested). The branch facts come from a git look at the branch,
 //! never from the removed folder, so they may still be on their way.
 
 use jiff::tz::TimeZone;
 use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{CheckLine, Step, Verdict, blocked_reason_of, elapsed_text};
 use tidewatch_core::meeseeks_branch::{Branch, Changed};
-use tidewatch_core::meeseeks_log::Poofed;
+use tidewatch_core::meeseeks_log::{NoteLine, Poofed, StageLine, StepLine, StepState};
 use tidewatch_core::meeseeks_target::Target;
+use tidewatch_core::progress::{Entry, Item, Ledger, Mark};
 use tidewatch_core::text::plural;
 
 use crate::job_model::clock_label;
 use crate::meeseeks_model::{Card, Look, Span};
-use crate::progress_model::StageShape;
+use crate::progress_model::{self, StageShape};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CheckRow {
@@ -48,6 +49,7 @@ pub(crate) struct StageRow {
     pub(crate) name: String,
     pub(crate) done: u32,
     pub(crate) total: u32,
+    pub(crate) steps: Vec<StepLine>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +72,9 @@ pub(crate) struct Summary {
     pub(crate) done: Vec<String>,
     pub(crate) next: Vec<String>,
     pub(crate) stages: Vec<StageRow>,
+    pub(crate) decisions: Vec<NoteLine>,
+    pub(crate) verified: Vec<NoteLine>,
+    pub(crate) not_verified: Vec<NoteLine>,
 }
 
 fn look_of(verdict: Verdict) -> Look {
@@ -216,9 +221,51 @@ pub(crate) fn summary(record: &Poofed, facts: Option<&Branch>, zone: &TimeZone) 
                 name: stage.name.clone(),
                 done: stage.done,
                 total: stage.total,
+                steps: stage.steps.clone(),
             })
             .collect(),
+        decisions: record.decisions.clone(),
+        verified: record.verified.clone(),
+        not_verified: record.not_verified.clone(),
     }
+}
+
+fn note_lines(entries: &[Entry]) -> Vec<NoteLine> {
+    entries
+        .iter()
+        .filter(|entry| !entry.is_nothing())
+        .map(|entry| NoteLine { text: entry.text.clone(), why: entry.why.clone() })
+        .collect()
+}
+
+fn step_line(item: &Item) -> StepLine {
+    let state = match item.mark {
+        Mark::Done => StepState::Done,
+        Mark::Skipped => StepState::Skipped,
+        Mark::Blocked => StepState::Blocked,
+        Mark::Todo | Mark::Doing => StepState::Open,
+    };
+    StepLine { text: item.text.clone(), why: item.why.clone(), state }
+}
+
+/// Copies the agent's progress report into the record of its poof, so the summary tab can say
+/// what was done after the report itself is gone.
+pub(crate) fn keep_report(record: &mut Poofed, ledger: &Ledger, kind: Kind) {
+    let bars = progress_model::bars(ledger, StageShape { kind, no_diff: false });
+    let steps = progress_model::bar_steps(ledger, kind);
+    record.stages = bars
+        .into_iter()
+        .zip(steps)
+        .map(|(bar, items)| StageLine {
+            name: bar.label,
+            done: u32::try_from(bar.done).unwrap_or(u32::MAX),
+            total: u32::try_from(bar.total).unwrap_or(u32::MAX),
+            steps: items.into_iter().map(step_line).collect(),
+        })
+        .collect();
+    record.decisions = note_lines(&ledger.decisions);
+    record.verified = note_lines(&ledger.verified);
+    record.not_verified = note_lines(&ledger.not_verified);
 }
 
 #[cfg(test)]
