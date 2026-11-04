@@ -14,6 +14,7 @@ use crate::meeseeks_log::pr_label_of;
 use crate::meeseeks_target::{self, PullRequest, Target};
 use crate::paths::TidewatchPaths;
 use crate::pr_ask;
+use crate::rfc3339;
 use crate::test_command::{self, Gate};
 use crate::tools::{GhError, Tools, run_gh};
 use crate::workflow_profile::Workflow;
@@ -104,11 +105,44 @@ pub fn change(tools: &Tools, dir: &Path, branch: &str, work: &Work) -> Result<Ch
             {
                 return Ok(checked);
             }
+            if let Some(checked) = merged_from_branch(tools, dir, branch, work.started_ms)? {
+                return Ok(checked);
+            }
             Err(format!("no commit ahead of {}", plan.base))
         }
         1 => Ok(said(format!("1 commit ahead of {}", plan.base))),
         n => Ok(said(format!("{n} commits ahead of {}", plan.base))),
     }
+}
+
+/// The pull request from this branch that merged after the task started: a squash merge leaves no
+/// commit ahead once the branch catches up with the base.
+fn merged_from_branch(
+    tools: &Tools,
+    dir: &Path,
+    branch: &str,
+    started_ms: i64,
+) -> Result<Option<Checked>, String> {
+    if !is_usable_ref(branch) {
+        return Ok(None);
+    }
+    let json = match run_gh(
+        tools,
+        dir,
+        &["pr", "list", "--head", branch, "--state", "merged", "--json", "url,mergedAt"],
+    ) {
+        Ok(json) => json,
+        Err(GhError::Stopped(why)) => return Err(why),
+        Err(_) => return Ok(None),
+    };
+    let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else { return Ok(None) };
+    let merged_since_start = |pr: &&serde_json::Value| {
+        pr["mergedAt"].as_str().and_then(rfc3339::unix_millis).is_some_and(|ms| ms >= started_ms)
+    };
+    Ok(list.iter().find(merged_since_start).and_then(|pr| pr["url"].as_str()).map(|url| {
+        let label = pr_label_of(url).unwrap_or_else(|| "The pull request".to_owned());
+        Checked { detail: format!("{label} from this branch merged"), pr_url: Some(url.to_owned()) }
+    }))
 }
 
 pub fn tests(repo: &Path, dir: &Path) -> Result<Checked, String> {

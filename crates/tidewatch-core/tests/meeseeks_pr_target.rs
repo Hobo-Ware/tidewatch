@@ -295,3 +295,27 @@ fn a_closed_pull_request_fails_the_change_check_and_commits_on_the_branch_still_
     assert_eq!(change_with(&f, &gh, &named()), Ok("1 commit ahead of main".to_owned()));
     assert_eq!(gh.calls_to("pr view").len(), 1, "gh was not asked again once a commit was there");
 }
+
+#[test]
+fn a_branch_whose_own_pull_request_merged_after_the_start_passes_with_nothing_ahead() {
+    if !git_available() {
+        return;
+    }
+    let f = fixture();
+    let merged = leak(format!("[{{\"url\":\"{URL}\",\"mergedAt\":\"2026-11-04T08:52:28Z\"}}]\n"));
+    let gh = gh_with(&[reply("pr list", 0, merged, "")]);
+    let started = |ms| Work { started_ms: ms, ..Work::default() };
+    let before_merge = 1_793_782_000_000;
+    let after_merge = 1_793_790_000_000;
+    assert_eq!(
+        change_with(&f, &gh, &started(before_merge)),
+        Ok("PR #2437 from this branch merged".to_owned())
+    );
+    assert_eq!(
+        change_with(&f, &gh, &started(after_merge)),
+        Err("no commit ahead of main".to_owned()),
+        "a pull request merged before the task started is not its work"
+    );
+    let asked = gh.calls_to("pr list");
+    assert!(asked[0].contains(&f.worktree.branch), "{asked:?}");
+}
