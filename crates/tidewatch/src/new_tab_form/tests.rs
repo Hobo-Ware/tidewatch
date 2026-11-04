@@ -1138,3 +1138,48 @@ fn esc_in_a_box_with_the_command_list_open_closes_the_list_and_not_the_draft() {
     assert_eq!(harness.press(Key::Escape), None, "the next one only lets go of the box");
     assert_eq!(harness.press(Key::Escape), Some(Out::Close));
 }
+
+#[test]
+fn text_dragged_over_in_the_message_box_stays_selected_while_no_file_arrives() {
+    let mut harness = Harness::in_the_box(Group::Repo);
+    harness.type_text("I got this email ");
+    harness.drop_files(vec![PathBuf::from("/x/notice.eml")]);
+    harness.type_text(" how does this affect us");
+    harness.frame(Vec::new());
+    let (pos, galley) = harness
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(t) if t.galley.text() == harness.state.text() => {
+                Some((t.pos, t.galley.clone()))
+            }
+            _ => None,
+        })
+        .expect("the message was painted");
+    let at = |index: usize| {
+        pos + galley.pos_from_cursor(egui::text::CCursor::new(index)).center().to_vec2()
+    };
+    let (from, to) = (at(2), at(harness.state.text().chars().count() - 3));
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let selected = |harness: &Harness| {
+        egui::TextEdit::load_state(&harness.ctx, crate::new_tab_fields::text_id())
+            .and_then(|state| state.cursor.char_range())
+            .is_some_and(|range| range.primary != range.secondary)
+    };
+    harness.frame(vec![Event::PointerMoved(from)]);
+    harness.frame(vec![button(from, true)]);
+    for step in 1..=6 {
+        harness.state.insert_files(&harness.ctx, Vec::new());
+        harness.frame(vec![Event::PointerMoved(from + (to - from) * (step as f32 / 6.0))]);
+    }
+    harness.frame(vec![button(to, false)]);
+    assert!(selected(&harness), "the drag selected the text");
+    harness.state.insert_files(&harness.ctx, Vec::new());
+    harness.frame(Vec::new());
+    assert!(selected(&harness), "an empty insert keeps the selection");
+}
