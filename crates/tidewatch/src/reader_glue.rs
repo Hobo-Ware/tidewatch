@@ -872,6 +872,23 @@ fn show_dialog_command(agent: &mut AgentTab, source: Option<Source>, text: &str)
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResumeBy {
+    TypingAtTheShell,
+    /// The process ended or no shell prompt waits, so the saved session starts again in the tab.
+    Restart,
+}
+
+pub(crate) fn resume_by(pane: &Pane<PtyTerm>) -> ResumeBy {
+    let live = matches!(&pane.body, Body::Shell(term) if term.exited().is_none());
+    let line = pane.agent.as_ref().is_some_and(|agent| agent.resume_line.is_some());
+    resume_way(live, line)
+}
+
+fn resume_way(live_shell: bool, has_line: bool) -> ResumeBy {
+    if live_shell && has_line { ResumeBy::TypingAtTheShell } else { ResumeBy::Restart }
+}
+
 /// Runs the resume command of a tab whose agent waits at its shell prompt. Ctrl+U first, so a
 /// command that was typed there is not run twice.
 pub(crate) fn resume_agent(pane: &mut Pane<PtyTerm>, now: f64) {
@@ -1118,6 +1135,19 @@ mod tests {
         agent.run.hold(Some(status), None);
         agent.run.refresh(1.0);
         reply_blocked(&agent)
+    }
+
+    #[test]
+    fn resume_restarts_the_agent_unless_a_live_shell_has_its_command() {
+        let cases = [
+            (true, true, ResumeBy::TypingAtTheShell),
+            (true, false, ResumeBy::Restart),
+            (false, true, ResumeBy::Restart),
+            (false, false, ResumeBy::Restart),
+        ];
+        for (live, line, want) in cases {
+            assert_eq!(resume_way(live, line), want, "live {live} line {line}");
+        }
     }
 
     #[test]
