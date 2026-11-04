@@ -339,6 +339,30 @@ pub(crate) fn waiting_for(ledger: &Ledger, tone: Tone) -> Option<String> {
 pub(crate) struct Asked {
     pub(crate) text: String,
     pub(crate) more: usize,
+    pub(crate) answer_at: AnswerAt,
+}
+
+/// Where the owner answers: a report's question has a card above the Reader's reply box, a Needs
+/// you line of the last message has none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum AnswerAt {
+    Card,
+    Chat,
+}
+
+impl Asked {
+    /// The line under the question: where to answer, and how many more wait.
+    pub(crate) fn hint(&self) -> String {
+        let place = match self.answer_at {
+            AnswerAt::Card => "Answer above the reply box",
+            AnswerAt::Chat => "Reply in the chat",
+        };
+        match self.more {
+            0 => place.to_owned(),
+            1 => format!("{place} \u{b7} 1 more question"),
+            more => format!("{place} \u{b7} {more} more questions"),
+        }
+    }
 }
 
 /// The Waiting on you line: the first question of the report (the question tool's own are laid
@@ -346,10 +370,16 @@ pub(crate) struct Asked {
 pub(crate) fn asked(ledger: &Ledger, fallback: &[String]) -> Option<Asked> {
     let reported = questions(ledger);
     match reported.split_first() {
-        Some((first, rest)) => Some(Asked { text: first.text.trim().to_owned(), more: rest.len() }),
-        None => fallback
-            .split_first()
-            .map(|(first, rest)| Asked { text: first.trim().to_owned(), more: rest.len() }),
+        Some((first, rest)) => Some(Asked {
+            text: first.text.trim().to_owned(),
+            more: rest.len(),
+            answer_at: AnswerAt::Card,
+        }),
+        None => fallback.split_first().map(|(first, rest)| Asked {
+            text: first.trim().to_owned(),
+            more: rest.len(),
+            answer_at: AnswerAt::Chat,
+        }),
     }
 }
 
@@ -975,13 +1005,20 @@ mod tests {
     #[test]
     fn the_question_is_the_reports_first_one_with_the_rest_counted_else_the_last_messages() {
         let two = ledger("# Goal\nx\n\n## Needs you\n- Pick a base -- why\n- Pick a name\n");
+        let from_report = asked(&two, &["from chat".into()]).unwrap();
         assert_eq!(
-            asked(&two, &["from chat".into()]),
-            Some(Asked { text: "Pick a base".into(), more: 1 })
+            from_report,
+            Asked { text: "Pick a base".into(), more: 1, answer_at: AnswerAt::Card }
         );
+        assert_eq!(from_report.hint(), "Answer above the reply box \u{b7} 1 more question");
         let none = ledger("# Goal\nx\n\n## Needs you\n- Nothing\n");
         let chat = ["Which base?".to_owned(), "And the name?".to_owned()];
-        assert_eq!(asked(&none, &chat), Some(Asked { text: "Which base?".into(), more: 1 }));
+        let from_chat = asked(&none, &chat).unwrap();
+        assert_eq!(
+            from_chat,
+            Asked { text: "Which base?".into(), more: 1, answer_at: AnswerAt::Chat }
+        );
+        assert_eq!(from_chat.hint(), "Reply in the chat \u{b7} 1 more question");
         assert_eq!(asked(&none, &[]), None);
     }
 
