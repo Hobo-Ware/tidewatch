@@ -6,7 +6,7 @@ use std::time::Duration;
 use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{Command, Criteria, Event, Meeseeks, Phase};
 use tidewatch_core::meeseeks_check::Work;
-use tidewatch_core::meeseeks_log::{Poofed, StageLine};
+use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::sent::{Reason, because};
 
 use super::{Tidewatch, wall_ms};
@@ -16,7 +16,6 @@ use crate::meeseeks_glue::{CheckSpec, Done, FAKE_NAMED, LOOK_EVERY_SECS, LookSpe
 use crate::outbox::{Offer, Send};
 use crate::pane::{Body, Pane};
 use crate::progress_glue::today;
-use crate::progress_model::{self, StageShape};
 use crate::wake::WAKE_SLACK_S;
 use crate::{meeseeks_summary, meeseeks_summary_view};
 
@@ -344,16 +343,9 @@ impl Tidewatch {
             return;
         };
         let kind = leaving.kind;
-        leaving.stages = self.progress.ledger(tab).map_or_else(Vec::new, |known| {
-            progress_model::bars(&known.ledger, StageShape { kind, no_diff: false })
-                .into_iter()
-                .map(|bar| StageLine {
-                    name: bar.label,
-                    done: u32::try_from(bar.done).unwrap_or(u32::MAX),
-                    total: u32::try_from(bar.total).unwrap_or(u32::MAX),
-                })
-                .collect()
-        });
+        if let Some(known) = self.progress.ledger(tab) {
+            meeseeks_summary::keep_report(&mut leaving, &known.ledger, kind);
+        }
         let trust = self.trust.grant();
         self.meeseeks.poof(ctx, paths, (tab, shell, worktree, trust), leaving);
     }

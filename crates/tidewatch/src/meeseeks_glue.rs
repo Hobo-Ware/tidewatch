@@ -12,7 +12,7 @@ use tidewatch_core::kind::Kind;
 use tidewatch_core::meeseeks::{CheckLine, Criteria, MAX_FAILURES, Meeseeks, Phase, Step, Verdict};
 use tidewatch_core::meeseeks_branch::{self, Branch, Changed, Found};
 use tidewatch_core::meeseeks_check::{self as check, Checked, Work};
-use tidewatch_core::meeseeks_log::{self, Log, Poofed, StageLine};
+use tidewatch_core::meeseeks_log::{self, Log, NoteLine, Poofed, StageLine, StepLine, StepState};
 use tidewatch_core::paths::TidewatchPaths;
 use tidewatch_core::test_command::{self, Gate};
 use tidewatch_core::tools::Tools;
@@ -486,7 +486,12 @@ fn fake_read_only_poofed(mut record: Poofed) -> Poofed {
     record.done = Vec::new();
     record.next = Vec::new();
     record.stages = [("Understand", 5), ("Build", 0), ("PR", 0), ("Done", 1)]
-        .map(|(name, total)| StageLine { name: name.to_owned(), done: total, total })
+        .map(|(name, total)| StageLine {
+            name: name.to_owned(),
+            done: total,
+            total,
+            steps: Vec::new(),
+        })
         .to_vec();
     record
 }
@@ -512,9 +517,29 @@ pub(crate) fn fake_poofed(day: Date, now_ms: i64) -> Vec<Poofed> {
         ];
         poofed.done = vec![format!("Finished `{name}` and opened PR #{number}")];
         poofed.next = vec!["Review the pull request".to_owned()];
-        poofed.stages = ["Understand", "Build", "PR", "Done"]
-            .map(|name| StageLine { name: name.to_owned(), done: 2, total: 2 })
-            .to_vec();
+        let done = |text: &str, why: &str| StepLine {
+            text: text.to_owned(),
+            why: Some(why.to_owned()),
+            state: StepState::Done,
+        };
+        poofed.stages = [
+            ("Understand", vec![done("Find where the banner renders", "src/promo/Banner.tsx:42")]),
+            ("Build", vec![done("Add the test", "promo.test.ts, 3 cases")]),
+            ("PR", vec![done("Open the pull request", &format!("PR #{number}"))]),
+            ("Done", Vec::new()),
+        ]
+        .map(|(name, steps)| StageLine {
+            name: name.to_owned(),
+            done: steps.len().max(1) as u32,
+            total: steps.len().max(1) as u32,
+            steps,
+        })
+        .to_vec();
+        let note =
+            |text: &str, why: &str| NoteLine { text: text.to_owned(), why: Some(why.to_owned()) };
+        poofed.decisions = vec![note("Test the banner, not the API", "the API has its own tests")];
+        poofed.verified = vec![note("Tests pass", "cargo test: 212 passed")];
+        poofed.not_verified = vec![note("The banner in a real browser", "no browser in this run")];
         poofed
     };
     let first = entry("promo-test", "Add a test for the promo banner", 213, 360);

@@ -34,7 +34,7 @@ fn record() -> Poofed {
     .to_vec();
     record.done = vec!["Added `promo.test.ts`".into()];
     record.next = vec!["Review the pull request".into()];
-    record.stages = vec![StageLine { name: "Build".into(), done: 2, total: 2 }];
+    record.stages = vec![StageLine { name: "Build".into(), done: 2, total: 2, steps: Vec::new() }];
     record
 }
 
@@ -235,4 +235,20 @@ fn content_keeps_twelve_pixels_clear_of_the_scrollbar_edge() {
             assert!(rect.right() <= edge, "{width}: {rect:?} past {edge}");
         }
     }
+}
+
+#[test]
+fn the_steps_of_the_report_draw_under_the_branch_only_when_the_record_has_them() {
+    assert_eq!(harness(900.0).placed().steps, None);
+    let mut detailed = record();
+    detailed.stages[0].steps = vec![tidewatch_core::meeseeks_log::StepLine {
+        text: "Count every run".into(),
+        why: Some("commit 1a2b3c4".into()),
+        state: StepState::Done,
+    }];
+    let harness = Harness::new(summary(&detailed, Some(&facts()), &TimeZone::UTC), 900.0);
+    let placed = harness.placed();
+    let steps = placed.steps.expect("the steps drew");
+    assert!(steps.top() > placed.branch.unwrap().bottom());
+    assert!(steps.height() > 30.0, "the stage name, the step and its evidence: {steps:?}");
 }

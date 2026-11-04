@@ -10,6 +10,7 @@ use egui::{
     Align, Color32, CornerRadius, Frame, Id, Layout, Margin, Rect, ScrollArea, Sense, Stroke,
     StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
+use tidewatch_core::meeseeks_log::StepState;
 use tidewatch_core::progress::Mark;
 use tidewatch_core::user_markup;
 
@@ -46,6 +47,8 @@ const GUTTER: f32 = 16.0;
 const CARD_PAD: Margin = Margin { left: 18, right: 18, top: 14, bottom: 16 };
 const HERO_PAD: Margin = Margin { left: 22, right: 22, top: 16, bottom: 20 };
 const KICKER_GAP: f32 = 8.0;
+const ITEM_INDENT: f32 = 24.0;
+const ITEM_GAP: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
@@ -64,6 +67,7 @@ pub(crate) struct Placed {
     pub(crate) checks: Vec<Rect>,
     pub(crate) pr: Option<Rect>,
     pub(crate) branch: Option<Rect>,
+    pub(crate) steps: Option<Rect>,
 }
 
 pub(crate) fn placed_id() -> Id {
@@ -126,6 +130,24 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action>
             ui.add_space(SECTION_GAP);
             section_label(ui, "Progress report");
             stages(ui, width, &summary.stages);
+        }
+        if summary.stages.iter().any(|stage| !stage.steps.is_empty()) {
+            ui.add_space(SECTION_GAP);
+            section_label(ui, "What was done");
+            placed.steps = Some(steps(ui, width, &summary.stages));
+        }
+        for (label, notes, mark) in [
+            ("Decisions", &summary.decisions, None),
+            ("Verified", &summary.verified, Some(Mark::Done)),
+            ("Not verified", &summary.not_verified, Some(Mark::Skipped)),
+        ] {
+            if !notes.is_empty() {
+                ui.add_space(SECTION_GAP);
+                section_label(ui, label);
+                for note in notes {
+                    item_row(ui, width, mark, &note.text, note.why.as_deref());
+                }
+            }
         }
         ui.add_space(PAD);
     });
@@ -394,6 +416,56 @@ fn stages(ui: &mut Ui, width: f32, rows: &[StageRow]) {
         );
         painter.rect_filled(fill, CornerRadius::same(2), brand::TEAL);
     }
+}
+
+fn mark_of_step(state: StepState) -> Mark {
+    match state {
+        StepState::Done => Mark::Done,
+        StepState::Skipped => Mark::Skipped,
+        StepState::Blocked => Mark::Blocked,
+        StepState::Open => Mark::Todo,
+    }
+}
+
+fn steps(ui: &mut Ui, width: f32, rows: &[StageRow]) -> Rect {
+    let top = ui.cursor().top();
+    for (index, row) in rows.iter().filter(|row| !row.steps.is_empty()).enumerate() {
+        if index > 0 {
+            ui.add_space(ITEM_GAP);
+        }
+        let name = ui.painter().layout_no_wrap(row.name.clone(), heading(14.0), brand::SOFT);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, name.size().y + 4.0), Sense::hover());
+        selectable::galley(ui, rect.left_top(), name, brand::SOFT);
+        for step in &row.steps {
+            item_row(ui, width, Some(mark_of_step(step.state)), &step.text, step.why.as_deref());
+        }
+    }
+    Rect::from_min_max(
+        pos2(ui.min_rect().left(), top),
+        pos2(ui.min_rect().right(), ui.cursor().top()),
+    )
+}
+
+/// One line of the report: a mark (a dot without one), the text, and its reason or evidence muted
+/// under it.
+fn item_row(ui: &mut Ui, width: f32, mark: Option<Mark>, text: &str, why: Option<&str>) {
+    let mut job = LayoutJob::default();
+    job.append(text, 0.0, TextFormat::simple(body(14.0), brand::TEXT));
+    if let Some(why) = why.filter(|why| !why.trim().is_empty()) {
+        job.append(&format!("\n{why}"), 0.0, TextFormat::simple(body(13.0), brand::MUTED));
+    }
+    job.wrap = TextWrapping::wrap_at_width((width - ITEM_INDENT).max(1.0));
+    let galley = ui.painter().layout_job(job);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + ITEM_GAP), Sense::hover());
+    let first_mid = rect.top() + galley.rows.first().map_or(8.0, |row| row.rect().center().y);
+    let at = pos2(rect.left() + 7.0, first_mid);
+    match mark {
+        Some(mark) => paint_mark(ui.painter(), at, 14.0, mark, 0.0),
+        None => {
+            ui.painter().circle_filled(at, 2.5, brand::MUTED);
+        }
+    }
+    selectable::galley(ui, pos2(rect.left() + ITEM_INDENT, rect.top()), galley, brand::TEXT);
 }
 
 #[cfg(test)]

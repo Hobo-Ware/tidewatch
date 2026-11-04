@@ -45,6 +45,12 @@ pub struct Poofed {
     /// An old record has none and reads as an edit.
     #[serde(default, skip_serializing_if = "is_edit")]
     pub kind: Kind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<NoteLine>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verified: Vec<NoteLine>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_verified: Vec<NoteLine>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -52,6 +58,34 @@ pub struct StageLine {
     pub name: String,
     pub done: u32,
     pub total: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<StepLine>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StepLine {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default)]
+    pub state: StepState,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepState {
+    #[default]
+    Done,
+    Skipped,
+    Blocked,
+    Open,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NoteLine {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 #[expect(clippy::trivially_copy_pass_by_ref, reason = "serde passes a reference")]
@@ -95,6 +129,9 @@ impl Poofed {
             done: Vec::new(),
             next: Vec::new(),
             stages: Vec::new(),
+            decisions: Vec::new(),
+            verified: Vec::new(),
+            not_verified: Vec::new(),
             kind: Kind::Edit,
         }
     }
@@ -186,7 +223,25 @@ mod tests {
         ];
         full.done = vec!["Added `promo.test.ts`".into()];
         full.next = vec!["Review it".into()];
-        full.stages = vec![StageLine { name: "Build".into(), done: 3, total: 3 }];
+        let step = |text: &str, why: Option<&str>, state| StepLine {
+            text: text.into(),
+            why: why.map(Into::into),
+            state,
+        };
+        full.stages = vec![StageLine {
+            name: "Build".into(),
+            done: 1,
+            total: 3,
+            steps: vec![
+                step("Fix the count", Some("commit 1a2b3c4"), StepState::Done),
+                step("Load test", Some("no staging db"), StepState::Blocked),
+                step("Docs", None, StepState::Open),
+            ],
+        }];
+        let note = |text: &str, why: &str| NoteLine { text: text.into(), why: Some(why.into()) };
+        full.decisions = vec![note("Count per day in UTC", "the chart reads UTC")];
+        full.verified = vec![note("Tests pass", "bun test: 212 passed")];
+        full.not_verified = vec![NoteLine { text: "Live page".into(), why: None }];
         append(&file, entry("older", day(20), None)).unwrap();
         append(&file, full.clone()).unwrap();
         assert_eq!(Log::load(&file).entries[1], full);

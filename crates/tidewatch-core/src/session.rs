@@ -560,7 +560,8 @@ mod tests {
             verdict: Verdict::Passed,
             detail: "`cargo test` passed".into(),
         }];
-        record.stages = vec![StageLine { name: "Build".into(), done: 2, total: 2 }];
+        record.stages =
+            vec![StageLine { name: "Build".into(), done: 2, total: 2, steps: Vec::new() }];
         let mut one = window();
         one.tabs.push(SavedTab::Poofed(Box::new(record.clone())));
         let session = Session { windows: vec![one] };
