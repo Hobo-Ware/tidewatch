@@ -310,6 +310,9 @@ impl NewTab {
 
     /// Puts files into the message at its cursor and hands it the keyboard, as a paste or a drop does in a reply.
     pub(crate) fn insert_files(&mut self, ctx: &egui::Context, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
         let targets: Vec<tokens::Target> = paths.into_iter().map(tokens::Target::File).collect();
         crate::composer::insert_targets(
             ctx,
