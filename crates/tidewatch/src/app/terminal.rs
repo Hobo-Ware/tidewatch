@@ -276,6 +276,15 @@ impl Tidewatch {
                 let rows_clicked = reader_glue::take_tidewatch_clicks(&mut asked);
                 let (reviews, asked): (Vec<_>, Vec<_>) =
                     asked.into_iter().partition(|action| matches!(action, Action::Review(_)));
+                let restart = self.tabs.get(active_id).is_some_and(|tab| {
+                    reader_glue::resume_by(&tab.pane) == reader_glue::ResumeBy::Restart
+                });
+                let (restarts, asked): (Vec<_>, Vec<_>) = asked
+                    .into_iter()
+                    .partition(|action| restart && matches!(action, Action::Resume));
+                if !restarts.is_empty() {
+                    self.restart_agent(active_id, ctx);
+                }
                 let toast =
                     reader_glue::apply(asked, &mut self.tabs, active_id, &mut self.flow, ctx, now);
                 if let Some(text) = toast {

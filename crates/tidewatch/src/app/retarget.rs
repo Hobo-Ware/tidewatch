@@ -375,6 +375,19 @@ impl Tidewatch {
         }
     }
 
+    /// Resume for an agent tab with no shell prompt to type at: the same profile and level start
+    /// again on the tab's session, in place.
+    pub(super) fn restart_agent(&mut self, id: u64, ctx: &egui::Context) {
+        let Some(launched) = self.tabs.agent(id).and_then(|agent| agent.launched.as_ref()) else {
+            self.show_toast("This tab has no session to resume", ctx);
+            return;
+        };
+        let target =
+            Target::Agent { profile: launched.profile_id.clone(), level: Some(launched.level) };
+        let now = ctx.input(|input| input.time);
+        self.start_retarget(Change { tab: id, target, interrupt: true }, now, ctx);
+    }
+
     fn start_retarget(&mut self, change: Change, now: f64, ctx: &egui::Context) {
         let (Some(paths), Some(profiles)) = (self.paths.clone(), self.catalog.profiles().cloned())
         else {

@@ -257,6 +257,7 @@ impl AgentRun {
     /// The agent process starts now.
     pub(crate) fn started(&mut self, notes_file: Option<PathBuf>, now: f64) {
         self.notes_file = notes_file;
+        self.exited_abnormally = false;
         self.tracker.agent_started(now);
         self.started_at = now;
         self.life.push(Life::Started);
@@ -806,6 +807,18 @@ mod tests {
             run.feed(TermSnapshot { exit_code: Some(code), ..Default::default() }, 4.0);
             assert_eq!(run.exited_abnormally(), want, "exit {code}");
         }
+    }
+
+    #[test]
+    fn a_crashed_agent_started_again_is_running_and_no_longer_crashed() {
+        let mut run = running(0.0);
+        run.feed(TermSnapshot { exit_code: Some(-1), ..Default::default() }, 4.0);
+        run.refresh(4.0);
+        assert!(run.exited_abnormally());
+        run.started(None, 10.0);
+        run.resumed(10.0);
+        assert!(!run.exited_abnormally());
+        assert_eq!(run.refresh(10.0).unwrap().to, AgentStatus::Done);
     }
 
     #[test]
