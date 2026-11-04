@@ -55,8 +55,8 @@ pub(crate) struct Group {
     /// The `seq` of that row; the key of the turn's height and of its open list.
     pub(crate) key: u64,
     pub(crate) texts: Vec<usize>,
-    /// Where the answer starts in `texts`: the newest text with the end block, else the text after
-    /// the last call that did real work. Calls that only report to Tidewatch do not split it.
+    /// Where the answer starts in `texts`: the text after the last call that did real work, or the
+    /// newest text with the end block before it. Calls that only report to Tidewatch do not split it.
     answer_from: usize,
     pub(crate) calls: Vec<usize>,
     /// The call the agent is on, or was on last: the newest one without a result, else the newest.
@@ -152,7 +152,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
     let mut open: Option<usize> = None;
     let mut last_boundary = false;
     let mut worked = false;
-    let mut ended = false;
+    let mut last_block: Option<usize> = None;
     for (index, (row, at)) in rows.stamped().enumerate() {
         match &row.kind {
             Kind::User | Kind::Tidewatch(_) | Kind::Review(_) => {
@@ -178,7 +178,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                         closed: false,
                     });
                     worked = false;
-                    ended = false;
+                    last_block = None;
                     out.groups.len() - 1
                 });
                 let group = &mut out.groups[at_group];
@@ -192,11 +192,15 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                     worked |= !tool.reports();
                     add_call(group, index, tool);
                 } else {
-                    let closes_turn = end_block::parse(&row.text).is_some();
-                    if (std::mem::take(&mut worked) && !ended) || closes_turn {
-                        group.answer_from = group.texts.len();
+                    let at_text = group.texts.len();
+                    let has_block = end_block::parse(&row.text).is_some();
+                    if std::mem::take(&mut worked) {
+                        group.answer_from =
+                            if has_block { at_text } else { last_block.unwrap_or(at_text) };
                     }
-                    ended |= closes_turn;
+                    if has_block {
+                        last_block = Some(at_text);
+                    }
                     group.texts.push(index);
                 }
             }
@@ -824,7 +828,13 @@ mod tests {
     #[test]
     fn only_a_real_work_call_turns_the_text_before_it_into_a_folded_note() {
         type Case<'a> = (&'a str, Vec<(&'a str, &'a str)>, Vec<&'a str>, Vec<&'a str>);
-        let cases: [Case<'_>; 12] = [
+        let cases: [Case<'_>; 13] = [
+            (
+                "answer with end block, report, short reply with end block",
+                vec![("text", BLOCK), ("call", REPORT), ("text", BLOCK_TWO)],
+                vec![BLOCK, BLOCK_TWO],
+                vec![],
+            ),
             (
                 "answer with end block, edit, short reply",
                 vec![("text", BLOCK), ("call", "Edit"), ("text", "short reply")],
