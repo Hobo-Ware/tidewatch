@@ -486,7 +486,7 @@ fn a_needs_you_item_of_the_last_message_is_the_waiting_on_you_line_when_the_repo
     assert!(panel.drawn("Waiting on you"));
     assert!(panel.drawn("Should the filters apply to the archived column?"));
     assert!(panel.drawn("Reply in the chat"));
-    assert!(!panel.drawn("Answer above the reply box"), "no card waits above the reply box");
+    assert!(!panel.drawn("Answer in the question card"), "no card waits above the reply box");
 }
 
 #[test]
@@ -703,7 +703,7 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
         "Link each recap line to its cast, and backfill old rows",
         "Waiting on you",
         "When should step 3 run?",
-        "Answer above the reply box",
+        "Answer in the question card",
         "Needs you",
         "Backfill step 2 is running",
         "1 of 4 steps",

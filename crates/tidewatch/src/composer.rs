@@ -75,11 +75,19 @@ pub(crate) fn fit(row_h: f32, text_h: f32, cap: f32) -> Fit {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Mode {
     Reply,
-    Field { height: f32 },
+    /// A reply box inside a card whose own button sends: Enter sends, no Send button of its own.
+    Answer,
+    Field {
+        height: f32,
+    },
 }
 
 impl Mode {
     fn sends(self) -> bool {
+        matches!(self, Self::Reply | Self::Answer)
+    }
+
+    fn has_button(self) -> bool {
         self == Self::Reply
     }
 }
@@ -95,14 +103,17 @@ fn row_height(ui: &Ui) -> f32 {
 }
 
 fn measure(ui: &Ui, text: &str, box_w: f32, (cap, mode, stop): (f32, Mode, bool)) -> Measure {
-    let send_w = if mode.sends() { button_width(ui, SEND, Size::Regular) } else { 0.0 };
-    let stop_w =
-        if mode.sends() && stop { button_width(ui, STOP, Size::Regular) + STOP_GAP } else { 0.0 };
-    let right = if mode.sends() { send_edge() + send_w + stop_w + SEND_GAP } else { PAD_X };
+    let send_w = if mode.has_button() { button_width(ui, SEND, Size::Regular) } else { 0.0 };
+    let stop_w = if mode.has_button() && stop {
+        button_width(ui, STOP, Size::Regular) + STOP_GAP
+    } else {
+        0.0
+    };
+    let right = if mode.has_button() { send_edge() + send_w + stop_w + SEND_GAP } else { PAD_X };
     let wrap = box_w - PAD_X - right;
     let typed = bullets::layout(ui, text, &text_font(), brand::TEXT, (wrap, &None));
     let cap = match mode {
-        Mode::Reply => cap,
+        Mode::Reply | Mode::Answer => cap,
         Mode::Field { height } => height,
     };
     let mut fit = fit(row_height(ui), typed.size().y, cap);
@@ -122,6 +133,12 @@ pub(crate) fn height_with_stop(ui: &Ui, text: &str, column: Rect, stop: bool) ->
     let cap = (column.height() * SHARE).max(BOX_H);
     measure(ui, text, column.width() - 2.0 * INSET, (cap, Mode::Reply, stop)).fit.box_h
         + 2.0 * GAP_Y
+}
+
+/// The height of a [`Mode::Answer`] box `width` wide that grows to `cap` and then scrolls, for a
+/// card that holds the box inside its own row.
+pub(crate) fn answer_box_height(ui: &Ui, text: &str, (width, cap): (f32, f32)) -> f32 {
+    measure(ui, text, width, (cap.max(BOX_H), Mode::Answer, false)).fit.box_h
 }
 
 /// The height a field takes in a column `width` wide when it is asked for `height`.
@@ -436,7 +453,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         let view = Rect::from_min_max(
             pos2(boxed.left() + PAD_X, boxed.top() + BORDER),
             pos2(
-                if mode.sends() {
+                if mode.has_button() {
                     send.left() - measured.stop_w - SEND_GAP
                 } else {
                     boxed.right() - PAD_X
@@ -506,12 +523,12 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         });
         let can_send = mode.sends() && !text.trim().is_empty();
         let mut clicked = false;
-        if mode.sends() {
+        if mode.has_button() {
             ui.scope_builder(UiBuilder::new().max_rect(send), |ui| {
                 clicked = primary_button(ui, SEND, can_send, Size::Regular).clicked();
             });
         }
-        if mode.sends() && stop {
+        if mode.has_button() && stop {
             ui.scope_builder(UiBuilder::new().max_rect(stop_button), |ui| {
                 if quiet_button(ui, STOP, true, Size::Regular)
                     .on_hover_text("Stop the agent's turn (Esc in an empty box)")

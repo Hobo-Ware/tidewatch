@@ -185,7 +185,7 @@ impl Card {
                 .map(|slot| Given {
                     picked: slot.picked.clone(),
                     other: (slot.other == Other::On && !slot.typed.trim().is_empty())
-                        .then(|| slot.typed.trim().to_owned()),
+                        .then(|| crate::tokens::sendable(slot.typed.trim())),
                 })
                 .collect(),
         )
