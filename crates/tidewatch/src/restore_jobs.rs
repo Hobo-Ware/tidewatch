@@ -204,6 +204,7 @@ pub(crate) fn run_reopen(spec: &ReopenSpec) -> Reopened {
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),
+        presence: spec.listener.as_ref().map(|l| l.presence()).unwrap_or_default(),
     };
     let prepared = if spec.fresh { fresh(&input) } else { resume(&input, &spec.session_id) };
     let (started, note) = match prepared {

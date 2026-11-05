@@ -35,10 +35,12 @@ pub mod because {
     pub const MEESEEKS: &str = "a check of this Meeseeks' work did not pass";
     pub const BUILD_WORKFLOW: &str = "you ran Build workflow from this session";
     pub const BACKGROUND_JOB: &str = "a background job has reported no progress";
+    pub const AWAY_ON: &str = "you turned Away on";
+    pub const AWAY_OFF: &str = "you turned Away off";
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 19] = [
+    pub const ALL: [&str; 21] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
@@ -58,6 +60,8 @@ pub mod because {
         MEESEEKS,
         BUILD_WORKFLOW,
         BACKGROUND_JOB,
+        AWAY_ON,
+        AWAY_OFF,
     ];
 }
 
@@ -77,6 +81,7 @@ pub enum Reason {
     Resume,
     StuckJob,
     BackgroundJob,
+    Away,
 }
 
 impl Reason {
@@ -95,6 +100,7 @@ impl Reason {
             Self::Resume => "resume",
             Self::StuckJob => "stuck job",
             Self::BackgroundJob => "background job",
+            Self::Away => "away",
         }
     }
 
@@ -114,7 +120,8 @@ impl Reason {
             | Self::MeeseeksCheck
             | Self::DueToday
             | Self::Workflow
-            | Self::BackgroundJob => None,
+            | Self::BackgroundJob
+            | Self::Away => None,
         }
     }
 
@@ -339,6 +346,8 @@ mod tests {
             (Reason::MeeseeksCheck, false, false),
             (Reason::DueToday, false, false),
             (Reason::BackgroundJob, false, false),
+            (Reason::Away, true, false),
+            (Reason::Away, false, false),
         ];
         for (reason, hand, quiet) in cases {
             let sent = Record { hand, ..Record::new(reason, "why", "text", None) };
@@ -479,6 +488,7 @@ mod tests {
             Reason::Resume,
             Reason::StuckJob,
             Reason::BackgroundJob,
+            Reason::Away,
         ]
         .map(Reason::tag);
         for shown in because::ALL.into_iter().chain(tags) {

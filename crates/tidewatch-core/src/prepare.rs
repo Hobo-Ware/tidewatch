@@ -18,7 +18,7 @@ use crate::extra_worktree;
 use crate::fsutil::{write_atomic, write_private_atomic};
 use crate::guard_shim::{GuardCtx, ensure_shims};
 use crate::guards::Rule;
-use crate::house_style;
+use crate::house_style::{self, Presence};
 use crate::launch::{
     GEMINI_SYSTEM_DEFAULTS_ENV, GEMINI_SYSTEM_SETTINGS_ENV, GeminiSettingsFiles, HookListener,
     Launch, LaunchCtx, LaunchError, StatusLineCtx, claude_settings_json, copilot_plugin_files,
@@ -70,6 +70,8 @@ pub struct PrepareInput<'a> {
     pub listener: Option<HookListener>,
     /// With consent (D14): the folder-trust entry to add for this worktree before the agent starts.
     pub trust: Option<&'a Grant>,
+    /// Whether the owner is away and the Mac is kept awake now: the launch text says so.
+    pub presence: Presence,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -399,6 +401,7 @@ fn write_agent_style(input: &PrepareInput, shared: &Path) -> std::io::Result<Pat
         ),
         TurnEnd::of(input.agent.wiring),
         input.worktree_tab.then(|| workflow_detect::profile_for(paths, input.repo)),
+        input.presence,
     );
     let seen = services::visible_to(&services::services_for(paths, input.repo), Some(input.dir));
     if let Some(block) = services_mcp::house_block(&seen) {
@@ -647,6 +650,7 @@ mod tests {
                 path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
                 listener,
                 trust: None,
+                presence: Presence::default(),
             })
         }
     }
@@ -682,6 +686,7 @@ mod tests {
             path_var: None,
             listener: None,
             trust: None,
+            presence: Presence::default(),
         };
         prepare(&input(None)).unwrap();
         assert!(!style.exists(), "a plain agent with the house style off gets no file");
@@ -719,6 +724,7 @@ mod tests {
             path_var: None,
             listener: None,
             trust: None,
+            presence: Presence::default(),
         };
         let written = || std::fs::read_to_string(&style).unwrap();
         prepare(&input("Sensei https://github.com/acme/web/pull/7")).unwrap();
@@ -754,6 +760,28 @@ mod tests {
         let resumed = prepare_resume(&input, SESSION).unwrap();
         assert_eq!(env_of(&resumed, PROGRESS_ENV), feed.to_str());
         assert_eq!(std::fs::read_to_string(&feed).unwrap(), "{\"name\":\"orders\",\"done\":1}\n");
+    }
+
+    #[test]
+    fn the_launch_text_carries_away_and_the_kept_awake_note_only_when_they_hold() {
+        let fx = Fixture::new();
+        let table = AgentTable::builtin();
+        let claude = profile("claude", Level::Edits);
+        let style = |presence| {
+            let input =
+                PrepareInput { presence, ..resume_input(&fx, &table, "claude", &claude, None) };
+            prepare(&input).unwrap();
+            std::fs::read_to_string(
+                fx.paths.tab_house_style_file(Path::new("/work/web"), "brave-otter"),
+            )
+            .unwrap()
+        };
+        let here = style(Presence::default());
+        assert!(!here.contains(house_style::AWAY_GUIDANCE));
+        assert!(!here.contains(house_style::KEPT_AWAKE_NOTE));
+        let away = style(Presence { away: true, kept_awake: true });
+        assert!(away.contains(house_style::AWAY_GUIDANCE));
+        assert!(away.contains(house_style::KEPT_AWAKE_NOTE));
     }
 
     #[test]
@@ -973,6 +1001,7 @@ mod tests {
             path_var: None,
             listener: None,
             trust: None,
+            presence: Presence::default(),
         })
         .unwrap();
         let text =
@@ -1064,6 +1093,7 @@ mod tests {
                 path_var: None,
                 listener: None,
                 trust: None,
+                presence: Presence::default(),
             };
             let real = prepare(&input).unwrap();
             let shown = preview(&input).unwrap();
@@ -1302,6 +1332,7 @@ mod tests {
             path_var: Some(OsStr::new("/opt/homebrew/bin:/usr/bin:/bin")),
             listener,
             trust: None,
+            presence: Presence::default(),
         }
     }
 
@@ -1843,6 +1874,7 @@ mod tests {
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,
+            presence: Presence::default(),
         })
         .unwrap();
         for push in ["git push origin main", "git push --no-verify origin main"] {
@@ -1876,6 +1908,7 @@ mod tests {
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,
+            presence: Presence::default(),
         };
         let prepared = prepare(&input).unwrap();
         for branch in ["agent/brave-otter", "other"] {
@@ -1931,6 +1964,7 @@ mod tests {
             path_var: Some(OsStr::new(&path)),
             listener: None,
             trust: None,
+            presence: Presence::default(),
         })
         .unwrap();
         let protected = prepared.env.iter().find(|(k, _)| k == PUSH_PROTECTED_ENV);
@@ -1969,6 +2003,7 @@ mod tests {
             path_var: None,
             listener: None,
             trust: None,
+            presence: Presence::default(),
         })
         .unwrap();
         assert!(prepared.env.iter().all(|(k, _)| k != PUSH_PROTECTED_ENV));
@@ -1998,6 +2033,7 @@ mod tests {
                 path_var: None,
                 listener: None,
                 trust: None,
+                presence: Presence::default(),
             })
             .unwrap()
         };

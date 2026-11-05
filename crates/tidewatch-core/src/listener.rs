@@ -114,6 +114,7 @@ struct Shared {
     notes_lock: Mutex<()>,
     ask_timeout_ms: AtomicU64,
     away: AtomicBool,
+    kept_awake: AtomicBool,
     avatar_ask_lock: Mutex<()>,
     avatar_ask_exempt: Mutex<HashSet<u64>>,
     service_lines: Mutex<HashMap<u64, String>>,
@@ -192,6 +193,20 @@ impl Listener {
         self.shared.away.store(away, Ordering::SeqCst);
     }
 
+    /// Whether Tidewatch keeps the Mac awake right now (an Amphetamine session runs).
+    pub fn set_kept_awake(&self, kept_awake: bool) {
+        self.shared.kept_awake.store(kept_awake, Ordering::SeqCst);
+    }
+
+    /// What a launching agent is told about the owner and the Mac.
+    #[must_use]
+    pub fn presence(&self) -> crate::house_style::Presence {
+        crate::house_style::Presence {
+            away: self.is_away(),
+            kept_awake: self.shared.kept_awake.load(Ordering::SeqCst),
+        }
+    }
+
     #[must_use]
     pub fn is_away(&self) -> bool {
         self.shared.away.load(Ordering::SeqCst)
@@ -245,6 +260,7 @@ impl Listener {
             service_told: Mutex::new(HashMap::new()),
             resumes_due: Mutex::new(HashMap::new()),
             away: AtomicBool::new(false),
+            kept_awake: AtomicBool::new(false),
             ask_timeout_ms: AtomicU64::new(
                 u64::try_from(ASK_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
             ),
@@ -985,6 +1001,7 @@ mod tests {
             github: GithubHooks::new().0,
             ask_timeout_ms: AtomicU64::new(1000),
             away: AtomicBool::new(false),
+            kept_awake: AtomicBool::new(false),
         });
         let server = TcpListener::bind(HOOK_BIND).unwrap();
         let peer = TcpStream::connect(server.local_addr().unwrap()).unwrap();
