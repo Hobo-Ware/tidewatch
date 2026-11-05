@@ -85,6 +85,7 @@ pub(crate) enum Command {
     Confirm,
     MoveSessions,
     Amphetamine,
+    Away,
 }
 
 impl Command {
@@ -117,12 +118,13 @@ impl Command {
             | Self::Palette
             | Self::Confirm
             | Self::MoveSessions
-            | Self::Amphetamine => None,
+            | Self::Amphetamine
+            | Self::Away => None,
         }
     }
 
     fn global(self) -> bool {
-        !matches!(self, Self::Confirm | Self::MoveSessions | Self::Amphetamine)
+        !matches!(self, Self::Confirm | Self::MoveSessions | Self::Amphetamine | Self::Away)
     }
 
     /// A bare key the terminal and the text fields also want: it is only read, and so only taken
@@ -335,7 +337,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 36] = [
+pub(crate) const TABLE: [Entry; 37] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -510,6 +512,7 @@ pub(crate) const TABLE: [Entry; 36] = [
     ),
     unbound("move-sessions", "Move sessions to Tidewatch", Group::App, Command::MoveSessions),
     unbound("amphetamine", "Amphetamine", Group::App, Command::Amphetamine),
+    unbound("away", "Toggle away", Group::App, Command::Away),
 ];
 
 fn entry_of(command: Command) -> Option<&'static Entry> {
@@ -656,7 +659,9 @@ impl Gate {
             | Command::OpenRepo => !modal,
             Command::FindCommit => !modal && !self.overview && self.card == Card::History,
             Command::Palette => self.dialog == Dialog::None,
-            Command::Confirm | Command::MoveSessions | Command::Amphetamine => false,
+            Command::Confirm | Command::MoveSessions | Command::Amphetamine | Command::Away => {
+                false
+            }
         }
     }
 }

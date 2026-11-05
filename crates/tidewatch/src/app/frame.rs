@@ -268,6 +268,7 @@ impl Tidewatch {
             Command::Palette => self.toggle_palette(),
             Command::MoveSessions => self.run_move_sessions(ctx),
             Command::Amphetamine => self.run_amphetamine(ctx),
+            Command::Away => self.flip_away(ctx),
             Command::Confirm => {}
         }
     }

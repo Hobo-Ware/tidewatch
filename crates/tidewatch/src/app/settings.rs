@@ -284,7 +284,10 @@ impl Tidewatch {
             guards_repo,
             done_check: DoneCheckPrefs { enabled: self.done_check.enabled() },
             chat: self.chat_prefs,
-            keep_awake: KeepAwakePrefs { enabled: self.keep_awake.enabled() },
+            keep_awake: KeepAwakePrefs {
+                enabled: self.keep_awake.enabled(),
+                away: self.away.is_away(),
+            },
             budget: BudgetState {
                 save_mode: self.budget.enabled(),
                 limits_known: self.budget.limits().is_some(),
