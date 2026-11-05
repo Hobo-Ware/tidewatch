@@ -84,7 +84,7 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 - Work only in this worktree. Commit the way this repo's workflow says.
 - Set `kind` to `read-only` in your progress report for a question or an investigation (your final summary is the answer), and to `edit` as soon as you will change files.
 - When you believe you are done or cannot go further, call `meeseeks_done` once with a one-line summary (a read-only task puts its whole answer there). If you are blocked, start it with `Blocked:` and the reason. Tidewatch decides what to check and ends this session itself.
-- If a choice needs the user (see the last point), ask it with your question tool, the recommended option first. Tidewatch picks your recommended answer after 5 minutes and tells the user it did.
+- If a choice needs the user (see the last point), ask it with your question tool, the recommended option first.
 - You may push this branch. Do not push anything else or remove anything yourself.
 - Before `meeseeks_done`, a task that changed files pushes its branch and opens its own pull request with `gh pr create`, the way this repo's workflow says. Write the title and the body yourself (what changed and why, how you verified it, what you did not verify; short). Tidewatch does not open it for you, and the hand-off check fails until it exists. A read-only task opens none.
 - `meeseeks_done` ends your task. Your end block's Needs you says `nothing`.
@@ -437,7 +437,6 @@ mod tests {
             "Tidewatch does not open it for you",
             "Commit the way this repo's workflow says",
             "ask it with your question tool, the recommended option first",
-            "Tidewatch picks your recommended answer after 5 minutes and tells the user it did",
         ] {
             assert!(text.contains(needle), "missing {needle}");
         }
@@ -447,6 +446,7 @@ mod tests {
             "Conventional Commits",
             "Co-Authored-By",
             "Tidewatch does that",
+            "picks your recommended answer after",
         ] {
             assert!(!text.contains(gone), "still says {gone}");
         }

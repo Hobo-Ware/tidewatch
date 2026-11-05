@@ -32,8 +32,6 @@
 //! - `TIDEWATCH_DEV_SEE=rows,confirm`: give the first agent tab a short chat with Tidewatch's own rows
 //!   (an Auto fix with its why and switch, a live reminder, an old reminder that must not show) and,
 //!   with `confirm`, a conflict message waiting for the first Send of its kind, for captures.
-//! - `TIDEWATCH_DEV_AUTOPICK_SECS=<seconds>`: how long a question waits in a tab that runs on its own
-//!   before Tidewatch answers it (default five minutes).
 
 use std::collections::VecDeque;
 
@@ -87,18 +85,6 @@ pub(crate) fn held_reply() -> AskReply {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::mem::forget(receiver);
     AskReply::new(sender)
-}
-
-/// How long an unanswered question waits in a tab that runs on its own, read once.
-pub(crate) fn autopick_wait() -> f64 {
-    static WAIT: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    *WAIT.get_or_init(|| {
-        std::env::var("TIDEWATCH_DEV_AUTOPICK_SECS")
-            .ok()
-            .and_then(|secs| secs.parse::<f64>().ok())
-            .filter(|secs| *secs > 0.0)
-            .unwrap_or(crate::question_auto::WAIT_SECS)
-    })
 }
 
 /// Whether `TIDEWATCH_DEV_WORKING=1` makes every tab read as working, so a capture can hold a line.

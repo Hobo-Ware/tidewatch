@@ -36,7 +36,7 @@ const QUESTION_KEYS: [&str; 6] =
 const OPTION_KEYS: [&str; 4] = ["label", "description", "tradeoff", "recommended"];
 
 /// What the tool result says when nobody answered in time.
-pub const TIMED_OUT_TEXT: &str = "The user did not answer in time. Take the reversible or recommended option, write it under Decisions in your progress report, and list it in Needs you so the user can reverse it. Then carry on.";
+pub const TIMED_OUT_TEXT: &str = "The user has not answered yet. Do not pick for them: list the question under Needs you in your progress report, carry on with work that does not depend on it, and end your turn when nothing else is left.";
 /// What the tool result says when the question went away unanswered (the tab was closed).
 pub const CLOSED_TEXT: &str = "The question could not be answered because its tab was closed. Proceed with your best judgment.";
 
@@ -117,16 +117,6 @@ impl Question {
         (!picked.is_empty()).then_some(Given { picked, other: None })
     }
 
-    /// The answer Tidewatch gives for a user who stayed away: the agent's picks, else the first option.
-    #[must_use]
-    pub fn auto_pick(&self) -> Given {
-        let picked = self.picks();
-        if picked.is_empty() && !self.options.is_empty() {
-            return Given { picked: vec![0], other: None };
-        }
-        Given { picked, other: None }
-    }
-
     /// A short name for the question in a list: its header, else its text cut to 60 characters.
     #[must_use]
     pub fn name(&self) -> String {
@@ -171,12 +161,6 @@ pub fn all_picks(questions: &[Question]) -> Option<Vec<Given>> {
     questions.iter().map(Question::pick_given).collect()
 }
 
-/// The answers Tidewatch gives for a user who stayed away, one per question.
-#[must_use]
-pub fn auto_picks(questions: &[Question]) -> Vec<Given> {
-    questions.iter().map(Question::auto_pick).collect()
-}
-
 /// What the user gave for one question: the options picked (by index) and a typed answer.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Given {
@@ -187,11 +171,6 @@ pub struct Given {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reply {
     Answered(Vec<Given>),
-    /// Tidewatch answered for a user who stayed away `minutes` minutes; the agent is told so.
-    PickedForYou {
-        given: Vec<Given>,
-        minutes: u64,
-    },
     Skipped,
 }
 
@@ -594,20 +573,6 @@ mod tests {
 
     fn args(value: &Value) -> Map<String, Value> {
         value.as_object().unwrap().clone()
-    }
-
-    #[test]
-    fn a_user_who_stayed_away_gets_the_recommended_option_else_the_first() {
-        let recommended = question("Which?", Select::Single, &["A", "B (Recommended)", "C"]);
-        assert_eq!(recommended.auto_pick(), Given { picked: vec![1], other: None });
-        let none = question("Which?", Select::Single, &["A", "B"]);
-        assert_eq!(none.auto_pick(), Given { picked: vec![0], other: None });
-        let multi = question("Which?", Select::Multi, &["A (Recommended)", "B", "C (Recommended)"]);
-        assert_eq!(multi.auto_pick().picked, [0, 2]);
-        let multi_none = question("Which?", Select::Multi, &["A", "B"]);
-        assert_eq!(multi_none.auto_pick().picked, [0]);
-        let all = auto_picks(&[recommended, none]);
-        assert_eq!(all.iter().map(|given| given.picked.clone()).collect::<Vec<_>>(), [[1], [0]]);
     }
 
     #[test]
@@ -1084,10 +1049,11 @@ mod tests {
     }
 
     #[test]
-    fn a_timed_out_question_tells_the_agent_to_pick_record_and_hand_it_back() {
-        for word in ["reversible or recommended", "Decisions", "Needs you", "reverse it"] {
+    fn a_timed_out_question_waits_for_the_owner_and_never_names_an_option() {
+        for word in ["Do not pick", "Needs you", "does not depend on it"] {
             assert!(TIMED_OUT_TEXT.contains(word), "{word}");
         }
+        assert!(!TIMED_OUT_TEXT.contains("recommended"));
         assert!(TIMED_OUT_TEXT.is_ascii());
     }
 }

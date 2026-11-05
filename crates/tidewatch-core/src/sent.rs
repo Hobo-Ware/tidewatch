@@ -19,7 +19,6 @@ pub mod because {
     pub const AUTO_CHECKS: &str = "Auto fixes failed checks on this PR";
     pub const AUTO_REVIEWS: &str = "Auto answers reviews on this PR";
     pub const AUTO_CONFLICTS: &str = "Auto fixes conflicts on this PR";
-    pub const AUTO_PICK: &str = "nobody answered its question in 5 minutes";
     pub const ASK_PR_CLICK: &str = "you asked the agent to open the pull request";
     pub const ASK_PUSH_CLICK: &str = "you asked the agent to push its new commits";
     pub const LEDGER_STOP: &str = "the progress report was not updated this turn";
@@ -39,11 +38,10 @@ pub mod because {
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 20] = [
+    pub const ALL: [&str; 19] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
-        AUTO_PICK,
         ASK_PR_CLICK,
         ASK_PUSH_CLICK,
         LEDGER_STOP,
@@ -68,7 +66,6 @@ pub mod because {
 pub enum Reason {
     #[serde(alias = "auto_push")]
     AutoFix,
-    AutoPick,
     PullRequest,
     MeeseeksCheck,
     DueToday,
@@ -87,7 +84,6 @@ impl Reason {
     pub fn tag(self) -> &'static str {
         match self {
             Self::AutoFix => "auto",
-            Self::AutoPick => "auto pick",
             Self::PullRequest => "pull request",
             Self::MeeseeksCheck => "Meeseeks check",
             Self::DueToday => "due today",
@@ -114,7 +110,6 @@ impl Reason {
             Self::Resume => Some("Tidewatch resumed the agent"),
             Self::StuckJob => Some("Tidewatch asked the agent about a stuck job"),
             Self::AutoFix
-            | Self::AutoPick
             | Self::PullRequest
             | Self::MeeseeksCheck
             | Self::DueToday
@@ -340,7 +335,6 @@ mod tests {
             (Reason::DoneCheck, true, false),
             (Reason::Avatar, true, false),
             (Reason::AutoFix, false, false),
-            (Reason::AutoPick, false, false),
             (Reason::PullRequest, false, false),
             (Reason::MeeseeksCheck, false, false),
             (Reason::DueToday, false, false),
@@ -391,6 +385,22 @@ mod tests {
             .open(&file)
             .unwrap()
             .write_all(b"{\"id\":9,\"at_ms\":1,\"rea")
+            .unwrap();
+        assert_eq!(load(&file), [kept]);
+    }
+
+    #[test]
+    fn a_record_saved_by_the_removed_auto_pick_is_skipped_and_the_rest_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("sent.jsonl");
+        let kept = record(Reason::DueToday, "start the thing", 5);
+        append(&file, &kept).unwrap();
+        let old = r#"{"id":3,"at_ms":9,"reason":"auto_pick","because":"nobody answered its question in 5 minutes","text":"x"}"#;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .write_all(format!("{old}\n").as_bytes())
             .unwrap();
         assert_eq!(load(&file), [kept]);
     }
@@ -458,7 +468,6 @@ mod tests {
     fn what_the_reader_shows_never_uses_the_internal_word_ledger() {
         let tags = [
             Reason::AutoFix,
-            Reason::AutoPick,
             Reason::PullRequest,
             Reason::MeeseeksCheck,
             Reason::DueToday,
@@ -549,7 +558,6 @@ mod tests {
     fn the_workflow_words_sit_on_the_pull_request_messages_only() {
         let table = [
             (Reason::AutoFix, true),
-            (Reason::AutoPick, false),
             (Reason::PullRequest, true),
             (Reason::MeeseeksCheck, false),
             (Reason::LedgerGuard, false),

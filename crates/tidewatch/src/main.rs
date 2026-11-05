@@ -188,7 +188,6 @@ mod progress_view;
 mod prompt_ghost;
 mod pty;
 mod quake;
-mod question_auto;
 mod question_bulk;
 mod question_card;
 mod question_screen;
