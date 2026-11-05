@@ -5,7 +5,7 @@
 //! shows a live pill under its latest text, or instead of a bubble until its text arrives. The
 //! grouping and the words are `reader_turns`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -613,16 +613,18 @@ fn background_row(ui: &mut Ui, name: &str, result: &TaskResult) {
         });
 }
 
-/// Draws turn `group` of `list`: header, the updates chip, bubble, chips and the open lists. Flips
-/// `open` for the turn when a chip is clicked.
+/// Draws turn `group` of `list`: header with the reply pager, the updates chip, bubble, chips and the
+/// open lists. Flips `open` for the turn when a chip is clicked; `pages` holds the reply each turn
+/// shows, as pages back from its newest.
 pub(crate) fn turn(
     ui: &mut Ui,
     scene: &Scene<'_>,
     list: &[&Row],
     group: &Group,
-    open: &mut HashSet<u64>,
+    (open, pages): (&mut HashSet<u64>, &mut HashMap<u64, usize>),
     width: f32,
 ) {
+    let back = pages.get(&group.key).copied().unwrap_or(0);
     let live = scene.running && !group.closed;
     let has_text = !group.texts.is_empty();
     let listing = open.contains(&group.key) && !group.calls.is_empty();
@@ -650,7 +652,15 @@ pub(crate) fn turn(
                     Some(span) => format!("{} \u{b7} {span}", scene.profile),
                     None => scene.profile.to_owned(),
                 };
+                let paged = group.page_label(back).map(|label| (label, group.page_count()));
                 meta(ui, &head, Align::Min);
+                if let Some((label, count)) = paged {
+                    let row = ui.min_rect();
+                    let row = Rect::from_min_max(pos2(row.left(), row.bottom() - META_H), row.max);
+                    if let Some(older) = pager(ui, row, group.key, &label, (back, count)) {
+                        pages.insert(group.key, reader_turns::step_page(back, count, older));
+                    }
+                }
                 ui.add_space(META_GAP);
             }
             if let Some(label) = &notes_label {
@@ -663,7 +673,7 @@ pub(crate) fn turn(
             }
             if has_text {
                 let fresh = is_fresh(group.ended_ms.or(group.started_ms), scene.fresh_after_ms);
-                bubble(ui, list, group, column, fresh);
+                bubble(ui, list, group.page(back), column, fresh);
             }
             if live {
                 if has_text {
@@ -717,8 +727,46 @@ fn face(ui: &mut Ui, scene: &Scene<'_>) {
     paint_face(ui.ctx(), ui.painter(), rect, face);
 }
 
-fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32, fresh: bool) {
-    if group.answers().is_empty() {
+/// `‹ 2 of 3 ›` at the right end of the header `row`: `Some(true)` when the older arrow is clicked,
+/// `Some(false)` for the newer one. An arrow with nothing past it is drawn faint and takes no click.
+fn pager(
+    ui: &mut Ui,
+    row: Rect,
+    key: u64,
+    label: &str,
+    (back, count): (usize, usize),
+) -> Option<bool> {
+    const ARROW_W: f32 = 18.0;
+    let painter = ui.painter().clone();
+    let galley = painter.layout_no_wrap(label.to_owned(), body(12.0), brand::SOFT);
+    let newer = Rect::from_min_size(pos2(row.right() - ARROW_W, row.top()), vec2(ARROW_W, META_H));
+    let text_x = newer.left() - 4.0 - galley.size().x;
+    let older = Rect::from_min_size(pos2(text_x - 4.0 - ARROW_W, row.top()), vec2(ARROW_W, META_H));
+    painter.galley(pos2(text_x, row.center().y - galley.size().y / 2.0), galley, brand::SOFT);
+    let mut clicked = None;
+    for (rect, is_older, can) in [(older, true, back + 1 < count), (newer, false, back > 0)] {
+        let id = ui.id().with(("page", key, is_older));
+        let response =
+            ui.interact(rect.expand(4.0), id, if can { Sense::click() } else { Sense::hover() });
+        let ink = match (can, response.hovered()) {
+            (false, _) => brand::FAINT,
+            (true, true) => brand::TEAL_TEXT,
+            (true, false) => brand::SOFT,
+        };
+        let c = rect.center();
+        let tip = if is_older { -2.5 } else { 2.5 };
+        let stroke = Stroke::new(1.4, ink);
+        painter.line_segment([c + vec2(-tip, -4.0), c + vec2(tip, 0.0)], stroke);
+        painter.line_segment([c + vec2(tip, 0.0), c + vec2(-tip, 4.0)], stroke);
+        if can && response.clicked() {
+            clicked = Some(is_older);
+        }
+    }
+    clicked
+}
+
+fn bubble(ui: &mut Ui, list: &[&Row], answers: &[usize], column: f32, fresh: bool) {
+    if answers.is_empty() {
         return;
     }
     Frame::new()
@@ -729,7 +777,7 @@ fn bubble(ui: &mut Ui, list: &[&Row], group: &Group, column: f32, fresh: bool) {
         .show(ui, |ui| {
             ui.set_width(column - f32::from(BUBBLE_PAD.left + BUBBLE_PAD.right) - 2.0);
             chat_text(ui, |ui| {
-                for (n, index) in group.answers().iter().enumerate() {
+                for (n, index) in answers.iter().enumerate() {
                     if n > 0 {
                         ui.add_space(JOIN_GAP);
                     }
@@ -980,12 +1028,16 @@ fn notes_list(ui: &mut Ui, list: &[&Row], group: &Group, column: f32) {
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_width(column - 26.0);
-            ui.spacing_mut().item_spacing.y = NOTE_GAP;
-            for index in group.notes() {
-                ui.add(Label::new(
-                    RichText::new(list[*index].text.trim()).font(body(14.0)).color(brand::MUTED),
-                ));
-            }
+            ui.visuals_mut().override_text_color = Some(brand::MUTED);
+            chat_text(ui, |ui| {
+                for (n, index) in group.notes().iter().enumerate() {
+                    if n > 0 {
+                        ui.add_space(NOTE_GAP);
+                    }
+                    let row = list[*index];
+                    ui.push_id(row.seq, |ui| agent_markdown(ui, row.text.trim()));
+                }
+            });
         });
 }
 

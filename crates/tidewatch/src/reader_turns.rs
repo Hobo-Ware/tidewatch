@@ -3,6 +3,7 @@
 //! grouping of rows, the chip counts and the words and times the view prints.
 
 use std::collections::HashSet;
+use std::ops::Range;
 
 use jiff::tz::TimeZone;
 
@@ -55,9 +56,12 @@ pub(crate) struct Group {
     /// The `seq` of that row; the key of the turn's height and of its open list.
     pub(crate) key: u64,
     pub(crate) texts: Vec<usize>,
-    /// Where the answer starts in `texts`: the text after the last call that did real work, or the
-    /// newest text with the end block before it. Calls that only report to Tidewatch do not split it.
-    answer_from: usize,
+    /// The replies, oldest first, as ranges of `texts`. The newest starts at the text after the last
+    /// call that did real work, or at the newest end block before it; an older one is a run of texts
+    /// between two such calls that has an end block. Calls that only report to Tidewatch split none.
+    pages: Vec<Range<usize>>,
+    /// The status updates: the texts in no reply, as indices into the Reader's rows.
+    notes: Vec<usize>,
     pub(crate) calls: Vec<usize>,
     /// The call the agent is on, or was on last: the newest one without a result, else the newest.
     pub(crate) current: Option<usize>,
@@ -74,14 +78,32 @@ impl Group {
         Some((self.ended_ms? - self.started_ms?).max(0))
     }
 
-    /// The texts the bubble shows, in order, from `answer_from` on.
+    /// The texts the bubble shows of the newest reply, in order.
+    #[cfg(test)]
     pub(crate) fn answers(&self) -> &[usize] {
-        &self.texts[self.answer_from..]
+        self.page(0)
     }
 
-    /// The texts before the answer, in order: the progress notes the agent wrote between calls.
+    /// How many replies the turn has: more than one pages with arrows.
+    pub(crate) fn page_count(&self) -> usize {
+        self.pages.len()
+    }
+
+    /// The texts of the reply `back` pages before the newest, in order; the oldest past the start.
+    pub(crate) fn page(&self, back: usize) -> &[usize] {
+        let Some(last) = self.pages.len().checked_sub(1) else { return &[] };
+        &self.texts[self.pages[last - back.min(last)].clone()]
+    }
+
+    /// `2 of 3` for the reply `back` pages before the newest; `None` with one reply or none.
+    pub(crate) fn page_label(&self, back: usize) -> Option<String> {
+        let count = self.pages.len();
+        (count > 1).then(|| format!("{} of {count}", count - back.min(count - 1)))
+    }
+
+    /// The status updates folded under the chip, in order: texts in no reply.
     pub(crate) fn notes(&self) -> &[usize] {
-        &self.texts[..self.answer_from]
+        &self.notes
     }
 
     /// `12 updates`, `1 update`; `None` when the turn has no note to fold.
@@ -146,13 +168,16 @@ pub(crate) struct Layout {
 }
 
 /// Groups `rows` into turns. A turn is every agent row between two user messages; a notice or a
-/// question inside it stays a row of its own.
+/// question inside it stays a row of its own. A notice right after a reply with an end block (a
+/// background task finished, a wakeup) ends the turn, so what the agent does next gets its own time.
 pub(crate) fn layout(rows: &Rows) -> Layout {
     let mut out = Layout { slots: Vec::with_capacity(rows.len()), ..Layout::default() };
     let mut open: Option<usize> = None;
     let mut last_boundary = false;
     let mut worked = false;
     let mut last_block: Option<usize> = None;
+    let mut marks: Vec<Vec<Mark>> = Vec::new();
+    let mut replied = false;
     for (index, (row, at)) in rows.stamped().enumerate() {
         match &row.kind {
             Kind::User | Kind::Tidewatch(_) | Kind::Review(_) => {
@@ -169,7 +194,8 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                         anchor: index,
                         key: row.seq,
                         texts: Vec::new(),
-                        answer_from: 0,
+                        pages: Vec::new(),
+                        notes: Vec::new(),
                         calls: Vec::new(),
                         current: None,
                         chips: Vec::new(),
@@ -179,6 +205,7 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                     });
                     worked = false;
                     last_block = None;
+                    marks.push(Vec::new());
                     out.groups.len() - 1
                 });
                 let group = &mut out.groups[at_group];
@@ -189,20 +216,36 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
                 });
                 group.ended_ms = at.or(group.ended_ms);
                 if let Kind::Tool(tool) = &row.kind {
+                    replied &= tool.reports();
                     worked |= !tool.reports();
                     add_call(group, index, tool);
                 } else {
                     let at_text = group.texts.len();
                     let has_block = end_block::parse(&row.text).is_some();
-                    if std::mem::take(&mut worked) {
-                        group.answer_from =
-                            if has_block { at_text } else { last_block.unwrap_or(at_text) };
+                    let after_work = std::mem::take(&mut worked);
+                    if after_work {
+                        let from = if has_block { at_text } else { last_block.unwrap_or(at_text) };
+                        group.pages.clear();
+                        group.pages.push(from..at_text + 1);
+                    }
+                    match group.pages.last_mut() {
+                        Some(page) => page.end = at_text + 1,
+                        None => group.pages.push(0..1),
                     }
                     if has_block {
                         last_block = Some(at_text);
                     }
+                    replied = has_block;
+                    marks[at_group].push(Mark { after_work, has_block });
                     group.texts.push(index);
                 }
+            }
+            Kind::Notice | Kind::CommandOutput if std::mem::take(&mut replied) => {
+                if let Some(group) = open.take() {
+                    out.groups[group].closed = true;
+                }
+                last_boundary = false;
+                out.slots.push(Slot::Plain);
             }
             Kind::Notice
             | Kind::SlashCommand
@@ -217,7 +260,37 @@ pub(crate) fn layout(rows: &Rows) -> Layout {
     out.awaiting = last_boundary;
     let list: Vec<&Row> = rows.iter().collect();
     settle(&mut out.groups, &list);
+    for (group, marks) in out.groups.iter_mut().zip(&marks) {
+        split_replies(group, marks);
+    }
     out
+}
+
+/// What `layout` knows of one text of a turn.
+#[derive(Clone, Copy)]
+struct Mark {
+    /// A call that did real work came between it and the text before it.
+    after_work: bool,
+    has_block: bool,
+}
+
+/// Before the newest reply, each run of texts between two real-work calls is an older reply when
+/// one of them has an end block, else status updates.
+fn split_replies(group: &mut Group, marks: &[Mark]) {
+    let Some(newest) = group.pages.pop() else { return };
+    let mut start = 0;
+    for at in 1..=newest.start {
+        if at < newest.start && !marks[at].after_work {
+            continue;
+        }
+        if marks[start..at].iter().any(|mark| mark.has_block) {
+            group.pages.push(start..at);
+        } else {
+            group.notes.extend(&group.texts[start..at]);
+        }
+        start = at;
+    }
+    group.pages.push(newest);
 }
 
 fn add_call(group: &mut Group, index: usize, tool: &Tool) {
@@ -239,6 +312,13 @@ fn settle(groups: &mut [Group], list: &[&Row]) {
         group.current = group.calls.iter().rev().find(unfinished).or(group.calls.last()).copied();
         group.chips.sort_by_key(|chip| ToolKind::ALL.iter().position(|kind| *kind == chip.kind));
     }
+}
+
+/// The page after one step from `back` pages before the newest: older or newer, held between the
+/// newest (0) and the oldest of `count`.
+pub(crate) fn step_page(back: usize, count: usize, older: bool) -> usize {
+    let oldest = count.saturating_sub(1);
+    if older { (back + 1).min(oldest) } else { back.min(oldest).saturating_sub(1) }
 }
 
 /// Flips turn `key` in the set of turns whose list is open.
@@ -823,6 +903,8 @@ mod tests {
     const REPORT: &str = "mcp__tidewatch__update_progress";
     const BLOCK: &str =
         "Why.\n\n**Done**\n- checked\n\n**Needs you**\n- add it\n\n**Next**\n- run 15";
+    const NOTHING_NEW: &str =
+        "**Done**\n- Nothing new\n\n**Needs you**\n- nothing\n\n**Next**\n- wait";
     const BLOCK_TWO: &str = "**Done**\n- more\n\n**Needs you**\n- nothing\n\n**Next**\n- wait";
 
     #[test]
@@ -859,7 +941,7 @@ mod tests {
                 "first end block, bash, second end block",
                 vec![("text", BLOCK), ("call", "Bash"), ("text", BLOCK_TWO)],
                 vec![BLOCK_TWO],
-                vec![BLOCK],
+                vec![],
             ),
             (
                 "answer, report, done block",
@@ -949,6 +1031,129 @@ mod tests {
         }
     }
 
+    fn paged(steps: &[(&str, &str)]) -> (Vec<Vec<String>>, Vec<String>, Option<String>) {
+        let mut entries = vec![text(Role::User, "go", 1)];
+        for (n, (kind, what)) in steps.iter().enumerate() {
+            let at = 2 + n as i64;
+            match *kind {
+                "text" => entries.push(text(Role::Assistant, what, at)),
+                _ => finished_call(&mut entries, &format!("c{n}"), what, false, at),
+            }
+        }
+        let rows = rows_of(entries);
+        let group = layout(&rows).groups[0].clone();
+        let list: Vec<&Row> = rows.iter().collect();
+        let words = |indices: &[usize]| -> Vec<String> {
+            indices.iter().map(|i| list[*i].text.clone()).collect()
+        };
+        let pages = (0..group.page_count()).rev().map(|back| words(group.page(back))).collect();
+        (pages, words(group.notes()), group.page_label(0))
+    }
+
+    #[test]
+    fn a_text_with_an_end_block_is_a_reply_that_never_folds_and_the_rest_are_updates() {
+        type Case<'a> = (&'a str, Vec<(&'a str, &'a str)>, Vec<Vec<&'a str>>, Vec<&'a str>);
+        let cases: [Case<'_>; 6] = [
+            ("one reply", vec![("text", BLOCK)], vec![vec![BLOCK]], vec![]),
+            (
+                "an update, then a reply",
+                vec![("text", "reading"), ("call", "Bash"), ("text", BLOCK)],
+                vec![vec![BLOCK]],
+                vec!["reading"],
+            ),
+            (
+                "three replies, the newest short",
+                vec![
+                    ("text", BLOCK),
+                    ("call", "Bash"),
+                    ("text", BLOCK_TWO),
+                    ("call", "Edit"),
+                    ("text", NOTHING_NEW),
+                ],
+                vec![vec![BLOCK], vec![BLOCK_TWO], vec![NOTHING_NEW]],
+                vec![],
+            ),
+            (
+                "reply, report call, reply",
+                vec![("text", BLOCK), ("call", REPORT), ("text", BLOCK_TWO)],
+                vec![vec![BLOCK, BLOCK_TWO]],
+                vec![],
+            ),
+            (
+                "updates between two replies fold, the replies page",
+                vec![
+                    ("text", BLOCK),
+                    ("call", "Bash"),
+                    ("text", "still checking"),
+                    ("call", "Bash"),
+                    ("text", BLOCK_TWO),
+                ],
+                vec![vec![BLOCK], vec![BLOCK_TWO]],
+                vec!["still checking"],
+            ),
+            (
+                "a question and its end block across a report call is one reply",
+                vec![
+                    ("text", "Go?"),
+                    ("call", "Bash"),
+                    ("text", "a or b?"),
+                    ("call", REPORT),
+                    ("text", BLOCK),
+                ],
+                vec![vec!["a or b?", BLOCK]],
+                vec!["Go?"],
+            ),
+        ];
+        for (what, steps, want_pages, want_notes) in cases {
+            let (pages, notes, label) = paged(&steps);
+            assert_eq!(pages, want_pages, "{what}");
+            assert_eq!(notes, want_notes, "{what}");
+            let count = want_pages.len();
+            assert_eq!(label, (count > 1).then(|| format!("{count} of {count}")), "{what}");
+        }
+    }
+
+    #[test]
+    fn paging_back_stops_at_the_oldest_reply_and_labels_where_it_is() {
+        let steps = [
+            ("text", BLOCK),
+            ("call", "Bash"),
+            ("text", BLOCK_TWO),
+            ("call", "Bash"),
+            ("text", NOTHING_NEW),
+        ];
+        let mut entries = vec![text(Role::User, "go", 1)];
+        for (n, (kind, what)) in steps.iter().enumerate() {
+            match *kind {
+                "text" => entries.push(text(Role::Assistant, what, 2 + n as i64)),
+                _ => finished_call(&mut entries, &format!("c{n}"), what, false, 2 + n as i64),
+            }
+        }
+        let rows = rows_of(entries);
+        let group = layout(&rows).groups[0].clone();
+        let labels: Vec<_> = (0..5).map(|back| group.page_label(back)).collect();
+        let want = ["3 of 3", "2 of 3", "1 of 3", "1 of 3", "1 of 3"];
+        assert_eq!(labels, want.map(|label| Some(label.to_owned())));
+        assert_eq!(group.page(9), group.page(2));
+    }
+
+    #[test]
+    fn a_step_pages_older_or_newer_and_stops_at_both_ends() {
+        let cases = [
+            (0, 3, true, 1),
+            (1, 3, true, 2),
+            (2, 3, true, 2),
+            (2, 3, false, 1),
+            (0, 3, false, 0),
+            (7, 3, false, 1),
+            (0, 1, true, 0),
+            (0, 0, true, 0),
+        ];
+        for (back, count, older, want) in cases {
+            assert_eq!(step_page(back, count, older), want, "{back} of {count}, older {older}");
+        }
+    }
+
     #[test]
     fn a_question_before_the_report_call_shows_with_the_done_block_as_one_answer() {
         let mut entries = vec![
@@ -986,6 +1191,48 @@ mod tests {
         assert_eq!(layout.groups.len(), 1, "the notice starts no turn of the owner's");
         assert!(!layout.groups[0].closed && !layout.awaiting);
         assert_eq!(layout.groups[0].answers().len(), 3);
+    }
+
+    #[test]
+    fn a_notice_after_a_finished_reply_starts_a_turn_with_its_own_time_and_one_mid_work_does_not() {
+        use tidewatch_core::transcript::{Parser, Source};
+        let notice = r#"{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n<summary>Background command finished</summary>\n</task-notification>"}}"#;
+        let cases = [
+            ("after an end block", vec![text(Role::Assistant, BLOCK, 2)], 2),
+            (
+                "after a report call",
+                {
+                    let mut e = vec![text(Role::Assistant, BLOCK, 2)];
+                    finished_call(&mut e, "r", REPORT, false, 3);
+                    e
+                },
+                2,
+            ),
+            ("after a plain note", vec![text(Role::Assistant, "waiting on the build", 2)], 1),
+            (
+                "after a real call",
+                {
+                    let mut e = vec![text(Role::Assistant, BLOCK, 2)];
+                    finished_call(&mut e, "b", "Bash", false, 3);
+                    e
+                },
+                1,
+            ),
+        ];
+        for (what, before, groups) in cases {
+            let mut entries = vec![text(Role::User, "go", 1)];
+            entries.extend(before);
+            entries.extend(Parser::new(Source::Claude).feed_line(notice));
+            entries.push(text(Role::Assistant, BLOCK_TWO, 50));
+            let layout = layout(&rows_of(entries));
+            assert_eq!(layout.groups.len(), groups, "{what}");
+            let last = layout.groups.last().unwrap();
+            assert_eq!(last.ended_ms, Some(50), "{what}");
+            if groups == 2 {
+                assert!(layout.groups[0].closed && !last.closed, "{what}");
+                assert_eq!(last.started_ms, Some(50), "{what}");
+            }
+        }
     }
 
     #[test]
