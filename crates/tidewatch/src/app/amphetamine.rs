@@ -80,6 +80,7 @@ impl Tidewatch {
             self.toast = Some(Toast::voice(voice.lines(), now));
             ctx.request_repaint();
         }
+        self.tell_listener_awake();
         if let Some(seconds) = wake {
             request_wake(ctx, seconds);
         }

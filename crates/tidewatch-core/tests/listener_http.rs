@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tidewatch_core::events::{TabEvent, TabMessage};
+use tidewatch_core::house_style::Presence;
 use tidewatch_core::launch::HookListener;
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::mcp::TabRole;
@@ -1038,4 +1039,15 @@ fn the_listener_remembers_whether_the_owner_is_away() {
     assert!(h.listener.is_away());
     h.listener.set_away(false);
     assert!(!h.listener.is_away());
+}
+
+#[test]
+fn the_presence_a_launching_agent_is_told_follows_away_and_the_kept_awake_mac() {
+    let h = Harness::start();
+    assert_eq!(h.listener.presence(), Presence::default());
+    h.listener.set_away(true);
+    h.listener.set_kept_awake(true);
+    assert_eq!(h.listener.presence(), Presence { away: true, kept_awake: true });
+    h.listener.set_away(false);
+    assert_eq!(h.listener.presence(), Presence { away: false, kept_awake: true });
 }

@@ -100,6 +100,23 @@ Don't ask to commit, push, open or update a pull request, or fix CI. Decide prod
 Ask with your question tool only before something that loses data, spends money or cannot be undone outside this repo, or when this repo's rules tell you to stop, and keep working on whatever does not depend on the answer.
 ";
 
+pub const AWAY_GUIDANCE: &str = "\
+## The user is away
+
+Make your own decisions: do not ask the user and do not call the question tool. Write each decision and why under Decisions in your progress report, and keep working through the open steps. Tidewatch never tells you which option to pick.
+";
+
+pub const KEPT_AWAKE_NOTE: &str = "\
+Tidewatch keeps this Mac awake, also with the lid closed. Never ask the user to keep the lid open.
+";
+
+/// What the owner's presence adds to the launch text: Away, and a Mac Tidewatch keeps awake.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Presence {
+    pub away: bool,
+    pub kept_awake: bool,
+}
+
 /// Which extra block an agent's house style gets after the launch text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
@@ -184,7 +201,7 @@ pub fn compose(house_style: &str, must_dos: Option<&str>) -> String {
 
 #[must_use]
 pub fn compose_for(house_style: &str, must_dos: Option<&str>, role: Role) -> String {
-    compose_for_cli(house_style, must_dos, role, TurnEnd::SentBack, None)
+    compose_for_cli(house_style, must_dos, role, TurnEnd::SentBack, None, Presence::default())
 }
 
 /// `workflow` is the repo's profile; `None` (no repo: a plain folder) leaves out "This repo's
@@ -196,6 +213,7 @@ pub fn compose_for_cli(
     role: Role,
     turn_end: TurnEnd,
     workflow: Option<Workflow>,
+    presence: Presence,
 ) -> String {
     let workflow = workflow.map(|workflow| format!("\n{}", workflow_section(role, workflow)));
     let one_task = match role {
@@ -203,8 +221,10 @@ pub fn compose_for_cli(
         Role::Autonomous => format!("\n{AUTONOMOUS_GUIDANCE}"),
         Role::Meeseeks | Role::MeeseeksOnPr => format!("\n{}", meeseeks_block(role)),
     };
+    let away = if presence.away { format!("\n{AWAY_GUIDANCE}") } else { String::new() };
+    let awake = if presence.kept_awake { format!("\n{KEPT_AWAKE_NOTE}") } else { String::new() };
     format!(
-        "{}\n\n{INTRO}\n{}\n{ASKING}\n{JOBS}{}{one_task}",
+        "{}\n\n{INTRO}\n{}\n{ASKING}\n{JOBS}{}{one_task}{away}{awake}",
         house_style.trim_end(),
         progress_prompt::section(must_dos, turn_end),
         workflow.unwrap_or_default(),
@@ -344,6 +364,41 @@ mod tests {
     }
 
     #[test]
+    fn away_adds_the_decide_yourself_block_and_not_away_leaves_it_out() {
+        for role in ROLES {
+            let with = |presence| {
+                compose_for_cli("be brief", None, role, TurnEnd::SentBack, None, presence)
+            };
+            let here = with(Presence::default());
+            let away = with(Presence { away: true, kept_awake: false });
+            assert!(!here.contains("## The user is away"), "{role:?}");
+            assert!(away.contains(AWAY_GUIDANCE), "{role:?}");
+            assert!(away.contains("do not call the question tool"), "{role:?}");
+            assert!(away.contains("under Decisions in your progress report"), "{role:?}");
+            assert!(!away.contains(KEPT_AWAKE_NOTE), "{role:?}");
+        }
+    }
+
+    #[test]
+    fn a_kept_awake_mac_is_said_to_stay_awake_with_the_lid_closed_only_while_it_is() {
+        let with = |presence| {
+            compose_for_cli("be brief", None, Role::Agent, TurnEnd::SentBack, None, presence)
+        };
+        let awake = with(Presence { away: false, kept_awake: true });
+        assert!(awake.contains("Never ask the user to keep the lid open."));
+        assert!(!awake.contains("## The user is away"));
+        assert!(!with(Presence::default()).contains("lid"));
+    }
+
+    #[test]
+    fn the_away_text_never_names_an_option_and_has_no_dashes() {
+        for text in [AWAY_GUIDANCE, KEPT_AWAKE_NOTE] {
+            assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "{text}");
+        }
+        assert!(!AWAY_GUIDANCE.to_lowercase().contains("recommend"));
+    }
+
+    #[test]
     fn the_launch_text_of_a_claude_agent_tab_stays_within_450_words() {
         let text = compose_for_cli(
             DEFAULT_HOUSE_STYLE,
@@ -351,6 +406,7 @@ mod tests {
             Role::Agent,
             TurnEnd::SentBack,
             Some(Workflow::default()),
+            Presence::default(),
         );
         assert!(words(&text) <= 450, "{} words:\n{text}", words(&text));
     }
@@ -359,8 +415,15 @@ mod tests {
     fn no_built_in_text_names_a_method_unless_the_profile_filled_it() {
         for role in ROLES {
             for turn_end in [TurnEnd::SentBack, TurnEnd::Reminded] {
-                let text =
-                    compose_for_cli(DEFAULT_HOUSE_STYLE, None, role, turn_end, None).to_lowercase();
+                let text = compose_for_cli(
+                    DEFAULT_HOUSE_STYLE,
+                    None,
+                    role,
+                    turn_end,
+                    None,
+                    Presence::default(),
+                )
+                .to_lowercase();
                 for word in METHOD_WORDS {
                     assert!(!text.contains(word), "{role:?} names {word:?}");
                 }
@@ -379,7 +442,14 @@ mod tests {
         };
         for role in ROLES {
             let with = |workflow| {
-                compose_for_cli(DEFAULT_HOUSE_STYLE, None, role, TurnEnd::SentBack, Some(workflow))
+                compose_for_cli(
+                    DEFAULT_HOUSE_STYLE,
+                    None,
+                    role,
+                    TurnEnd::SentBack,
+                    Some(workflow),
+                    Presence::default(),
+                )
             };
             let rebased = with(rebase);
             assert_eq!(rebased.matches("## This repo's workflow").count(), 1, "{role:?}");
@@ -410,6 +480,7 @@ mod tests {
                 role,
                 TurnEnd::SentBack,
                 Some(Workflow::default()),
+                Presence::default(),
             );
             let told = text.contains(PUSH_LINE);
             assert_eq!(told, matches!(role, Role::Agent | Role::Autonomous), "{role:?}");
