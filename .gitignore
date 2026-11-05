@@ -1,4 +1,12 @@
 /target
 .DS_Store
 *.log
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/tidewatch-reader-turns/
+!.claude/skills/tidewatch-ui-pass/
+!.claude/skills/tidewatch-chat-composer/
+!.claude/skills/tidewatch-keep-awake/
+!.claude/skills/tidewatch-question-menu/
+.claude/skills/*/references/

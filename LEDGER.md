@@ -9,6 +9,10 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
+## 2026-11-05
+
+- **Five agent skills are now in the repo, so anyone picking up issue #358 gets them.** `.claude/` stayed ignored except `.claude/skills/` for `tidewatch-reader-turns`, `tidewatch-ui-pass`, `tidewatch-chat-composer`, `tidewatch-keep-awake` and `tidewatch-question-menu`; their `references/` folders stay local. Home-folder paths in the UI skill became neutral wording.
+
 ## 2026-11-04
 
 - **Waiting on you no longer points at a card that is not there.** Owner, with a screenshot: "It says answer above reply box, there's not reply box IDK so it looks like a red herring message". Cause: the Progress panel's Waiting on you block falls back to the Needs you lines of the agent's last message, and always said "Answer above the reply box", but the Reader's card there is built only from the report's own questions. Now a line from the chat says "Reply in the chat"; a report question keeps the card hint. Test: the panel draws "Reply in the chat" and not the card hint for a chat line; the model test covers both hints.
