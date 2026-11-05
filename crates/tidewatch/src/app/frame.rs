@@ -82,6 +82,9 @@ impl Tidewatch {
         }
         reader_glue::start(&mut self.tabs, ctx, &self.dev_reader);
         reader_glue::drain(&mut self.tabs, &mut self.flow, ctx, now);
+        if self.away.is_away() && reader_glue::answer_all_while_away(&mut self.tabs, now) {
+            ctx.request_repaint();
+        }
         self.drive_services(ctx);
         self.drive_workflow(ctx);
         self.drive_house_style(ctx, now);

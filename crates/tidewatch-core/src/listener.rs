@@ -726,6 +726,7 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
             timeout: Duration::from_millis(shared.ask_timeout_ms.load(Ordering::SeqCst)),
             poll: ASK_POLL,
             alive: &alive,
+            away: &|| shared.away.load(Ordering::SeqCst),
         },
         workflow: &workflow,
         after_save: &after_save,
