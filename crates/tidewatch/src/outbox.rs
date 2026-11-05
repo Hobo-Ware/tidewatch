@@ -174,6 +174,8 @@ struct Lane {
     hold_until: Option<f64>,
     queue: VecDeque<Send>,
     auto_sends: u32,
+    /// How many keep-going messages went in a row while the owner was away.
+    going: u32,
     no_box_since: Option<f64>,
     typed_since: Option<f64>,
 }
@@ -358,6 +360,23 @@ impl Outbox {
     pub(crate) fn user_spoke(&mut self, tab: u64) {
         if let Some(lane) = self.lanes.get_mut(&tab) {
             lane.auto_sends = 0;
+            lane.going = 0;
+        }
+    }
+
+    pub(crate) fn going(&self, tab: u64) -> u32 {
+        self.lanes.get(&tab).map_or(0, |lane| lane.going)
+    }
+
+    pub(crate) fn set_going(&mut self, tab: u64, going: u32) {
+        if going > 0 || self.lanes.contains_key(&tab) {
+            self.lane(tab).going = going;
+        }
+    }
+
+    pub(crate) fn reset_going(&mut self) {
+        for lane in self.lanes.values_mut() {
+            lane.going = 0;
         }
     }
 
@@ -498,6 +517,19 @@ mod tests {
         outbox.user_spoke(TAB);
         assert!(!outbox.paused(TAB));
         assert_eq!(offer(&mut outbox, &send, &AgentStatus::Done, 500.0), Offer::Go);
+    }
+
+    #[test]
+    fn the_keep_going_count_is_kept_per_tab_and_the_owner_speaking_or_a_reset_clears_it() {
+        let mut outbox = Outbox::default();
+        assert_eq!(outbox.going(TAB), 0);
+        outbox.set_going(TAB, 2);
+        outbox.set_going(TAB + 1, 1);
+        assert_eq!((outbox.going(TAB), outbox.going(TAB + 1)), (2, 1));
+        outbox.user_spoke(TAB);
+        assert_eq!((outbox.going(TAB), outbox.going(TAB + 1)), (0, 1));
+        outbox.reset_going();
+        assert_eq!(outbox.going(TAB + 1), 0);
     }
 
     #[test]

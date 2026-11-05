@@ -37,10 +37,11 @@ pub mod because {
     pub const BACKGROUND_JOB: &str = "a background job has reported no progress";
     pub const AWAY_ON: &str = "you turned Away on";
     pub const AWAY_OFF: &str = "you turned Away off";
+    pub const KEEP_GOING: &str = "the user is away and the progress report has open steps";
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 21] = [
+    pub const ALL: [&str; 22] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
@@ -62,6 +63,7 @@ pub mod because {
         BACKGROUND_JOB,
         AWAY_ON,
         AWAY_OFF,
+        KEEP_GOING,
     ];
 }
 
@@ -82,6 +84,7 @@ pub enum Reason {
     StuckJob,
     BackgroundJob,
     Away,
+    KeepGoing,
 }
 
 impl Reason {
@@ -101,6 +104,7 @@ impl Reason {
             Self::StuckJob => "stuck job",
             Self::BackgroundJob => "background job",
             Self::Away => "away",
+            Self::KeepGoing => "keep going",
         }
     }
 
@@ -121,7 +125,8 @@ impl Reason {
             | Self::DueToday
             | Self::Workflow
             | Self::BackgroundJob
-            | Self::Away => None,
+            | Self::Away
+            | Self::KeepGoing => None,
         }
     }
 
@@ -348,6 +353,7 @@ mod tests {
             (Reason::BackgroundJob, false, false),
             (Reason::Away, true, false),
             (Reason::Away, false, false),
+            (Reason::KeepGoing, false, false),
         ];
         for (reason, hand, quiet) in cases {
             let sent = Record { hand, ..Record::new(reason, "why", "text", None) };
@@ -489,6 +495,7 @@ mod tests {
             Reason::StuckJob,
             Reason::BackgroundJob,
             Reason::Away,
+            Reason::KeepGoing,
         ]
         .map(Reason::tag);
         for shown in because::ALL.into_iter().chain(tags) {
