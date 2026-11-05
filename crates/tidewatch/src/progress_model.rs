@@ -354,7 +354,7 @@ impl Asked {
     /// The line under the question: where to answer, and how many more wait.
     pub(crate) fn hint(&self) -> String {
         let place = match self.answer_at {
-            AnswerAt::Card => "Answer above the reply box",
+            AnswerAt::Card => "Answer in the question card",
             AnswerAt::Chat => "Reply in the chat",
         };
         match self.more {
@@ -1010,7 +1010,7 @@ mod tests {
             from_report,
             Asked { text: "Pick a base".into(), more: 1, answer_at: AnswerAt::Card }
         );
-        assert_eq!(from_report.hint(), "Answer above the reply box \u{b7} 1 more question");
+        assert_eq!(from_report.hint(), "Answer in the question card \u{b7} 1 more question");
         let none = ledger("# Goal\nx\n\n## Needs you\n- Nothing\n");
         let chat = ["Which base?".to_owned(), "And the name?".to_owned()];
         let from_chat = asked(&none, &chat).unwrap();

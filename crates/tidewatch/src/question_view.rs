@@ -8,17 +8,19 @@ use std::sync::Arc;
 use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::{
     Align, Color32, CornerRadius, Frame, Galley, Id, Key, Layout, Margin, Modifiers, Painter, Pos2,
-    Rect, Response, Sense, Shape, Stroke, StrokeKind, TextEdit, Ui, UiBuilder, pos2, vec2,
+    Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use tidewatch_core::question::{Question, QuestionOption, Select};
 
 use crate::brand;
+use crate::composer::{self, Draft, Mode, Spec};
 use crate::question_card::{Card, CardKey, Effect, MAX_KEYED, Row};
 use crate::quick_reply::Quick;
 use crate::reader_keys::Answer;
 use crate::reader_rows::{Asked, QuestionRow, ToolKind};
 use crate::reader_turns;
 use crate::reader_view::{INSET, ellipsized};
+use crate::recall::Recall;
 use crate::screen_kit::TEXT_SECONDARY;
 use crate::screen_kit::{
     Size, TEXT_TAG, body, heading, icon_button, mono, primary_button, quiet_button,
@@ -36,6 +38,7 @@ const NUMBER_W: f32 = 36.0;
 const HEADER_H: f32 = 16.0;
 const BLOCK_GAP: f32 = 16.0;
 const OTHER_H: f32 = 40.0;
+const OTHER_BOX_PAD: f32 = 8.0;
 const ESTIMATED_H: f32 = 300.0;
 const MIN_LIST_H: f32 = 120.0;
 const CHROME_H: f32 = 200.0;
@@ -66,6 +69,8 @@ pub(crate) struct Live {
     pub(crate) card: Card,
     /// How many waiting questions of the tab the agent's picks answer, set before each draw.
     pub(crate) picks: usize,
+    /// The sent messages the Something else box walks with Up and Down, apart from the reply box's.
+    pub(crate) recall: Recall,
     fold: Fold,
     height: f32,
     focus_other: bool,
@@ -84,6 +89,7 @@ impl Live {
             seq,
             card,
             picks: 0,
+            recall: Recall::default(),
             fold: Fold::Folded,
             height: ESTIMATED_H,
             focus_other: false,
@@ -319,11 +325,13 @@ fn option_text_width(row_w: f32) -> f32 {
 struct Drawn {
     clicked: Option<Row>,
     field: Option<Rect>,
+    /// The text the Something else box sent: Enter or Cmd+Enter in it, or its Send button.
+    sent: Option<String>,
 }
 
-fn draw_single(ui: &mut Ui, live: &mut Live, id: Id) -> Drawn {
+fn draw_single(ui: &mut Ui, live: &mut Live, id: Id, cap: f32) -> Drawn {
     let width = ui.available_width();
-    let mut drawn = Drawn { clicked: None, field: None };
+    let mut drawn = Drawn { clicked: None, field: None, sent: None };
     let question = live.card.question().clone();
     let rows = live.card.rows();
     let cursor = live.card.cursor();
@@ -350,10 +358,17 @@ fn draw_single(ui: &mut Ui, live: &mut Live, id: Id) -> Drawn {
                 }
             }
             Row::Other => {
-                let (rect, response) = ui.allocate_exact_size(vec2(width, OTHER_H), Sense::click());
                 let on = live.card.other_is_on();
+                let inner_w = width - 2.0 * ROW_PAD_X;
+                let box_h = if on {
+                    composer::answer_box_height(ui, live.card.typed_mut(), (inner_w, cap))
+                } else {
+                    0.0
+                };
+                let height = if on { OTHER_H + box_h + OTHER_BOX_PAD } else { OTHER_H };
+                let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
                 paint_other_box(ui.painter(), rect, on, cursor == index || response.hovered());
-                let mid = rect.center().y;
+                let mid = rect.top() + OTHER_H / 2.0;
                 let label = ui.painter().layout_no_wrap(
                     "Something else".to_owned(),
                     body(14.0),
@@ -372,15 +387,19 @@ fn draw_single(ui: &mut Ui, live: &mut Live, id: Id) -> Drawn {
                         &(index + 1).to_string(),
                     );
                 }
-                let field = Rect::from_min_max(
-                    pos2(text_x + label.size().x + 12.0, rect.top() + 4.0),
-                    pos2(rect.right() - ROW_PAD_X - NUMBER_W, rect.bottom() - 4.0),
-                );
-                drawn.field = Some(field);
+                if on {
+                    let box_rect = Rect::from_min_size(
+                        pos2(text_x, rect.top() + OTHER_H - 4.0),
+                        vec2(inner_w, box_h),
+                    );
+                    drawn.field = Some(box_rect);
+                    drawn.sent = other_composer(ui, live, id, box_rect);
+                } else {
+                    paint_other_preview(ui, live, rect, text_x + label.size().x + 12.0, mid);
+                }
                 if response.on_hover_cursor(egui::CursorIcon::Text).clicked() {
                     drawn.clicked = Some(*row);
                 }
-                other_field(ui, live, id, field);
             }
         }
         ui.add_space(ROW_GAP);
@@ -420,33 +439,43 @@ fn paint_other_box(painter: &Painter, rect: Rect, on: bool, hot: bool) {
     ));
 }
 
-fn other_field(ui: &mut Ui, live: &mut Live, id: Id, field: Rect) {
-    let inner = field;
-    let focus_id = id.with("other");
-    let mut text = live.card.typed_mut().clone();
-    let response = ui.put(
-        inner,
-        TextEdit::singleline(&mut text)
-            .id(focus_id)
-            .frame(Frame::NONE)
-            .hint_text("Type your own answer")
-            .font(body(14.0))
-            .text_color(brand::TEXT)
-            .desired_width(inner.width())
-            .vertical_align(Align::Center),
-    );
-    if std::mem::take(&mut live.focus_other) {
-        response.request_focus();
+fn paint_other_preview(ui: &Ui, live: &mut Live, rect: Rect, from: f32, mid: f32) {
+    let typed = live.card.typed_mut().trim().lines().next().unwrap_or_default().to_owned();
+    let (text, ink) = if typed.is_empty() {
+        ("Type your own answer".to_owned(), brand::FAINT)
+    } else {
+        (crate::tokens::plain(&typed), brand::MUTED)
+    };
+    let room = rect.right() - ROW_PAD_X - NUMBER_W - from;
+    let galley = ellipsized(ui.painter(), &text, body(14.0), ink, room);
+    ui.painter().galley(pos2(from, mid - galley.size().y / 2.0), galley, ink);
+}
+
+/// The Something else box: the shared composer over the card's typed answer. What it sent comes
+/// back, and the typed answer keeps it.
+fn other_composer(ui: &mut Ui, live: &mut Live, id: Id, at: Rect) -> Option<String> {
+    let mut child = ui.new_child(UiBuilder::new().max_rect(at));
+    let draft = Draft {
+        text: live.card.typed_mut(),
+        focus: &mut live.focus_other,
+        recall: Some(&mut live.recall),
+    };
+    let spec = Spec {
+        id: id.with("other"),
+        hint: "Type your own answer",
+        enabled: true,
+        commands: &[],
+        ghost: None,
+        mode: Mode::Answer,
+        stop: false,
+        held: 0,
+        files: None,
+    };
+    let sent = composer::show(&mut child, draft, &spec).sent;
+    if let Some(text) = &sent {
+        live.card.typed_mut().clone_from(text);
     }
-    if response.changed() {
-        *live.card.typed_mut() = text;
-        if !live.card.other_is_on() {
-            live.card.choose(Row::Other);
-        }
-    }
-    if response.gained_focus() && !live.card.other_is_on() {
-        live.card.choose(Row::Other);
-    }
+    sent
 }
 
 fn draw_multi(ui: &mut Ui, live: &Live) -> Option<Row> {
@@ -648,7 +677,7 @@ pub(crate) fn live_card(
     let frame = card_frame(20, 20);
     let list_max = (max_h - CHROME_H).max(MIN_LIST_H);
     let mut effect = Effect::Nothing;
-    let mut drawn = Drawn { clicked: None, field: None };
+    let mut drawn = Drawn { clicked: None, field: None, sent: None };
     let mut multi_click = None;
     let inner = frame.show(&mut child, |ui| {
         ui.set_width(width - 2.0 * f32::from(CARD_PAD_X));
@@ -668,7 +697,7 @@ pub(crate) fn live_card(
             .max_height(list_max)
             .auto_shrink([false, true])
             .show(ui, |ui| match live.card.question().select {
-                Select::Single => drawn = draw_single(ui, live, id),
+                Select::Single => drawn = draw_single(ui, live, id, max_h * composer::SHARE),
                 Select::Multi => multi_click = draw_multi(ui, live),
             });
         ui.add_space(12.0);
@@ -708,7 +737,18 @@ pub(crate) fn live_card(
         live.reclaim = true;
         ui.ctx().request_repaint();
     }
-    let in_field = ui.ctx().memory(egui::Memory::focused) == Some(id.with("other"));
+    if drawn.sent.is_some() {
+        live.focus_other = false;
+        if live.card.is_last() {
+            if live.card.can_send() {
+                effect = live.card.send();
+            }
+        } else if live.card.answered() {
+            live.card.next();
+            live.reclaim = true;
+            ui.ctx().request_repaint();
+        }
+    }
     if focus.has_focus() {
         ui.ctx().memory_mut(|memory| {
             memory.set_focus_lock_filter(
@@ -722,26 +762,17 @@ pub(crate) fn live_card(
             );
         });
     }
-    if focus.has_focus() || in_field {
-        for key in read_keys(ui, focus.has_focus()) {
+    if focus.has_focus() {
+        for key in read_keys(ui, true) {
             let keyed = live.card.key(key);
             if keyed == Effect::TypeOther {
                 live.focus_other = true;
+                ui.ctx().request_repaint();
             }
             if matches!(keyed, Effect::Send(_))
                 || matches!(keyed, Effect::GoWithPicks) && live.picks > 0
             {
                 effect = keyed;
-            }
-        }
-        if in_field && ui.input(|i| i.key_pressed(Key::Enter)) && !ui.input(|i| i.modifiers.command)
-        {
-            if live.card.is_last() {
-                if live.card.can_send() {
-                    effect = live.card.send();
-                }
-            } else {
-                live.card.next();
             }
         }
     }
@@ -1136,7 +1167,7 @@ pub(crate) fn permission_card(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{Event, PointerButton, RawInput};
+    use egui::{Event, PointerButton, RawInput, TextEdit};
 
     fn option(label: &str) -> QuestionOption {
         QuestionOption::new(label)
@@ -1321,6 +1352,91 @@ mod tests {
         screen.click(pos2(300.0, 765.0));
         screen.frame(vec![key(Key::Num1, Modifiers::NONE)]);
         assert!(!screen.live.card.is_picked(0));
+    }
+
+    fn single_choice_screen() -> Screen {
+        let mut screen = Screen::new();
+        screen.live = opened(Live::new(
+            9,
+            Card::new(vec![Question {
+                text: "Where?".into(),
+                header: None,
+                decision: None,
+                select: Select::Single,
+                options: vec![option("Stage"), option("Run")],
+            }]),
+        ));
+        screen
+    }
+
+    fn the_box_has_the_keyboard(screen: &Screen) -> bool {
+        screen.ctx.memory(egui::Memory::focused).is_some_and(|id| id != Id::new("composer"))
+            && screen.live.card.other_is_on()
+    }
+
+    #[test]
+    fn picking_something_else_opens_a_multi_line_box_that_takes_the_keyboard_once() {
+        let mut screen = single_choice_screen();
+        screen.settle();
+        let before = screen.live.height;
+        screen.frame(vec![key(Key::Num3, Modifiers::NONE)]);
+        screen.settle();
+        assert!(the_box_has_the_keyboard(&screen));
+        assert!(screen.live.height > before, "the row grew to hold the box");
+        screen.frame(vec![Event::Text("first".into())]);
+        screen.frame(vec![key(Key::Enter, Modifiers::SHIFT)]);
+        screen.frame(vec![Event::Text("second".into())]);
+        assert_eq!(screen.live.card.typed_mut(), "first\nsecond");
+        assert!(!screen.sent(), "Shift+Enter is a new line, not a send");
+    }
+
+    #[test]
+    fn the_something_else_box_has_no_send_of_its_own_beside_the_cards_send_answer() {
+        let mut screen = single_choice_screen();
+        screen.settle();
+        screen.frame(vec![key(Key::Num3, Modifiers::NONE)]);
+        screen.settle();
+        screen.frame(vec![Event::Text("ship it".into())]);
+        screen.frame(Vec::new());
+        let sends: Vec<&str> = screen
+            .texts
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .filter(|text| text.starts_with("Send"))
+            .collect();
+        assert_eq!(sends, ["Send answer"]);
+    }
+
+    #[test]
+    fn command_enter_in_the_something_else_box_sends_the_typed_answer() {
+        let mut screen = single_choice_screen();
+        screen.settle();
+        screen.frame(vec![key(Key::Num3, Modifiers::NONE)]);
+        screen.settle();
+        screen.frame(vec![Event::Text("ship it".into())]);
+        screen.frame(vec![key(Key::Enter, Modifiers::COMMAND)]);
+        let Some(Effect::Send(given)) =
+            screen.effects.iter().find(|e| matches!(e, Effect::Send(_)))
+        else {
+            panic!("no send")
+        };
+        assert_eq!(given[0].other.as_deref(), Some("ship it"));
+        assert_eq!(given[0].picked, Vec::<usize>::new());
+    }
+
+    #[test]
+    fn number_keys_pick_options_until_the_something_else_box_has_the_keyboard_then_they_type() {
+        let mut screen = single_choice_screen();
+        screen.settle();
+        screen.frame(vec![key(Key::Num2, Modifiers::NONE)]);
+        assert!(screen.live.card.is_picked(1));
+        screen.frame(vec![key(Key::Num1, Modifiers::NONE)]);
+        assert!(screen.live.card.is_picked(0));
+        screen.frame(vec![key(Key::Num3, Modifiers::NONE)]);
+        screen.settle();
+        screen.frame(vec![key(Key::Num1, Modifiers::NONE), Event::Text("1".into())]);
+        assert!(!screen.live.card.is_picked(0));
+        assert_eq!(screen.live.card.typed_mut(), "1");
     }
 
     #[test]

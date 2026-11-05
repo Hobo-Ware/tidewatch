@@ -536,6 +536,9 @@ fn sync_live(state: &mut ViewState, shown: Option<&Row>) {
         Kind::Question(q) => Some(Live::new(row.seq, Card::new(q.questions.clone()))),
         _ => None,
     });
+    if let Some(live) = state.live.as_mut() {
+        live.recall = Recall::with_entries(state.recall.entries().to_vec());
+    }
     if had && state.live.is_none() {
         state.focus_reply = true;
     }
@@ -616,8 +619,11 @@ pub(crate) fn show(
     sync_live(state, shown);
     let live_seq = state.live.as_ref().map(|live| live.seq);
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
+    let card_open = state.live.as_ref().is_some_and(|live| !live.is_folded());
     let input_h = if composing.is_some() {
         agent_ready::height(ui, &state.reply, rect)
+    } else if card_open {
+        0.0
     } else {
         composer::height_with_stop(ui, &state.reply, rect, facts.working)
     };
@@ -761,7 +767,7 @@ pub(crate) fn show(
             matches!(&row.kind, Kind::Question(q) if matches!(q.origin, Origin::Tidewatch(_)))
         });
         reply_enabled = tidewatch && facts.reply_blocked.is_none();
-        let grab = state.reply.trim().is_empty();
+        let grab = card_open || state.reply.trim().is_empty();
         live.picks = question_bulk::plan(rows).count();
         let dock = Rect::from_min_max(rect.min, pos2(rect.right(), above));
         match question_view::live_card(ui, dock, live, facts.profile, grab) {
@@ -779,6 +785,9 @@ pub(crate) fn show(
             rows,
             (facts.root, &state.zone),
         ));
+    }
+    if card_open {
+        return actions;
     }
     let mut input_ui =
         ui.new_child(UiBuilder::new().max_rect(input.shrink2(vec2(INSET, composer::GAP_Y))));
@@ -2507,6 +2516,33 @@ mod tests {
         let next = state.live.as_ref().expect("the next card");
         assert_eq!(next.seq, 1);
         assert!(next.is_folded());
+    }
+
+    #[test]
+    fn an_open_question_card_hides_the_reply_box_and_it_comes_back_with_its_draft() {
+        use crate::reader_rows::Asked;
+        let mut rows = Rows::default();
+        rows.push(question_entry(tidewatch_core::transcript::ToolPhase::Call));
+        let mut frames = Frames::new();
+        frames.state.reply = "my draft".into();
+        settle(&mut frames, &rows);
+        assert!(frames.at("my draft").is_some(), "a folded card leaves the reply box");
+        frames.state.live.as_mut().expect("the card").open();
+        settle(&mut frames, &rows);
+        assert!(frames.at("my draft").is_none(), "an open card hides the reply box");
+        assert!(frames.at("Send").is_none());
+        assert_eq!(frames.state.reply, "my draft");
+        frames.state.live.as_mut().expect("the card").fold();
+        settle(&mut frames, &rows);
+        assert!(frames.at("my draft").is_some(), "folding brings the reply box back");
+        frames.state.live.as_mut().expect("the card").open();
+        settle(&mut frames, &rows);
+        assert!(frames.at("my draft").is_none());
+        rows.set_asked(0, Asked::Declined);
+        settle(&mut frames, &rows);
+        assert!(frames.state.live.is_none());
+        assert!(frames.at("my draft").is_some(), "an answered card brings the reply box back");
+        assert_eq!(frames.state.reply, "my draft");
     }
 
     #[test]

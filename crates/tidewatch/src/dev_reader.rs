@@ -26,7 +26,7 @@
 //! - `TIDEWATCH_DEV_ROWS=1`: put a short stand-in conversation in the Reader once.
 //! - `TIDEWATCH_DEV_QUESTION=<steps>`: drive the live question card, one step every 0.4 s once it
 //!   shows. Steps, comma separated: `pick<N>` (the number key), `next`, `back`, `space`, `down`,
-//!   `all` (Go with your picks), `open` and `fold` (the card opens folded), `type:<text>` ("Something else" with that text), `send`, `skip`.
+//!   `all` (Go with your picks), `open` and `fold` (the card opens folded), `type:<text>` ("Something else" selected, its box holding that text; `\n` in the text is a new line), `send`, `skip`.
 //! - `TIDEWATCH_DEV_ASK=1`: put a stand-in question with three options in the Reader once, as an
 //!   `ask_user` call that nobody answers.
 //! - `TIDEWATCH_DEV_SEE=rows,confirm`: give the first agent tab a short chat with Tidewatch's own rows
@@ -126,7 +126,9 @@ fn card_steps(text: &str) -> VecDeque<CardStep> {
                 "fold" => Some(CardStep::Fold),
                 "send" => Some(CardStep::Send),
                 "skip" => Some(CardStep::Skip),
-                other => other.strip_prefix("type:").map(|text| CardStep::Type(text.to_owned())),
+                other => other
+                    .strip_prefix("type:")
+                    .map(|text| CardStep::Type(text.replace("\\n", "\n"))),
             }
         })
         .collect()
@@ -481,6 +483,8 @@ mod tests {
             Some("5"),
             Some("pick2,next,all,type:both,send,bogus"),
         );
+        let lines = DevReader::parse(None, None, None, None, None, Some("type:one\\ntwo"));
+        assert_eq!(lines.question, [CardStep::Type("one\ntwo".into())]);
         assert!(dev.raw);
         assert_eq!(
             dev.question,

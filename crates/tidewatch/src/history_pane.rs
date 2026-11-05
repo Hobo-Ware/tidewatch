@@ -606,7 +606,7 @@ mod tests {
         card.ledger.updated_ms = Some(-480_000);
         card.frame(Vec::new());
         assert!(card.at("Pick one").is_some(), "the panel says it waits on you, once");
-        assert!(card.at("Answer above the reply box").is_some());
+        assert!(card.at("Answer in the question card").is_some());
         card.stale = true;
         card.frame(Vec::new());
         assert!(card.at("Pick one").is_none(), "an answered report asks nothing");
