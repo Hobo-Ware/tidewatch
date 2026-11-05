@@ -3,7 +3,7 @@
 //! drawn; the others take their measured or estimated height. It also holds the small card and
 //! field looks the other inline items of the left column share.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -110,6 +110,8 @@ pub(crate) struct ViewState {
     quick: Option<(u64, Vec<Quick>)>,
     quick_used: Option<u64>,
     expanded: HashSet<u64>,
+    /// The reply each turn shows, as pages back from its newest; a turn not in it shows the newest.
+    pages: HashMap<u64, usize>,
     tidewatch_open: HashSet<u64>,
     turns: Option<(u64, usize, reader_turns::Layout)>,
     zone: TimeZone,
@@ -154,6 +156,7 @@ impl Default for ViewState {
             quick: None,
             quick_used: None,
             expanded: HashSet::new(),
+            pages: HashMap::new(),
             tidewatch_open: HashSet::new(),
             turns: None,
             zone: TimeZone::system(),
@@ -185,6 +188,37 @@ impl ViewState {
         self.turns = Some((stamp.0, stamp.1, reader_turns::layout(rows)));
         let first = rows.iter().next().map_or(0, |row| row.seq);
         self.expanded.retain(|key| key & !reader_turns::NOTES_BIT >= first);
+        self.pages.retain(|key, _| *key >= first);
+    }
+
+    /// Left and right page the newest turn with several replies to an older or newer one, while the
+    /// keyboard is free: no text field has it, or the empty reply box does. With no field focused the
+    /// pointer must be over the Reader at `view`, so another pane keeps its own arrow keys.
+    fn page_by_keys(&mut self, ctx: &egui::Context, view: Rect) {
+        let reply_free = reply_has_focus(ctx) && self.reply.is_empty();
+        let over = ctx.pointer_hover_pos().is_some_and(|at| view.contains(at));
+        if !(reply_free || (over && !ctx.text_edit_focused())) {
+            return;
+        }
+        let Some((key, count)) = self.turns.as_ref().and_then(|(_, _, layout)| {
+            let group = layout.groups.iter().rev().find(|group| group.page_count() > 1)?;
+            Some((group.key, group.page_count()))
+        }) else {
+            return;
+        };
+        let older = ctx.input_mut(|input| {
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
+                Some(true)
+            } else if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
+                Some(false)
+            } else {
+                None
+            }
+        });
+        if let Some(older) = older {
+            let back = self.pages.get(&key).copied().unwrap_or(0);
+            self.pages.insert(key, reader_turns::step_page(back, count, older));
+        }
     }
 
     /// Opens the list of calls and the folded updates under every turn, and every Tidewatch message,
@@ -905,10 +939,12 @@ fn transcript(
     let follow = state.scroll.following();
     let scroll_down = follow && std::mem::take(&mut state.stick_pending);
     state.refresh_turns(rows);
+    state.page_by_keys(ui.ctx(), view);
     let ViewState {
         heights,
         pr_heights,
         expanded,
+        pages,
         tidewatch_open,
         turns,
         zone,
@@ -1030,6 +1066,7 @@ fn transcript(
                                     turn_guess(
                                         &list,
                                         group,
+                                        pages.get(&group.key).copied().unwrap_or(0),
                                         (
                                             expanded.contains(&group.key),
                                             expanded.contains(&group.notes_key()),
@@ -1064,7 +1101,7 @@ fn transcript(
                                         &scene,
                                         &list,
                                         &layout.groups[n],
-                                        expanded,
+                                        (expanded, pages),
                                         width,
                                     ),
                                     _ if matches!(row.kind, Kind::Tidewatch(_)) => {
@@ -1298,11 +1335,12 @@ fn draw_row(
 fn turn_guess(
     list: &[&Row],
     group: &reader_turns::Group,
+    back: usize,
     (listing, notes_listing): (bool, bool),
     (running, width): (bool, f32),
 ) -> f32 {
     let text_of = |index: &usize| list[*index].text.as_str();
-    let answer: Vec<&str> = group.answers().iter().map(text_of).collect();
+    let answer: Vec<&str> = group.page(back).iter().map(text_of).collect();
     let notes: Vec<&str> = group.notes().iter().map(text_of).collect();
     let live = running && !group.closed;
     reader_scroll::estimate_turn(
@@ -2824,6 +2862,114 @@ mod tests {
         frames.click(&rows, again);
         assert!(frames.at(notes[0]).is_none());
         assert_eq!(frames.state.expanded.len(), 0);
+    }
+
+    fn reply(head: &str) -> String {
+        format!("{head}\n\n**Done**\n- checked\n\n**Needs you**\n- nothing\n\n**Next**\n- wait")
+    }
+
+    /// One turn with three replies, each after real work, and a `**bold**` status update between the
+    /// first two.
+    fn three_replies() -> Rows {
+        use tidewatch_core::transcript::{Entry, Role, ToolCall, ToolPhase};
+        let at = Some(1_700_000_000_000);
+        let say = |role, text: &str| Entry {
+            role,
+            text: text.into(),
+            tool: None,
+            ts: at,
+            images: Vec::new(),
+        };
+        let call = |id: &str, phase| Entry {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: "Bash".into(),
+                summary: "cargo test".into(),
+                id: Some(id.into()),
+                phase,
+                ask: None,
+            }),
+            ts: at,
+            images: Vec::new(),
+        };
+        let mut rows = Rows::default();
+        rows.push(say(Role::User, "build it"));
+        let steps = [
+            reply("First reply."),
+            "Checking **the** build.".into(),
+            reply("Second reply."),
+            reply("Nothing new."),
+        ];
+        for (n, text) in steps.iter().enumerate() {
+            if n > 0 {
+                rows.push(call(&format!("c{n}"), ToolPhase::Call));
+                rows.push(call(&format!("c{n}"), ToolPhase::Result { error: false }));
+            }
+            rows.push(say(Role::Assistant, text));
+        }
+        rows
+    }
+
+    fn arrow(frames: &Frames, label: &str, older: bool) -> egui::Pos2 {
+        let (_, rect) = frames.shapes.iter().find(|(drawn, _)| drawn == label).unwrap();
+        let x = if older { rect.left() - 4.0 - 9.0 } else { rect.right() + 4.0 + 9.0 };
+        pos2(x, rect.center().y)
+    }
+
+    #[test]
+    fn several_replies_show_the_newest_and_the_arrows_page_to_the_older_ones() {
+        let rows = three_replies();
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Finished, vec![]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(frames.at("Nothing new.").is_some(), "{:?}", frames.shapes);
+        assert!(frames.at("3 of 3").is_some() && frames.at("1 update").is_some());
+        assert!(frames.at("Second reply.").is_none() && frames.at("First reply.").is_none());
+        frames.click(&rows, arrow(&frames, "3 of 3", true));
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(frames.at("2 of 3").is_some() && frames.at("Second reply.").is_some());
+        assert!(frames.at("Nothing new.").is_none());
+        frames.click(&rows, arrow(&frames, "2 of 3", true));
+        frames.click(&rows, arrow(&frames, "1 of 3", true));
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(frames.at("1 of 3").is_some() && frames.at("First reply.").is_some());
+        frames.click(&rows, arrow(&frames, "1 of 3", false));
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(frames.at("2 of 3").is_some(), "{:?}", frames.shapes);
+    }
+
+    #[test]
+    fn the_arrow_keys_page_the_replies_while_the_reply_box_is_empty_and_not_while_it_has_text() {
+        let rows = three_replies();
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Finished, vec![]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(reply_has_focus(&frames.ctx));
+        frames.run(&rows, Turn::Finished, vec![key(Key::ArrowLeft)]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(frames.at("2 of 3").is_some(), "{:?}", frames.shapes);
+        frames.run(&rows, Turn::Finished, vec![key(Key::ArrowRight)]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(frames.at("3 of 3").is_some());
+        frames.state.reply = "draft".into();
+        frames.run(&rows, Turn::Finished, vec![key(Key::ArrowLeft)]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        assert!(frames.at("3 of 3").is_some(), "the cursor moves in the box instead");
+    }
+
+    #[test]
+    fn expanded_updates_render_as_markdown_with_no_literal_asterisks() {
+        let rows = three_replies();
+        let mut frames = Frames::new();
+        frames.run(&rows, Turn::Finished, vec![]);
+        frames.run(&rows, Turn::Finished, vec![]);
+        let chip = frames.at("1 update").unwrap();
+        frames.click(&rows, chip);
+        frames.run(&rows, Turn::Finished, vec![]);
+        let drawn: Vec<&str> = frames.shapes.iter().map(|(text, _)| text.as_str()).collect();
+        assert!(drawn.iter().any(|text| text.contains("build.")), "{drawn:?}");
+        assert!(drawn.iter().all(|text| !text.contains("**")), "{drawn:?}");
     }
 
     #[test]
