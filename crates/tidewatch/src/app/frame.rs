@@ -93,6 +93,7 @@ impl Tidewatch {
         self.drive_github_events(ctx, now);
         self.drive_pr(ctx, now);
         self.drive_comments(ctx, now);
+        self.drive_away(ctx, now);
         self.drive_progress(ctx);
         self.drive_parking(ctx);
         self.drive_group_merge(ctx);
