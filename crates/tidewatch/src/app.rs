@@ -6,6 +6,7 @@
 mod agents;
 mod amphetamine;
 mod autofetch;
+mod away;
 mod bar;
 mod budget;
 mod central;
@@ -72,6 +73,7 @@ use crate::amphetamine_glue;
 use crate::amphetamine_view;
 use crate::autofetch_glue;
 use crate::avatar_glue;
+use crate::away_model::Presence;
 use crate::brand;
 use crate::budget_glue;
 use crate::catalog::Catalog;
@@ -219,6 +221,7 @@ pub(crate) struct Tidewatch {
     autofetch: autofetch_glue::Host,
     amphetamine: amphetamine_glue::Host<Box<dyn Hold>>,
     amphetamine_view: amphetamine_view::Memory,
+    away: Presence,
     progress_ui: progress_view::Memory,
     checklist: overview_checklist::Host,
     overview_state: crate::overview_view::State,
@@ -485,6 +488,7 @@ impl Tidewatch {
             autofetch,
             amphetamine,
             amphetamine_view: amphetamine_view::Memory::from_env(),
+            away: Presence::of(loaded.keep_awake.away),
             progress_ui: progress_view::Memory::default(),
             checklist: overview_checklist::Host::new(),
             overview_state: crate::overview_fake::initial_state(),
@@ -555,6 +559,7 @@ impl Tidewatch {
         if let Some(socket) = from_stdusk {
             app.adopt_from_stdusk(socket, &cc.egui_ctx);
         }
+        app.tell_listener_away();
         app
     }
 }

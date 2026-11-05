@@ -113,6 +113,7 @@ struct Shared {
     repaint: Repaint,
     notes_lock: Mutex<()>,
     ask_timeout_ms: AtomicU64,
+    away: AtomicBool,
     avatar_ask_lock: Mutex<()>,
     avatar_ask_exempt: Mutex<HashSet<u64>>,
     service_lines: Mutex<HashMap<u64, String>>,
@@ -186,6 +187,16 @@ impl Listener {
         self.shared.ask_timeout_ms.store(millis, Ordering::SeqCst);
     }
 
+    /// Whether the owner is away, which the question tool reads on each call.
+    pub fn set_away(&self, away: bool) {
+        self.shared.away.store(away, Ordering::SeqCst);
+    }
+
+    #[must_use]
+    pub fn is_away(&self) -> bool {
+        self.shared.away.load(Ordering::SeqCst)
+    }
+
     /// The tabs whose prompts never carry the avatar ask: a Meeseeks wears a fixed face, and a
     /// host that writes nothing must not leave a marker. Replaces the earlier list.
     pub fn exempt_from_avatar_ask(&self, tabs: &[u64]) {
@@ -233,6 +244,7 @@ impl Listener {
             service_lines: Mutex::new(HashMap::new()),
             service_told: Mutex::new(HashMap::new()),
             resumes_due: Mutex::new(HashMap::new()),
+            away: AtomicBool::new(false),
             ask_timeout_ms: AtomicU64::new(
                 u64::try_from(ASK_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
             ),
@@ -972,6 +984,7 @@ mod tests {
             resumes_due: Mutex::new(HashMap::new()),
             github: GithubHooks::new().0,
             ask_timeout_ms: AtomicU64::new(1000),
+            away: AtomicBool::new(false),
         });
         let server = TcpListener::bind(HOOK_BIND).unwrap();
         let peer = TcpStream::connect(server.local_addr().unwrap()).unwrap();

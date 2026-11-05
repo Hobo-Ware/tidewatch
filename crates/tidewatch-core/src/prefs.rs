@@ -106,11 +106,14 @@ impl GitPrefs {
 pub struct KeepAwakePrefs {
     #[serde(default = "on")]
     pub enabled: bool,
+    /// The owner is away: agents decide on their own. Off until switched on, and kept across runs.
+    #[serde(default)]
+    pub away: bool,
 }
 
 impl Default for KeepAwakePrefs {
     fn default() -> Self {
-        Self { enabled: true }
+        Self { enabled: true, away: false }
     }
 }
 
@@ -1195,6 +1198,23 @@ mod tests {
         Prefs::update(&paths, |p| p.keep_awake.enabled = true).unwrap();
         let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
         assert!(text.contains("[keep_awake]") && text.contains("enabled = true"), "{text}");
+    }
+
+    #[test]
+    fn away_is_off_until_switched_on_and_the_choice_survives_a_save() {
+        let (_home, paths) = paths();
+        assert!(!Prefs::load(&paths).keep_awake.away);
+        write_prefs(&paths, "[keep_awake]\nenabled = false\n");
+        let old = Prefs::load(&paths).keep_awake;
+        assert!(!old.enabled && !old.away);
+        Prefs::update(&paths, |p| p.keep_awake.away = true).unwrap();
+        assert!(Prefs::load(&paths).keep_awake.away);
+        Prefs::update(&paths, |p| p.window.quake = false).unwrap();
+        assert!(Prefs::load(&paths).keep_awake.away);
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("away = true"), "{text}");
+        Prefs::update(&paths, |p| p.keep_awake.away = false).unwrap();
+        assert!(!Prefs::load(&paths).keep_awake.away);
     }
 
     #[test]

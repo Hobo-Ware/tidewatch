@@ -26,6 +26,8 @@ mod attachments;
 mod autofetch_glue;
 mod avatar_glue;
 mod avatar_redraw;
+mod away_model;
+mod away_view;
 mod brand;
 mod bubble_toolbar;
 mod budget_glue;

@@ -71,7 +71,7 @@ fn every_command_has_its_own_chord_on_each_platform() {
         assert_eq!(labels.len(), bound.len(), "{platform:?}");
         let unbound: Vec<_> =
             TABLE.iter().filter(|entry| entry.chord(platform).is_none()).map(|e| e.id).collect();
-        assert_eq!(unbound, ["move-sessions", "amphetamine"], "{platform:?}");
+        assert_eq!(unbound, ["move-sessions", "amphetamine", "away"], "{platform:?}");
     }
 }
 
@@ -204,7 +204,8 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "settings",
             "shortcuts",
             "move-sessions",
-            "amphetamine"
+            "amphetamine",
+            "away"
         ]
     );
 }
@@ -533,6 +534,7 @@ mod gate {
 #[test]
 fn amphetamine_is_palette_only_and_known_by_its_other_name() {
     assert_eq!(command_of("amphetamine"), Some(Command::Amphetamine));
+    assert_eq!(command_of("away"), Some(Command::Away));
     assert_eq!(Command::Amphetamine.keys_on(Platform::Mac), "");
     assert_eq!(Command::Amphetamine.alias(), Some("cocaine"));
     assert_eq!(Command::Settings.alias(), None);

@@ -1029,3 +1029,13 @@ fn github_deliveries_need_the_repo_token_in_the_path_and_a_good_signature() {
     let revoked = github_request(&mut client, "POST", &path, "pull_request", Some(&good), body);
     assert_eq!(revoked.status, 401);
 }
+
+#[test]
+fn the_listener_remembers_whether_the_owner_is_away() {
+    let h = Harness::start();
+    assert!(!h.listener.is_away());
+    h.listener.set_away(true);
+    assert!(h.listener.is_away());
+    h.listener.set_away(false);
+    assert!(!h.listener.is_away());
+}
