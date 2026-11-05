@@ -30,7 +30,6 @@ pub(crate) enum MenuWatch {
     GoneSince(u64, f64),
 }
 
-use crate::question_auto::Countdown;
 use crate::reader_feed::{Feed, Message};
 use crate::reader_rows::Rows;
 use crate::reader_view::ViewState;
@@ -175,7 +174,6 @@ pub(crate) struct Reader {
     answered: bool,
     typing: Typing,
     menu_check: Option<Vec<Question>>,
-    pub(crate) auto: Countdown,
     session_title: Option<String>,
     own_title: Option<String>,
     first_message: Option<String>,
@@ -219,7 +217,6 @@ impl Reader {
             answered: false,
             typing: Typing::default(),
             menu_check: None,
-            auto: Countdown::default(),
             session_title: None,
             own_title: None,
             first_message: None,

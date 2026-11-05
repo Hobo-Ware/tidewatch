@@ -457,17 +457,17 @@ impl Lane {
     }
 
     fn plan(self, painter: &Painter, row: &Row, card_w: f32) -> Plan {
-        let counting = f32::from(u8::from(row.pick_line().is_some()));
         match (self, ask_of(row)) {
             (Self::Needs, Some(ask)) => {
                 let ask = AskLayout::new(painter, ask, card_w);
-                let lines = f32::from(u8::from(ask.has_why)) + counting;
+                let lines = f32::from(u8::from(ask.has_why));
                 let (text, action) = (ROW_H + WHY_H * lines, ask.row.height());
                 Plan { text, action, ask: Some(ask) }
             }
-            (Self::Needs, None) => Plan { text: ROW_H + WHY_H * counting, action: 0.0, ask: None },
             (Self::Working, _) => Plan { text: ROW_H, action: BAR_H, ask: None },
-            (Self::Waiting | Self::Idle, _) => Plan { text: ROW_H, action: 0.0, ask: None },
+            (Self::Needs, None) | (Self::Waiting | Self::Idle, _) => {
+                Plan { text: ROW_H, action: 0.0, ask: None }
+            }
         }
     }
 
@@ -928,7 +928,7 @@ fn card(
     match lane {
         Lane::Needs => {
             if let (Some(ask), Some(layout)) = (ask, &plan.ask) {
-                out.answer = ask_chips(ui, &painter, (rect, &resp), (ask, row, layout), action_top);
+                out.answer = ask_chips(ui, &painter, (rect, &resp), (ask, layout), action_top);
             } else {
                 let button = Rect::from_min_size(
                     pos2(
@@ -937,7 +937,7 @@ fn card(
                     ),
                     vec2(button_w, Size::Compact.height()),
                 );
-                out.clicked = ask_row(ui, &painter, rect, row, button);
+                out.clicked = ask_row(ui, row, button);
             }
         }
         Lane::Working => {
@@ -980,13 +980,12 @@ fn ask_chips(
     ui: &mut Ui,
     painter: &Painter,
     (rect, resp): (Rect, &egui::Response),
-    (ask, row, layout): (&Ask, &Row, &AskLayout),
+    (ask, layout): (&Ask, &AskLayout),
     action_top: f32,
 ) -> Option<Pick> {
     let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
     let why = ask.why.as_deref().map(answer_chips::sentence);
-    let lines = why.iter().chain(row.pick_line());
-    for (index, line) in lines.enumerate() {
+    for (index, line) in why.iter().enumerate() {
         let galley = ellipsized(
             painter,
             line,
@@ -1016,14 +1015,7 @@ fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (Stri
     }
 }
 
-fn ask_row(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row, button: Rect) -> bool {
-    let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
-    if let Some(line) = row.pick_line() {
-        let room = (rect.right() - CARD_PAD - text_x).max(1.0);
-        let galley =
-            ellipsized(painter, line, FontId::proportional(TEXT_SECONDARY), brand::MUTED, room);
-        painter.galley(pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0), galley, brand::MUTED);
-    }
+fn ask_row(ui: &mut Ui, row: &Row, button: Rect) -> bool {
     in_rect(ui, button, |ui| primary_button(ui, ask_button(row), true, Size::Compact).clicked())
 }
 
@@ -1173,8 +1165,6 @@ mod tests {
             tokens: None,
             avatar: None,
             kind: AgentKind::Cli("claude".into()),
-            auto_pick: None,
-            picked: None,
             idle_secs: 600.0,
             next: None,
             stamp: crate::overview::Stamp::default(),
@@ -1576,17 +1566,9 @@ mod tests {
         let mut waiting =
             row(7, "asks-a-thing", "acme-web", AgentStatus::NeedsYou(Reason::Permission));
         waiting.kind = AgentKind::Meeseeks;
-        waiting.auto_pick = Some("Picks the recommended answer in 3:40".into());
         let mut screen = Screen::new(overview(vec![waiting]));
         let texts = screen.texts();
-        for want in [
-            "Needs you",
-            "asks-a-thing",
-            "Meeseeks",
-            "acme-web",
-            "Review",
-            "Picks the recommended answer in 3:40",
-        ] {
+        for want in ["Needs you", "asks-a-thing", "Meeseeks", "acme-web", "Review"] {
             assert!(has(&texts, want), "{want} in {texts:?}");
         }
         assert_eq!(screen.click("Review").jump, Some(7));
@@ -2117,27 +2099,6 @@ mod tests {
         assert_eq!(hits, expected);
         screen.frame(vec![Event::PointerMoved(pos2(1.0, 890.0))]);
         assert_eq!(screen.frame(vec![key(egui::Key::Num1)]).0.answer, None, "pointer over no card");
-    }
-
-    #[test]
-    fn a_question_card_keeps_the_auto_pick_countdown_of_an_agent_that_runs_on_its_own() {
-        let mut meeseeks = asking(7, ASKING);
-        meeseeks.auto_pick = Some("Picks the recommended answer in 3:40".to_owned());
-        let mut screen = Screen::new(overview(vec![meeseeks]));
-        let texts = screen.texts();
-        assert!(has(&texts, "Picks the recommended answer in 3:40"), "{texts:?}");
-        assert!(has(&texts, "The owner wanted it out today"));
-    }
-
-    #[test]
-    fn a_card_for_a_question_tidewatch_answered_sits_in_needs_you_with_a_review_button() {
-        let mut working = row(3, "busy", "acme-web", AgentStatus::Working);
-        working.tone = Tone::Needs;
-        working.picked = Some("Tidewatch picked \"On the stage\" for you".into());
-        let mut screen = Screen::new(overview(vec![working]));
-        let texts = screen.texts();
-        assert!(has(&texts, "Tidewatch picked \"On the stage\" for you"), "{texts:?}");
-        assert!(has(&texts, "Review") && !has(&texts, "Answer"), "{texts:?}");
     }
 
     #[test]

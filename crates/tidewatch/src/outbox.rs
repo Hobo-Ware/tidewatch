@@ -113,11 +113,9 @@ impl Send {
         self
     }
 
-    /// A message Tidewatch chose to send on its own, which save mode holds back. An answer to a
-    /// question the agent waits on is not one: it spends nothing the agent had not already begun.
+    /// A message Tidewatch chose to send on its own, which save mode holds back.
     fn held_by_save_mode(&self) -> bool {
-        self.origin == Origin::Auto
-            && self.tell.as_ref().is_some_and(|tell| tell.reason != Reason::AutoPick)
+        self.origin == Origin::Auto && self.tell.is_some()
     }
 
     fn counted(&self) -> bool {
@@ -748,7 +746,6 @@ mod tests {
         let goes = [
             ("a hand send", Send::by_hand("x", Reason::DoneCheck, "you asked")),
             ("an untold review", Send::untold("x", Origin::Auto)),
-            ("a pick for a waiting agent", Send::auto("x", Reason::AutoPick, "nobody answered")),
         ];
         for (what, send) in goes {
             assert_eq!(outbox.offer(TAB, &send, done, Screen::Free, 0.0), Offer::Go, "{what}");

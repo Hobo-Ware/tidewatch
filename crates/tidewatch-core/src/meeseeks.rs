@@ -24,7 +24,7 @@ const WAITING_PHRASES: [&str; 8] = [
     "your call",
     "let me know",
 ];
-pub const ASK_INSTEAD: &str = "Your summary leaves a decision to the user, so Tidewatch did not end this session. Ask it with your question tool (options with the recommended one first; Tidewatch picks it after 5 minutes if nobody answers), then act on the answer and call meeseeks_done again.";
+pub const ASK_INSTEAD: &str = "Your summary leaves a decision to the user, so Tidewatch did not end this session. Ask it with your question tool (options with the recommended one first), then act on the answer and call meeseeks_done again.";
 const TAIL_LINES: usize = 12;
 const LINE_CHARS: usize = 200;
 

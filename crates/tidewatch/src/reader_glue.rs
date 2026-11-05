@@ -12,7 +12,6 @@ use tidewatch_core::clock::now_ms;
 use tidewatch_core::paths::{home_dir, sent_file_beside};
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::question_words;
-use tidewatch_core::sent::{Reason as Said, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::transcript::Source;
 
@@ -31,7 +30,6 @@ use crate::outbox::{Offer, Screen, Send};
 use crate::pane::{AgentTab, Body, FirstPrompt, Pane};
 use crate::pr_card_model::CardAction;
 use crate::pr_cards_view::Data as PrData;
-use crate::question_auto::Poll;
 use crate::question_bulk;
 use crate::question_screen::{Look, ShowsScreen, menu_look};
 use crate::reader::{MenuWatch, Note, Shown, Step};
@@ -84,7 +82,6 @@ pub(crate) fn start(tabs: &mut Tabs<Pane<PtyTerm>>, ctx: &Context, dev: &DevRead
 /// Takes what every feed read since the last frame, and types what is due into the tabs that were
 /// answering a question. A pasted message gets its Enter from the flow's Enter queue.
 pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Context, now: f64) {
-    let mut picked = Vec::new();
     for tab in tabs.items_mut() {
         let id = tab.id;
         drop_keys_for_a_gone_menu(&mut tab.pane, now);
@@ -117,9 +114,6 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
             keep_reply_box(agent, ctx, now);
         }
         close_gone_menu(&mut tab.pane, now);
-        if let Some(text) = pick_for_the_absent(&mut tab.pane, ctx, now) {
-            picked.push((id, text));
-        }
         if let Some(agent) = tab.pane.agent.as_mut() {
             if agent.first_prompt != FirstPrompt::NotNeeded && agent.reader.rows.len() > 0 {
                 agent.first_prompt = FirstPrompt::NotNeeded;
@@ -130,10 +124,6 @@ pub(crate) fn drain(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, ctx: &Conte
                 launched.session_id = agent.reader.codex_session_id();
             }
         }
-    }
-    for (tab, text) in picked {
-        let send = Send::auto(&text, Said::AutoPick, because::AUTO_PICK);
-        flow_glue::send_or_queue(tabs, flow, tab, send, ctx, now);
     }
 }
 
@@ -204,66 +194,6 @@ fn close_gone_menu<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) {
         agent.reader.menu_watch = MenuWatch::Unseen;
         agent.reader.mark_answered();
         refresh_asking(agent);
-    }
-}
-
-fn waiting_question<T>(pane: &Pane<T>) -> Option<u64> {
-    let agent = pane.agent.as_ref()?;
-    let running = matches!(agent.run.status(), AgentStatus::Working | AgentStatus::NeedsYou(_));
-    agent
-        .reader
-        .rows
-        .pending_question()
-        .filter(|row| match &row.kind {
-            Kind::Question(q) => matches!(q.origin, Origin::Tidewatch(_)) || running,
-            _ => false,
-        })
-        .map(|row| row.seq)
-}
-
-/// In a tab that runs on its own, answers the question the user left alone for the wait with the
-/// agent's recommended option, else the first, and wakes the app for the moment it is due. The tab
-/// stays in Needs you until its owner opens it. A held `ask_user` call is told in its result; a
-/// Claude menu has no call to answer, so what the agent is to be told comes back as a message.
-fn pick_for_the_absent<T: ShowsScreen>(
-    pane: &mut Pane<T>,
-    ctx: &Context,
-    now: f64,
-) -> Option<String> {
-    let wait = crate::dev_reader::autopick_wait();
-    let waiting = waiting_question(pane);
-    let agent = pane.agent.as_mut()?;
-    let autonomous = agent.autonomous();
-    let poll = agent.reader.auto.poll(waiting.filter(|_| autonomous), now, wait);
-    match poll {
-        Poll::Idle => None,
-        Poll::Counting { left } => {
-            request_wake(ctx, left.clamp(0.0, 1.0));
-            None
-        }
-        Poll::Due(seq) => {
-            let asked = agent.reader.rows.question_of(seq)?.clone();
-            let given = question::auto_picks(&asked.questions);
-            let minutes = (wait / 60.0).round().max(1.0) as u64;
-            let held = matches!(asked.origin, Origin::Tidewatch(_));
-            if answer_question(pane, seq, auto_reply(held, &given, minutes), now).is_some() {
-                return None;
-            }
-            let agent = pane.agent.as_mut()?;
-            agent.reader.rows.mark_auto_picked(seq);
-            agent.run.pick_made(question_words::pick_review_line(&asked.questions, &given));
-            (!held).then(|| question_words::picked_for_you(&asked.questions, &given, minutes))
-        }
-    }
-}
-
-/// The reply Tidewatch gives for a user who stayed away. A held `ask_user` call carries the news in
-/// its own result; a Claude menu takes the keys of the picks alone.
-fn auto_reply(held: bool, given: &[question::Given], minutes: u64) -> Reply {
-    if held {
-        Reply::PickedForYou { given: given.to_vec(), minutes }
-    } else {
-        Reply::Answered(given.to_vec())
     }
 }
 
@@ -389,13 +319,6 @@ pub(crate) fn draw(
         }
         _ => reader.view.ghost.clear(),
     }
-    let auto_left = reader.rows.pending_question().and_then(|row| {
-        reader
-            .auto
-            .left(row.seq, now, crate::dev_reader::autopick_wait())
-            .map(|left| (row.seq, left))
-    });
-    reader.view.set_auto_left(auto_left);
     if dev.take_open_turns(reader.rows.len()) {
         reader.view.open_turns(&reader.rows, dev.notes_only());
     }
@@ -1024,15 +947,6 @@ fn answer_question<T: ShowsScreen>(
             };
             (steps, Asked::Answered(pairs))
         }
-        (Origin::Tidewatch(held), Reply::PickedForYou { given, minutes }) => {
-            let pairs = question::pairs(&asked.questions, &given);
-            let steps = if held.send(Reply::PickedForYou { given: given.clone(), minutes }) {
-                Vec::new()
-            } else {
-                reply_steps(question_words::picked_for_you(&asked.questions, &given, minutes), 0.0)
-            };
-            (steps, Asked::Answered(pairs))
-        }
         (Origin::Tidewatch(held), Reply::Skipped) => {
             let steps = if held.send(Reply::Skipped) {
                 Vec::new()
@@ -1041,7 +955,7 @@ fn answer_question<T: ShowsScreen>(
             };
             (steps, Asked::Declined)
         }
-        (Origin::Claude, Reply::Answered(given) | Reply::PickedForYou { given, .. }) => {
+        (Origin::Claude, Reply::Answered(given)) => {
             let pairs = question::pairs(&asked.questions, &given);
             let steps = claude_menu_steps(&asked.questions, &given);
             (steps, Asked::Sent(pairs))
@@ -1335,38 +1249,6 @@ mod tests {
     }
 
     #[test]
-    fn a_held_call_hears_it_was_picked_for_the_user_and_a_call_that_ended_gets_it_typed() {
-        let given = vec![Given { picked: vec![0], other: None }, Given::default()];
-        let (sender, receiver) = channel();
-        let (mut held, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
-        let reply = Reply::PickedForYou { given: given.clone(), minutes: 5 };
-        answer_question(&mut held, seq, reply.clone(), 100.0);
-        assert_eq!(receiver.recv().unwrap(), reply);
-        assert_eq!(typed(&mut held), Vec::new());
-
-        let (sender, receiver) = channel();
-        drop(receiver);
-        let (mut ended, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
-        answer_question(&mut ended, seq, reply, 100.0);
-        let steps = steps_only(typed(&mut ended));
-        let Step::Paste(text) = &steps[0] else { panic!("{steps:?}") };
-        assert!(text.starts_with("Tidewatch picked "), "{text}");
-        assert!(text.contains(" for you after 5 minutes. The user may change them."), "{text}");
-        assert!(text.contains("Q: Where?\nA: Stage"), "{text}");
-        assert_eq!(steps.len(), 1);
-    }
-
-    #[test]
-    fn only_a_held_call_is_answered_with_the_news_a_menu_takes_the_picks_alone() {
-        let given = vec![Given { picked: vec![1], other: None }];
-        assert_eq!(
-            auto_reply(true, &given, 5),
-            Reply::PickedForYou { given: given.clone(), minutes: 5 }
-        );
-        assert_eq!(auto_reply(false, &given, 5), Reply::Answered(given));
-    }
-
-    #[test]
     fn a_late_answer_to_an_ask_user_call_that_ended_is_typed_as_a_message() {
         let (sender, receiver) = channel();
         drop(receiver);
@@ -1470,16 +1352,6 @@ mod tests {
         assert_eq!(typed(&mut pane), Vec::new());
     }
 
-    fn on_its_own(pane: &mut Pane<Fake>, level: tidewatch_core::agents::Level) {
-        pane.agent.as_mut().unwrap().launched = Some(crate::pane::Launched {
-            profile_id: "builder".into(),
-            level,
-            session_id: None,
-            remote: false,
-            dir: None,
-        });
-    }
-
     fn ask_with_recommended(pane: &mut Pane<Fake>) -> (u64, std::sync::mpsc::Receiver<Reply>) {
         let (sender, receiver) = channel();
         let row = QuestionRow {
@@ -1503,30 +1375,6 @@ mod tests {
     fn pane_without_questions() -> Pane<Fake> {
         let agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
         Pane { body: crate::pane::Body::Shell(Fake::default()), worktree: None, agent: Some(agent) }
-    }
-
-    #[test]
-    fn a_yolo_tab_answers_a_question_nobody_touched_with_the_recommended_option() {
-        let ctx = Context::default();
-        let mut pane = pane_without_questions();
-        on_its_own(&mut pane, tidewatch_core::agents::Level::Yolo);
-        let (seq, receiver) = ask_with_recommended(&mut pane);
-        pick_for_the_absent(&mut pane, &ctx, 1_000.0);
-        pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS - 1.0);
-        assert!(receiver.try_recv().is_err());
-        assert!(matches!(asked_of(&pane, seq), Asked::Pending));
-        assert_eq!(pane.agent.as_ref().unwrap().run.pick_to_review(), None);
-        let note = pick_for_the_absent(&mut pane, &ctx, 1_000.0 + crate::question_auto::WAIT_SECS);
-        let picked = Given { picked: vec![1], other: None };
-        assert_eq!(
-            receiver.recv().unwrap(),
-            Reply::PickedForYou { given: vec![picked], minutes: 5 }
-        );
-        assert_eq!(note, None, "the held call's result tells the agent, no message follows");
-        assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
-        assert!(pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
-        let line = pane.agent.as_ref().unwrap().run.pick_to_review().map(str::to_owned);
-        assert!(line.is_some_and(|line| line.ends_with(" for you")));
     }
 
     #[test]
@@ -1554,37 +1402,6 @@ mod tests {
             "two questions in one call"
         );
         assert!(matches!(asked_of(&several, seq), Asked::Pending));
-    }
-
-    #[test]
-    fn a_plain_tab_keeps_its_question_for_as_long_as_it_takes() {
-        let ctx = Context::default();
-        let mut pane = pane_without_questions();
-        on_its_own(&mut pane, tidewatch_core::agents::Level::Edits);
-        let (seq, receiver) = ask_with_recommended(&mut pane);
-        for at in [0.0, 400.0, 4_000.0, 400_000.0] {
-            pick_for_the_absent(&mut pane, &ctx, at);
-        }
-        assert!(receiver.try_recv().is_err());
-        assert!(matches!(asked_of(&pane, seq), Asked::Pending));
-        assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
-        assert_eq!(pane.agent.as_ref().unwrap().run.pick_to_review(), None);
-    }
-
-    #[test]
-    fn an_answer_given_before_the_wait_ends_is_never_overridden() {
-        let ctx = Context::default();
-        let mut pane = pane_without_questions();
-        on_its_own(&mut pane, tidewatch_core::agents::Level::Yolo);
-        let (seq, receiver) = ask_with_recommended(&mut pane);
-        pick_for_the_absent(&mut pane, &ctx, 0.0);
-        let mine = Given { picked: vec![0], other: None };
-        answer_question(&mut pane, seq, Reply::Answered(vec![mine.clone()]), 10.0);
-        pick_for_the_absent(&mut pane, &ctx, crate::question_auto::WAIT_SECS + 50.0);
-        assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![mine]));
-        assert!(receiver.try_recv().is_err());
-        assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
-        assert_eq!(pane.agent.as_ref().unwrap().run.pick_to_review(), None);
     }
 
     fn with_screen(pane: &mut Pane<Fake>, rows: &[&str]) {
@@ -1674,22 +1491,6 @@ mod tests {
         assert_eq!(asked_of(&pane, seq), Asked::Pending);
     }
 
-    #[test]
-    fn a_yolo_tab_does_not_count_a_pick_it_could_not_type_into_a_gone_menu() {
-        let ctx = Context::default();
-        let (mut pane, seq) = pane(Origin::Claude);
-        with_screen(&mut pane, &["> "]);
-        on_its_own(&mut pane, tidewatch_core::agents::Level::Yolo);
-        let agent = pane.agent.as_mut().unwrap();
-        agent.run.hold(Some(AgentStatus::Working), None);
-        agent.run.refresh(1.0);
-        pick_for_the_absent(&mut pane, &ctx, 0.0);
-        pick_for_the_absent(&mut pane, &ctx, crate::question_auto::WAIT_SECS);
-        assert_eq!(typed(&mut pane), Vec::new());
-        assert_eq!(asked_of(&pane, seq), Asked::Pending);
-        assert!(!pane.agent.as_ref().unwrap().reader.rows.auto_picked(seq));
-    }
-
     fn idle_pty() -> PtyTerm {
         pty_running("sleep 20")
     }
@@ -1742,6 +1543,41 @@ mod tests {
         assert_eq!(flow.due_enters(10.0 + ENTER_DELAY_SECS, busy), Vec::<u64>::new());
         let settled = 10.0 + ENTER_DELAY_SECS + crate::note_send::ENTER_QUIET_SECS + 0.01;
         assert_eq!(flow.due_enters(settled, busy), [id]);
+    }
+
+    #[test]
+    fn a_question_on_a_tab_that_runs_on_its_own_waits_for_the_owner_however_long_it_takes() {
+        use tidewatch_core::agents::Level;
+        for level in [Level::Yolo, Level::Edits] {
+            let (mut tabs, id, mut flow) = agent_in(AgentStatus::Working);
+            let agent = tabs.agent_mut(id).unwrap();
+            agent.launched = Some(crate::pane::Launched {
+                profile_id: "builder".into(),
+                level,
+                session_id: None,
+                remote: false,
+                dir: None,
+            });
+            let (sender, receiver) = channel();
+            let row = QuestionRow {
+                questions: questions(),
+                asked: Asked::Pending,
+                origin: Origin::Tidewatch(AskReply::new(sender)),
+            };
+            let seq = agent.reader.rows.push_question_row(row);
+            let ctx = Context::default();
+            for at in [0.0, 299.0, 300.0, 3_600.0, 400_000.0] {
+                drain(&mut tabs, &mut flow, &ctx, at);
+            }
+            assert!(receiver.try_recv().is_err(), "{level:?}");
+            let agent = tabs.agent_mut(id).unwrap();
+            assert_eq!(
+                agent.reader.rows.question_of(seq).map(|row| row.asked.clone()),
+                Some(Asked::Pending)
+            );
+            assert_eq!(agent.reader.rows.pending_question().map(|row| row.seq), Some(seq));
+            assert_eq!(queued(&mut tabs, id), 0, "{level:?}");
+        }
     }
 
     fn agent_in(status: AgentStatus) -> (Tabs<Pane<PtyTerm>>, u64, Flow) {

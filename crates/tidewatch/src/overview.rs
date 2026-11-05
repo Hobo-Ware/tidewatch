@@ -102,10 +102,6 @@ pub(crate) struct Row {
     /// The picture the agent drew for the tab, shown at the card's corner.
     pub(crate) avatar: Option<std::sync::Arc<tidewatch_core::avatar::Avatar>>,
     pub(crate) kind: AgentKind,
-    /// `Picks the recommended answer in 3:40`, while a question of an agent that runs on its own waits.
-    pub(crate) auto_pick: Option<String>,
-    /// What Tidewatch picked for the owner, until the owner opens the tab.
-    pub(crate) picked: Option<String>,
     /// Seconds since the status last changed.
     pub(crate) idle_secs: f64,
     pub(crate) next: Option<Next>,
@@ -237,8 +233,6 @@ pub(crate) fn collect<T>(
                 .or_else(crate::budget_glue::fake_tokens),
                 avatar: None,
                 kind: AgentKind::of(agent),
-                auto_pick: auto_pick_line(agent, now),
-                picked: agent.run.pick_to_review().map(str::to_owned),
                 idle_secs: agent.run.since_change(now),
                 next: None,
                 stamp: Stamp::default(),
@@ -555,24 +549,6 @@ pub(crate) fn next_of<'a>(mut rows: impl Iterator<Item = &'a Scheduled>) -> Opti
     .map(|row| Next { date: row.when.date(), days: row.days, what: row.what.clone() })
 }
 
-fn auto_pick_line(agent: &AgentTab, now: f64) -> Option<String> {
-    use crate::reader_rows::Kind;
-    if !agent.autonomous() {
-        return None;
-    }
-    let row = agent.reader.rows.pending_question()?;
-    let left = agent.reader.auto.left(row.seq, now, crate::dev_reader::autopick_wait())?;
-    let Kind::Question(question) = &row.kind else { return None };
-    Some(crate::question_auto::line(left, &question.questions))
-}
-
-impl Row {
-    /// The muted line under a card that needs you for a question Tidewatch answers or answered.
-    pub(crate) fn pick_line(&self) -> Option<&String> {
-        self.picked.as_ref().or(self.auto_pick.as_ref())
-    }
-}
-
 /// The reason of a prompt a card waits on, when the terminal says it asks the owner something.
 fn prompt_reason(row: &Row) -> Option<Reason> {
     match &row.status {
@@ -608,9 +584,6 @@ fn capitalized(text: &str) -> String {
 
 /// The button of a card that needs you.
 pub(crate) fn ask_button(row: &Row) -> &'static str {
-    if row.picked.is_some() {
-        return "Review";
-    }
     match &row.status {
         AgentStatus::NeedsYou(Reason::Permission) => "Review",
         _ if row.tone == Tone::Blocked => "Review",
@@ -647,8 +620,6 @@ mod tests {
             tokens: None,
             avatar: None,
             kind: AgentKind::Cli("claude".into()),
-            auto_pick: None,
-            picked: None,
             idle_secs: 0.0,
             stamp: Stamp::default(),
             next: None,
@@ -942,35 +913,6 @@ mod tests {
         assert_eq!(titles(&input.rows), ["brave-otter", "Reviewer"]);
         assert_eq!(input.rows[0].elapsed, 5.0);
         assert_eq!(input.rows[0].status, AgentStatus::SettingUp);
-    }
-
-    #[test]
-    fn a_row_carries_what_tidewatch_picked_until_the_owner_opens_the_tab() {
-        let mut agent = AgentTab::new("Builder".into(), AgentRun::setting_up("claude".into(), 0.0));
-        agent.run.pick_made("Tidewatch picked \"A\" for you".into());
-        let mut tabs: Tabs<Pane<u32>> = Tabs::new(Pane::shell(0));
-        tabs.push(
-            "brave-otter".into(),
-            Pane { body: Body::Shell(1), worktree: None, agent: Some(agent) },
-        );
-        let row = collect("web", Path::new("/work/web"), 0, &tabs, 0.0).rows.remove(0);
-        assert_eq!(row.pick_line().map(String::as_str), Some("Tidewatch picked \"A\" for you"));
-        assert_eq!(ask_button(&row), "Review");
-        tabs.agent_mut(1).unwrap().run.pick_reviewed();
-        let opened = collect("web", Path::new("/work/web"), 0, &tabs, 0.0).rows.remove(0);
-        assert_eq!((opened.pick_line(), ask_button(&opened)), (None, "Answer"));
-    }
-
-    #[test]
-    fn a_countdown_and_a_pick_share_one_line_and_the_pick_wins() {
-        let mut waiting = row(1, "w", AgentStatus::Working);
-        waiting.auto_pick = Some("Picks the recommended answer in 3:40".into());
-        assert_eq!(
-            waiting.pick_line().map(String::as_str),
-            Some("Picks the recommended answer in 3:40")
-        );
-        waiting.picked = Some("Tidewatch picked \"A\" for you".into());
-        assert_eq!(waiting.pick_line().map(String::as_str), Some("Tidewatch picked \"A\" for you"));
     }
 
     #[test]

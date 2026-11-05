@@ -131,8 +131,6 @@ fn row(id: u64, spec: &Spec) -> Row {
             .then(|| crate::avatar_glue::fake_face(id as usize))
             .flatten(),
         kind: spec.kind.clone(),
-        auto_pick: None,
-        picked: None,
         idle_secs: spec.mins * 60.0,
         next: None,
         stamp: Stamp::default(),
@@ -280,10 +278,6 @@ pub(crate) fn build(working: usize) -> Fake {
         "Keep the new loss and rerun the whole benchmark on the replica before the rollout* | Keep the old loss | Blend both losses | Rerun the benchmark",
     ));
     needs_rows[2].look = Some(ask_look("Keep the old URLs as redirects?", "", ""));
-    needs_rows[2].auto_pick = Some("Picks the recommended answer in 3:40".to_owned());
-    needs_rows[3].tone = Tone::Needs;
-    needs_rows[3].picked =
-        Some("Tidewatch picked \"Keep the old URLs as redirects\" for you".to_owned());
     let waits = [
         (
             "recap-backfill",

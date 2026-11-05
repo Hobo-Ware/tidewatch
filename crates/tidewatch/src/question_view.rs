@@ -13,7 +13,6 @@ use egui::{
 use tidewatch_core::question::{Question, QuestionOption, Select};
 
 use crate::brand;
-use crate::question_auto;
 use crate::question_card::{Card, CardKey, Effect, MAX_KEYED, Row};
 use crate::quick_reply::Quick;
 use crate::reader_keys::Answer;
@@ -67,8 +66,6 @@ pub(crate) struct Live {
     pub(crate) card: Card,
     /// How many waiting questions of the tab the agent's picks answer, set before each draw.
     pub(crate) picks: usize,
-    /// What is left before Tidewatch answers for the user, in a tab that runs on its own.
-    pub(crate) auto_left: Option<f64>,
     fold: Fold,
     height: f32,
     focus_other: bool,
@@ -87,7 +84,6 @@ impl Live {
             seq,
             card,
             picks: 0,
-            auto_left: None,
             fold: Fold::Folded,
             height: ESTIMATED_H,
             focus_other: false,
@@ -677,18 +673,6 @@ pub(crate) fn live_card(
             });
         ui.add_space(12.0);
         effect = footer(ui, live, profile);
-        if let Some(left) = live.auto_left {
-            ui.add_space(10.0);
-            ui.label(
-                egui::RichText::new(question_auto::line(
-                    left,
-                    std::slice::from_ref(live.card.question()),
-                ))
-                .font(body(12.0))
-                .color(brand::FAINT),
-            );
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
-        }
     });
     let rect = inner.response.rect;
     if (rect.height() - live.height).abs() > 0.5 {
@@ -824,11 +808,7 @@ fn folded_line(ui: &mut Ui, dock: Rect, live: &mut Live, profile: &str, reply_em
             .size()
             .x;
     let button_left = region.right() - FOLDED_GAP - button_w;
-    let mut meta = options_text(live.card.question().options.len());
-    if let Some(left) = live.auto_left {
-        meta = format!("{meta} \u{b7} picks in {}", question_auto::clock_text(left));
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
-    }
+    let meta = options_text(live.card.question().options.len());
     let meta_galley = painter.layout_no_wrap(meta, body(TEXT_TAG), brand::MUTED);
     let meta_left = button_left - FOLDED_GAP - meta_galley.size().x;
     let shows_meta = meta_left - FOLDED_GAP - text_left >= FOLDED_MIN_TEXT;
@@ -926,23 +906,17 @@ fn answer_row(ui: &mut Ui, answer: Option<&str>, note: &str, label: &str) {
 }
 
 /// The summary card: each question with its answer in its own row, or a waiting or skipped note.
-pub(crate) fn summary(
-    ui: &mut Ui,
-    row: &QuestionRow,
-    profile: &str,
-    time: Option<&str>,
-    auto: bool,
-) {
+pub(crate) fn summary(ui: &mut Ui, row: &QuestionRow, profile: &str, time: Option<&str>) {
     let (pairs, note, label): (Vec<(String, Option<String>)>, String, &str) = match &row.asked {
         Asked::Answered(pairs) => (
             pairs.iter().map(|(q, a)| (q.clone(), Some(a.clone()))).collect(),
             String::new(),
-            if auto { "Picked by Tidewatch" } else { "Your answer" },
+            "Your answer",
         ),
         Asked::Sent(pairs) => (
             pairs.iter().map(|(q, a)| (q.clone(), Some(a.clone()))).collect(),
             String::new(),
-            if auto { "Picked by Tidewatch" } else { "Sending..." },
+            "Sending...",
         ),
         Asked::Declined => (
             row.questions.iter().map(|q| (q.text.clone(), None)).collect(),
@@ -1474,7 +1448,7 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 400.0))),
                 ..RawInput::default()
             };
-            let out = ctx.run_ui(raw, |ui| summary(ui, &row, "Builder", Some("12:41"), false));
+            let out = ctx.run_ui(raw, |ui| summary(ui, &row, "Builder", Some("12:41")));
             texts = out
                 .shapes
                 .iter()
@@ -1585,19 +1559,10 @@ mod tests {
     }
 
     #[test]
-    fn the_countdown_shows_on_the_folded_line() {
-        let mut screen = Screen::folded();
-        screen.live.auto_left = Some(44.2);
-        screen.settle();
-        assert!(screen.text("2 options \u{b7} picks in 0:45").is_some());
-    }
-
-    #[test]
     fn the_folded_line_keeps_its_texts_inside_the_column_at_420_and_1400_px() {
         for width in [420.0, 1400.0] {
             let mut screen = Screen::folded();
             screen.width = width;
-            screen.live.auto_left = Some(45.0);
             screen.live.card = Card::new(vec![Question {
                 text: "The show merge refuses 146682 into 60968 because their seasons do not \
                        match. How should we finish the show-level part?"
@@ -1621,7 +1586,7 @@ mod tests {
         }
     }
 
-    fn drawn_texts(row: &QuestionRow, auto: bool) -> Vec<String> {
+    fn drawn_texts(row: &QuestionRow) -> Vec<String> {
         let ctx = crate::fonts::test_context();
         let mut texts = Vec::new();
         for _ in 0..2 {
@@ -1629,7 +1594,7 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 400.0))),
                 ..RawInput::default()
             };
-            let out = ctx.run_ui(raw, |ui| summary(ui, row, "Builder", None, auto));
+            let out = ctx.run_ui(raw, |ui| summary(ui, row, "Builder", None));
             texts = out
                 .shapes
                 .iter()
@@ -1643,14 +1608,14 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_tidewatch_picked_says_so() {
+    fn an_answer_card_says_whose_answer_it_is() {
         let row = QuestionRow {
             questions: Vec::new(),
             asked: Asked::Answered(vec![("Which retry?".into(), "Backoff".into())]),
             origin: crate::reader_rows::Origin::Claude,
         };
-        assert!(drawn_texts(&row, true).contains(&"Picked by Tidewatch".to_owned()));
-        assert!(!drawn_texts(&row, true).contains(&"Your answer".to_owned()));
-        assert!(drawn_texts(&row, false).contains(&"Your answer".to_owned()));
+        let texts = drawn_texts(&row);
+        assert!(texts.contains(&"Your answer".to_owned()));
+        assert!(!texts.iter().any(|text| text.contains("Tidewatch")));
     }
 }

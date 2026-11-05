@@ -106,7 +106,6 @@ pub(crate) struct ViewState {
     #[cfg(test)]
     settled_at: (f32, f32),
     live: Option<Live>,
-    auto_left: Option<(u64, f64)>,
     quick: Option<(u64, Vec<Quick>)>,
     quick_used: Option<u64>,
     expanded: HashSet<u64>,
@@ -152,7 +151,6 @@ impl Default for ViewState {
             #[cfg(test)]
             settled_at: (0.0, 0.0),
             live: None,
-            auto_left: None,
             quick: None,
             quick_used: None,
             expanded: HashSet::new(),
@@ -168,11 +166,6 @@ impl ViewState {
     /// A view of a tab that started at `started_ms`: what arrives later is new to it.
     pub(crate) fn started_at(started_ms: i64) -> Self {
         Self { fresh_after_ms: Some(started_ms), ..Self::default() }
-    }
-
-    /// What is left of the wait before Tidewatch answers question row `seq` itself.
-    pub(crate) fn set_auto_left(&mut self, left: Option<(u64, f64)>) {
-        self.auto_left = left;
     }
 
     pub(crate) fn live_mut(&mut self) -> Option<&mut Live> {
@@ -770,7 +763,6 @@ pub(crate) fn show(
         reply_enabled = tidewatch && facts.reply_blocked.is_none();
         let grab = state.reply.trim().is_empty();
         live.picks = question_bulk::plan(rows).count();
-        live.auto_left = state.auto_left.filter(|(seq, _)| *seq == live.seq).map(|(_, left)| left);
         let dock = Rect::from_min_max(rect.min, pos2(rect.right(), above));
         match question_view::live_card(ui, dock, live, facts.profile, grab) {
             Effect::Send(given) => actions.push(Action::Ask(live.seq, Reply::Answered(given))),
@@ -1145,12 +1137,7 @@ fn transcript(
                                             row,
                                             review,
                                             live_seq,
-                                            (
-                                                profile,
-                                                stamps[index],
-                                                scene.zone,
-                                                rows.auto_picked(row.seq),
-                                            ),
+                                            (profile, stamps[index], scene.zone),
                                         );
                                         actions.extend(asked.into_iter().map(Action::Review));
                                     }
@@ -1297,14 +1284,14 @@ fn draw_row(
     row: &Row,
     review: Option<&ReviewFacts<'_>>,
     live_seq: Option<u64>,
-    (profile, stamp, zone, auto): (&str, Option<i64>, &TimeZone, bool),
+    (profile, stamp, zone): (&str, Option<i64>, &TimeZone),
 ) -> Vec<ReviewAction> {
     match &row.kind {
         Kind::Review(ids) => return review_row_view::show(ui, ids, &row.text, review),
         Kind::Question(question) => {
             if live_seq != Some(row.seq) {
                 let time = stamp.and_then(|at| clock_label(at, zone));
-                question_view::summary(ui, question, profile, time.as_deref(), auto);
+                question_view::summary(ui, question, profile, time.as_deref());
             }
         }
         Kind::User | Kind::Tidewatch(_) | Kind::Assistant | Kind::Tool(_) => {}
