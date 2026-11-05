@@ -926,6 +926,41 @@ fn answer_question<T: ShowsScreen>(
     reply: Reply,
     now: f64,
 ) -> Option<&'static str> {
+    answer_question_saying(pane, seq, reply, question_words::SKIP_REPLY, now)
+}
+
+/// Answers every Claude question whose menu is on screen while the owner is away: Esc closes the
+/// menu, then the agent is told to decide itself. A question already answered is never answered
+/// again, and one whose menu was not seen on screen is left alone.
+pub(crate) fn answer_while_away<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) -> bool {
+    let Body::Shell(term) = &pane.body else { return false };
+    let Some(agent) = pane.agent.as_ref() else { return false };
+    let Some(row) = agent.reader.rows.pending_question() else { return false };
+    let Kind::Question(asked) = &row.kind else { return false };
+    if !matches!(asked.origin, Origin::Claude) || menu_look(term, &asked.questions) != Look::Open {
+        return false;
+    }
+    let seq = row.seq;
+    answer_question_saying(pane, seq, Reply::Skipped, question::AWAY_TEXT, now).is_none()
+}
+
+/// Every agent tab's open Claude question, answered for an owner who is away.
+pub(crate) fn answer_all_while_away(tabs: &mut Tabs<Pane<PtyTerm>>, now: f64) -> bool {
+    let mut any = false;
+    for tab in tabs.items_mut() {
+        any |= answer_while_away(&mut tab.pane, now);
+    }
+    any
+}
+
+/// `answer_question`, with `skip_text` as what a skip says to the agent.
+fn answer_question_saying<T: ShowsScreen>(
+    pane: &mut Pane<T>,
+    seq: u64,
+    reply: Reply,
+    skip_text: &str,
+    now: f64,
+) -> Option<&'static str> {
     let agent = pane.agent.as_ref()?;
     let asked = agent.reader.rows.question_of(seq).cloned()?;
     let gone =
@@ -951,7 +986,7 @@ fn answer_question<T: ShowsScreen>(
             let steps = if held.send(Reply::Skipped) {
                 Vec::new()
             } else {
-                reply_steps(question_words::SKIP_REPLY.to_owned(), 0.0)
+                reply_steps(skip_text.to_owned(), 0.0)
             };
             (steps, Asked::Declined)
         }
@@ -962,7 +997,7 @@ fn answer_question<T: ShowsScreen>(
         }
         (Origin::Claude, Reply::Skipped) => {
             let mut steps = vec![(0.0, Step::Keys(reader_keys::CLAUDE_MENU_ESCAPE.to_vec()))];
-            steps.extend(reply_steps(question_words::SKIP_REPLY.to_owned(), MENU_CLOSE_S));
+            steps.extend(reply_steps(skip_text.to_owned(), MENU_CLOSE_S));
             (steps, Asked::Declined)
         }
     };
@@ -1236,6 +1271,47 @@ mod tests {
         assert!(typed[1].0 >= MENU_CLOSE_S - 0.001);
         assert_eq!(typed.len(), 2);
         assert_eq!(asked_of(&pane, seq), Asked::Declined);
+    }
+
+    #[test]
+    fn a_claude_question_on_screen_while_away_is_closed_and_told_to_decide_once() {
+        let (mut pane, seq) = pane(Origin::Claude);
+        assert!(answer_while_away(&mut pane, 100.0));
+        let typed = typed(&mut pane);
+        assert_eq!(typed[0], (0.0, Step::Keys(b"\x1b".to_vec())));
+        assert_eq!(typed[1].1, Step::Paste(question::AWAY_TEXT.into()));
+        assert_eq!(typed.len(), 2);
+        assert_eq!(asked_of(&pane, seq), Asked::Declined);
+        assert!(!answer_while_away(&mut pane, 101.0), "never twice");
+        assert!(typed_nothing(&mut pane));
+    }
+
+    fn typed_nothing(pane: &mut Pane<Fake>) -> bool {
+        typed(pane).is_empty()
+    }
+
+    #[test]
+    fn nothing_is_typed_while_away_when_the_menu_is_not_on_screen() {
+        let screens: [&[&str]; 2] = [
+            &["User answered Claude's questions:", "Where? -> Run"],
+            &["compiling", "still working"],
+        ];
+        for rows in screens {
+            let (mut pane, seq) = pane(Origin::Claude);
+            with_screen(&mut pane, rows);
+            assert!(!answer_while_away(&mut pane, 100.0), "{rows:?}");
+            assert!(typed_nothing(&mut pane), "{rows:?}");
+            assert_eq!(asked_of(&pane, seq), Asked::Pending, "{rows:?}");
+        }
+    }
+
+    #[test]
+    fn a_question_the_agent_holds_through_ask_user_is_not_touched_by_the_away_sweep() {
+        let (sender, receiver) = channel();
+        let (mut pane, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
+        assert!(!answer_while_away(&mut pane, 100.0));
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(asked_of(&pane, seq), Asked::Pending);
     }
 
     #[test]

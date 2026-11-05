@@ -65,6 +65,8 @@ pub struct AskWait<'a> {
     pub poll: Duration,
     /// Whether the client that made the call still waits for its reply.
     pub alive: &'a dyn Fn() -> bool,
+    /// Whether the owner is away: a question is then answered at once with the order to decide.
+    pub away: &'a dyn Fn() -> bool,
 }
 
 /// The Tidewatch tools that only report or look something up: they change nothing in the work, so
@@ -419,6 +421,9 @@ fn ask_user(
             );
         }
     };
+    if (wait.away)() {
+        return (question::AWAY_TEXT.to_owned(), false);
+    }
     let (sender, receiver) = channel();
     let reply = AskReply::new(sender);
     let end = reply.end_mark();
@@ -430,6 +435,9 @@ fn ask_user(
             Ok(Reply::Skipped) => break question_words::SKIPPED.to_owned(),
             Err(RecvTimeoutError::Disconnected) => break question::CLOSED_TEXT.to_owned(),
             Err(RecvTimeoutError::Timeout) => {
+                if (wait.away)() {
+                    break question::AWAY_TEXT.to_owned();
+                }
                 if started.elapsed() >= wait.timeout || !(wait.alive)() {
                     break question::TIMED_OUT_TEXT.to_owned();
                 }
@@ -543,7 +551,12 @@ mod tests {
     }
 
     fn test_wait(alive: &dyn Fn() -> bool) -> AskWait<'_> {
-        AskWait { timeout: Duration::from_millis(400), poll: Duration::from_millis(10), alive }
+        AskWait {
+            timeout: Duration::from_millis(400),
+            poll: Duration::from_millis(10),
+            alive,
+            away: &|| false,
+        }
     }
 
     struct Harness {
@@ -1189,6 +1202,15 @@ mod tests {
         alive: &dyn Fn() -> bool,
         respond: impl Fn(&AskReply),
     ) -> (Value, Vec<TabEvent>) {
+        ask_while(args, alive, &|| false, respond)
+    }
+
+    fn ask_while(
+        args: &Value,
+        alive: &dyn Fn() -> bool,
+        away: &dyn Fn() -> bool,
+        respond: impl Fn(&AskReply),
+    ) -> (Value, Vec<TabEvent>) {
         let h = Harness::new();
         let notes_file = h.notes_file();
         let ctx = ToolCtx {
@@ -1197,7 +1219,7 @@ mod tests {
             notes_file: &notes_file,
             notes_lock: &h.lock,
             progress_file: Path::new("/none/progress.md"),
-            ask: test_wait(alive),
+            ask: AskWait { away, ..test_wait(alive) },
             workflow: &Workflow::default,
             after_save: &Vec::new,
         };
@@ -1259,6 +1281,35 @@ mod tests {
         assert_eq!(result_text(&reply), question::TIMED_OUT_TEXT);
         assert!(kept.borrow().as_ref().unwrap().has_ended(), "the card learns the call is over");
         assert!(!kept.borrow().as_ref().unwrap().send(Reply::Skipped));
+    }
+
+    #[test]
+    fn ask_user_answers_at_once_while_the_owner_is_away_and_shows_nothing() {
+        let started = Instant::now();
+        let (reply, shown) =
+            ask_while(&questions_args(), &|| true, &|| true, |_| panic!("nothing should be shown"));
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(result_text(&reply), question::AWAY_TEXT);
+        assert!(shown.is_empty(), "{shown:?}");
+    }
+
+    #[test]
+    fn ask_user_stops_waiting_when_away_turns_on_while_the_question_is_shown() {
+        let kept: RefCell<Option<AskReply>> = RefCell::new(None);
+        let polls = std::cell::Cell::new(0);
+        let away = || {
+            polls.set(polls.get() + 1);
+            kept.borrow().is_some() && polls.get() > 3
+        };
+        let started = Instant::now();
+        let (reply, shown) = ask_while(&questions_args(), &|| true, &away, |held| {
+            *kept.borrow_mut() = Some(held.clone());
+        });
+        assert!(started.elapsed() < Duration::from_millis(300));
+        assert_eq!(shown.len(), 1, "the question was shown before Away turned on");
+        assert_eq!(result_text(&reply), question::AWAY_TEXT);
+        assert!(kept.borrow().as_ref().unwrap().has_ended(), "the card learns the call is over");
     }
 
     #[test]

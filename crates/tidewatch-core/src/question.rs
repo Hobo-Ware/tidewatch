@@ -37,6 +37,8 @@ const OPTION_KEYS: [&str; 4] = ["label", "description", "tradeoff", "recommended
 
 /// What the tool result says when nobody answered in time.
 pub const TIMED_OUT_TEXT: &str = "The user has not answered yet. Do not pick for them: list the question under Needs you in your progress report, carry on with work that does not depend on it, and end your turn when nothing else is left.";
+/// What the tool result says while the owner is away: the question is not shown.
+pub const AWAY_TEXT: &str = "The user is away. Decide yourself, write the decision and why under Decisions in your progress report, and carry on.";
 /// What the tool result says when the question went away unanswered (the tab was closed).
 pub const CLOSED_TEXT: &str = "The question could not be answered because its tab was closed. Proceed with your best judgment.";
 

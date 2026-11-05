@@ -1051,3 +1051,23 @@ fn the_presence_a_launching_agent_is_told_follows_away_and_the_kept_awake_mac() 
     h.listener.set_away(false);
     assert_eq!(h.listener.presence(), Presence { away: false, kept_awake: true });
 }
+
+#[test]
+fn ask_user_while_away_answers_at_once_and_a_flip_during_a_wait_ends_the_held_call() {
+    use tidewatch_core::question::AWAY_TEXT;
+    let h = Harness::start();
+    let hook = h.register_asking(13, "tab-away");
+    h.listener.set_away(true);
+    let (_, at_once) = ask_in_background(&h, &hook.token, 1).join().unwrap();
+    assert_eq!(at_once.json()["result"]["content"][0]["text"], AWAY_TEXT);
+
+    h.listener.set_away(false);
+    let waiting = ask_in_background(&h, &hook.token, 2);
+    let TabEvent::Ask { reply, .. } = h.next_event().event else { panic!("not an ask") };
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!waiting.is_finished(), "held while the owner is here");
+    h.listener.set_away(true);
+    let (_, ended) = waiting.join().unwrap();
+    assert_eq!(ended.json()["result"]["content"][0]["text"], AWAY_TEXT);
+    assert!(reply.has_ended());
+}
