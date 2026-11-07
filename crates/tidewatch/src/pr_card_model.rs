@@ -3,13 +3,14 @@
 //! [`Model`], so the words and the rules about when a button shows are unit tests.
 
 use tidewatch_core::merged_branch;
-use tidewatch_core::pr_cards::{Cards, send_cap};
+use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_prompt::{self, short_step};
 use tidewatch_core::pr_status::{Body, Job, ReviewComment, Via};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 
 use crate::merge_cleanup::{self, Busy, Cleanup};
-use crate::pr_watch::{Handling, Pause, Pending};
+use crate::outbox::budget;
+use crate::pr_watch::{GRACE_SECS, Handling, Pause, Pending};
 
 /// Most bars drawn for running checks.
 const MOST_BARS: usize = 12;
@@ -57,8 +58,6 @@ pub(crate) enum CardAction {
     NotNow(u64),
     SendNow(u64),
     Cancel(u64),
-    /// Open the workflow the message was worded from.
-    ChangeWording,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -446,7 +445,7 @@ fn note_of(context: &Context<'_>, body: &Body) -> String {
         return auto_note(context.mode).to_owned();
     }
     if context.handling == Handling::Paused {
-        return format!("Auto paused after {} sends", send_cap(true));
+        return format!("Auto paused after {} sends", budget(true));
     }
     let waiting = pr_prompt::ask_of(body)
         .and_then(|(ask, _)| context.pending.iter().find(|p| p.message.ask.tag == ask.tag));
@@ -511,9 +510,13 @@ pub(crate) fn age(now_ms: i64, at_ms: i64) -> String {
     }
 }
 
-/// A waiting row: `Will ask Builder to fix CI when it finishes this turn`.
+/// A waiting row: `Will tell Builder about the failed check if it hasn't picked it up in 5 min`.
 pub(crate) fn waiting_text(profile: &str, pending: &Pending) -> String {
-    format!("Will ask {profile} to {} when it finishes this turn", pending.message.ask.phrase)
+    format!(
+        "Will tell {profile} about the {} if it hasn't picked it up in {} min",
+        pending.message.trigger.word(),
+        GRACE_SECS / 60.0
+    )
 }
 
 /// What a first-of-its-kind message says above its exact text.
@@ -529,7 +532,6 @@ pub(crate) fn waiting_buttons(pending: &Pending) -> Vec<Button> {
     if pending.confirm {
         return vec![
             button("Send", true, CardAction::SendNow(pending.id)),
-            button("Change wording", false, CardAction::ChangeWording),
             button("Cancel", false, CardAction::Cancel(pending.id)),
         ];
     }

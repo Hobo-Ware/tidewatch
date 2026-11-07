@@ -1,7 +1,6 @@
 use super::*;
 use tidewatch_core::pr_status::Seen;
 use tidewatch_core::prefs::GithubPrefs;
-use tidewatch_core::workflow_profile::Workflow;
 
 fn job(name: &str, passed: bool) -> Job {
     Job {
@@ -513,11 +512,11 @@ fn only_web_addresses_open() {
 
 #[test]
 fn the_waiting_and_paused_rows_use_the_profile_and_the_reason() {
-    let message = tidewatch_core::pr_prompt::message(&failed(), 42, Workflow::default()).unwrap();
-    let pending = Pending { id: 5, message, body: failed(), number: 42, confirm: false };
+    let message = tidewatch_core::pr_prompt::message(&failed(), 42).unwrap();
+    let pending = Pending::new(5, message, 42, false);
     assert_eq!(
         waiting_text("Builder", &pending),
-        "Will ask Builder to fix CI when it finishes this turn"
+        "Will tell Builder about the failed check if it hasn't picked it up in 5 min"
     );
     let actions: Vec<CardAction> =
         waiting_buttons(&pending).into_iter().map(|button| button.action).collect();
@@ -529,25 +528,24 @@ fn the_waiting_and_paused_rows_use_the_profile_and_the_reason() {
 }
 
 #[test]
-fn the_first_message_of_a_kind_shows_its_words_with_send_change_wording_and_cancel() {
-    let message = tidewatch_core::pr_prompt::message(&failed(), 42, Workflow::default()).unwrap();
-    let pending = Pending { id: 5, message, body: failed(), number: 42, confirm: true };
+fn the_first_message_of_a_kind_shows_its_words_with_send_and_cancel() {
+    let message = tidewatch_core::pr_prompt::message(&failed(), 42).unwrap();
+    let pending = Pending::new(5, message, 42, true);
     assert_eq!(
         confirm_lead("Builder", &pending),
         "Auto's first failed check message in this repo. Check what it says before it goes to Builder."
     );
     let buttons = waiting_buttons(&pending);
     let labels: Vec<&str> = buttons.iter().map(|button| button.label.as_str()).collect();
-    assert_eq!(labels, ["Send", "Change wording", "Cancel"]);
+    assert_eq!(labels, ["Send", "Cancel"]);
     let actions: Vec<CardAction> = buttons.into_iter().map(|button| button.action).collect();
-    assert_eq!(actions, [CardAction::SendNow(5), CardAction::ChangeWording, CardAction::Cancel(5)]);
+    assert_eq!(actions, [CardAction::SendNow(5), CardAction::Cancel(5)]);
 }
 
 #[test]
 fn a_card_whose_message_waits_for_the_first_send_says_so() {
-    let message =
-        tidewatch_core::pr_prompt::message(&commented(), 42, Workflow::default()).unwrap();
-    let waiting = [Pending { id: 1, message, body: commented(), number: 42, confirm: true }];
+    let message = tidewatch_core::pr_prompt::message(&commented(), 42).unwrap();
+    let waiting = [Pending::new(1, message, 42, true)];
     let model = handled(Handling::Answers, vec![commented()], &waiting);
     assert_eq!(model.note.as_deref(), Some("Waiting for you to send it"));
 }
@@ -635,9 +633,8 @@ fn an_ordinary_tab_in_auto_fix_shows_the_same_record_look_as_one_on_its_own() {
 
 #[test]
 fn an_ordinary_tab_in_auto_fix_queues_a_message_for_a_busy_agent_and_says_so() {
-    let message =
-        tidewatch_core::pr_prompt::message(&commented(), 42, Workflow::default()).unwrap();
-    let waiting = [Pending { id: 1, message, body: commented(), number: 42, confirm: false }];
+    let message = tidewatch_core::pr_prompt::message(&commented(), 42).unwrap();
+    let waiting = [Pending::new(1, message, 42, false)];
     let model = handled(Handling::Answers, vec![commented()], &waiting);
     assert_eq!(model.buttons, []);
     assert_eq!(model.note.as_deref(), Some("Queued for Builder"));
@@ -680,9 +677,8 @@ fn a_failed_check_of_a_tab_on_its_own_still_links_the_log_and_the_rerun() {
 
 #[test]
 fn a_message_still_waiting_for_an_idle_agent_reads_queued_and_a_paused_tab_says_so() {
-    let message =
-        tidewatch_core::pr_prompt::message(&commented(), 42, Workflow::default()).unwrap();
-    let waiting = [Pending { id: 1, message, body: commented(), number: 42, confirm: false }];
+    let message = tidewatch_core::pr_prompt::message(&commented(), 42).unwrap();
+    let waiting = [Pending::new(1, message, 42, false)];
     assert_eq!(
         handled(Handling::Agent, vec![commented()], &waiting).note.as_deref(),
         Some("Queued for Builder")

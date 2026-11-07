@@ -8,8 +8,6 @@ use tidewatch_core::kind::Kind;
 use tidewatch_core::progress::{Ledger, real};
 use tidewatch_core::sent::{Reason, because};
 
-use tidewatch_core::workflow_profile::Workflow;
-
 use super::Tidewatch;
 use crate::done_check_glue::{Facts, Look, Request};
 use crate::done_check_trigger::{Claim, applies, claim};
@@ -75,9 +73,8 @@ impl Tidewatch {
         }
         for tab in on_their_own {
             let blocked = self.done_check_can_ask(tab).err();
-            let workflow = self.tab_workflow(tab);
             if !self.done_check.is_fake()
-                && let Some(note) = self.done_check.auto_fix(tab, blocked, workflow)
+                && let Some(note) = self.done_check.auto_fix(tab, blocked)
             {
                 self.send_fix(tab, &note, Origin::Auto, ctx, now);
             }
@@ -106,13 +103,6 @@ impl Tidewatch {
             checks: self.workflow.profile(&worktree.repo).checks,
             today: today(),
         })
-    }
-
-    fn tab_workflow(&self, tab: u64) -> Workflow {
-        self.tabs
-            .get(tab)
-            .and_then(|t| t.pane.worktree.as_ref())
-            .map_or_else(Workflow::default, |worktree| self.workflow.profile(&worktree.repo))
     }
 
     pub(super) fn start_done_check(&mut self, tab: u64, ctx: &egui::Context) {
@@ -155,7 +145,7 @@ impl Tidewatch {
 
     fn ask_fix(&mut self, tab: u64, look: &Look, ctx: &egui::Context, now: f64) {
         let Look::Report(report, _) = look else { return };
-        let Some(note) = report.fix_note(self.tab_workflow(tab)) else { return };
+        let Some(note) = report.fix_note() else { return };
         if self.done_check.is_fake() {
             self.show_toast("Dev run: would ask the agent to fix", ctx);
             return;

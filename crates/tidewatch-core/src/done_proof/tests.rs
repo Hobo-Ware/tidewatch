@@ -1,5 +1,4 @@
 use super::*;
-use crate::workflow_profile::Fixes;
 
 fn run(command: &str, exit_code: i32, output: &str) -> TestsRun {
     let finished = TestRun { exit_code, output: output.to_owned() };
@@ -68,28 +67,17 @@ fn the_result_line_names_the_command_and_what_happened() {
 }
 
 #[test]
-fn a_failed_run_tells_the_agent_what_ran_how_many_failed_where_the_fix_goes_and_the_output() {
+fn a_failed_run_states_what_ran_how_many_failed_and_the_output() {
     let output = "running 3 tests\ntest a ... FAILED\ntest b ... FAILED\n\ntest result: FAILED. 1 passed; 2 failed; 0 ignored\n";
     let failed = run("cargo test --workspace", 101, output);
-    let fixup = Workflow::default();
     assert_eq!(
-        failed.failure_note(fixup),
-        "Tidewatch ran cargo test --workspace: 2 failed (output below). Fix them, fold each fix into its commit, and say done again.\n\n```\nrunning 3 tests\ntest a ... FAILED\ntest b ... FAILED\n\ntest result: FAILED. 1 passed; 2 failed; 0 ignored\n```"
-    );
-    let new_commits = Workflow { fixes: Fixes::NewCommits, ..fixup };
-    assert!(
-        failed.failure_note(new_commits).contains("Fix them, commit each fix, and say done again."),
-        "the words come from the profile"
+        failed.failure_note(),
+        "I ran cargo test --workspace: 2 failed (output below).\n\n```\nrunning 3 tests\ntest a ... FAILED\ntest b ... FAILED\n\ntest result: FAILED. 1 passed; 2 failed; 0 ignored\n```"
     );
     let one = run("pytest", 1, "=== 1 failed, 3 passed ===");
-    assert!(one.failure_note(fixup).starts_with(
-        "Tidewatch ran pytest: 1 failed (output below). Fix it, fold the fix into the commit it belongs to, and say done again."
-    ));
+    assert!(one.failure_note().starts_with("I ran pytest: 1 failed (output below)."));
     let unknown = run("make test", 2, "");
-    assert_eq!(
-        unknown.failure_note(fixup),
-        "Tidewatch ran make test: failed (exit 2) (output below). Fix it, fold the fix into the commit it belongs to, and say done again."
-    );
+    assert_eq!(unknown.failure_note(), "I ran make test: failed (exit 2) (output below).");
 }
 
 #[test]

@@ -102,7 +102,7 @@ impl Tidewatch {
         if confirm
             && !self
                 .pr
-                .dev_pending(id, tidewatch_core::pr_status::Body::Conflict { base: "main".into() })
+                .dev_pending(id, &tidewatch_core::pr_status::Body::Conflict { base: "main".into() })
         {
             return;
         }

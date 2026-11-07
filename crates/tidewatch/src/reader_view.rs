@@ -3911,7 +3911,7 @@ mod tests {
                 .any(|text| text.starts_with("Sent for you \u{b7} auto \u{b7} Because Auto")),
             "{found:?}"
         );
-        assert!(found.iter().any(|text| text == "Change workflow"), "{found:?}");
+        assert!(found.iter().all(|text| text != "Change workflow"), "{found:?}");
         assert!(found.iter().any(|text| text == "Turn off for conflicts"), "{found:?}");
         assert!(found.iter().all(|text| !text.contains("codex-review-state")), "{found:?}");
     }
@@ -4077,19 +4077,8 @@ mod tests {
         let mut watch = Watch::new(std::path::PathBuf::from("/x"));
         watch.take_load();
         watch.loaded(Cards::default(), 0.0);
-        let message = tidewatch_core::pr_prompt::message(
-            &comment,
-            42,
-            tidewatch_core::workflow_profile::Workflow::default(),
-        )
-        .unwrap();
-        watch.pending.push(Pending {
-            id: 1,
-            message,
-            body: comment.clone(),
-            number: 42,
-            confirm: false,
-        });
+        let message = tidewatch_core::pr_prompt::message(&comment, 42).unwrap();
+        watch.pending.push(Pending::new(1, message, 42, false));
         let rows = conversation(20, 40);
         let ctx = crate::fonts::test_context();
         let mut state = ViewState::default();
@@ -4117,7 +4106,7 @@ mod tests {
             });
             visible_texts(&output)
         };
-        let row = "Will ask Builder to answer the comment when it finishes this turn";
+        let row = "Will tell Builder about the review if it hasn't picked it up in 5 min";
         let mut texts = Vec::new();
         for _ in 0..12 {
             texts = frame(vec![]);

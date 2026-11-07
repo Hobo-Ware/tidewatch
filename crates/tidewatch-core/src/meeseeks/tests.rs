@@ -120,22 +120,31 @@ fn a_failed_check_pastes_the_fix_note_counts_once_and_the_next_done_starts_over(
     let failed =
         meeseeks.apply(Event::Failed { step: Step::Tests, detail: "1 failed\nassert".into() }, 0);
     let Command::Paste(text) = failed else { panic!("{failed:?}") };
-    assert!(text.contains("tests") && text.contains("assert") && text.contains("meeseeks_done"));
+    assert!(text.contains("tests") && text.contains("assert"));
     assert_eq!((meeseeks.failures, meeseeks.phase), (1, Phase::Working));
     assert_eq!(meeseeks.note.as_deref(), Some("Tests failed: 1 failed"));
     assert_eq!(said(&mut meeseeks), Command::Check(Step::Change));
 }
 
 #[test]
-fn a_fix_note_asks_for_the_fix_and_leaves_how_to_save_it_to_the_repos_workflow() {
-    let tests = fix_note(Step::Tests, "1 failed");
-    let hand_off = fix_note(Step::HandOff, "no pull request");
-    for note in [&tests, &hand_off] {
-        assert!(note.contains("meeseeks_done again"), "{note}");
-        assert!(!note.contains("commit"), "{note}");
+fn a_fix_note_states_what_failed_and_tells_the_agent_nothing_to_do() {
+    let cases = [
+        (Step::Change, "2 files", "I checked your work and it is not committed yet: 2 files."),
+        (Step::Proof, "1 file", "I cannot finish while the worktree has loose changes: 1 file."),
+        (Step::HandOff, "no pull request", "I checked the hand-off and it failed: no pull request"),
+        (
+            Step::Tests,
+            "1 failed",
+            "I ran the tests and they failed. The end of the output:\n```\n1 failed\n```",
+        ),
+    ];
+    for (step, detail, want) in cases {
+        let note = fix_note(step, detail);
+        assert_eq!(note, want, "{step:?}");
+        for banned in ["Fix", "Commit ", "meeseeks_done", "call "] {
+            assert!(!note.contains(banned), "{banned:?} in {note}");
+        }
     }
-    assert!(tests.contains("Fix them, then call meeseeks_done again."), "{tests}");
-    assert!(hand_off.contains("fix it, then call meeseeks_done again."), "{hand_off}");
 }
 
 #[test]

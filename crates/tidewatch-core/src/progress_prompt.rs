@@ -8,7 +8,7 @@ use crate::agents::Wiring;
 const REPORT_FORMAT: &str = "\
 ## Report
 
-Call `update_progress` once real work starts and again before your final reply. The tool tells you what it needs. {turn_end}
+Call `update_progress` once real work starts and again before your final reply. The tool tells you what it needs. {turn_end}{identity}
 After a context reset, call `get_progress` first. If `update_progress` is missing, look for `mcp__tidewatch__update_progress` with tool search once. If it is still missing, tell the user that Tidewatch reporting is down.
 ";
 
@@ -41,14 +41,36 @@ impl TurnEnd {
     }
 }
 
+/// Whether the agent names its tab and picks its face (`set_name`, `set_avatar`) or has both fixed
+/// for it, as a Meeseeks does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Identity {
+    Picks,
+    Fixed,
+}
+
+impl Identity {
+    fn sentence(self) -> &'static str {
+        match self {
+            Self::Picks => {
+                " Call `set_name` and `set_avatar` once, with your first progress report."
+            }
+            Self::Fixed => "",
+        }
+    }
+}
+
 /// The report section of an agent's house style. `must_dos` is the user's or the repo's list of
 /// steps every task includes, when there is one.
 #[must_use]
-pub fn section(must_dos: Option<&str>, turn_end: TurnEnd) -> String {
+pub fn section(must_dos: Option<&str>, turn_end: TurnEnd, identity: Identity) -> String {
     let must_dos = must_dos.map_or_else(String::new, |text| {
         format!("\n{MUST_DOS_INTRO}\n{}\n", flatten_headings(text.trim_end_matches('\n')))
     });
-    format!("{}{must_dos}", REPORT_FORMAT.replace("{turn_end}", turn_end.sentence()))
+    let report = REPORT_FORMAT
+        .replace("{turn_end}", turn_end.sentence())
+        .replace("{identity}", identity.sentence());
+    format!("{report}{must_dos}")
 }
 
 /// A heading in a must-do list (`### 1. Understand`) becomes a plain bullet, so an agent that
@@ -86,7 +108,7 @@ mod tests {
 
     #[test]
     fn the_report_section_is_two_short_paragraphs_that_name_both_tools() {
-        let text = section(None, TurnEnd::SentBack);
+        let text = section(None, TurnEnd::SentBack, Identity::Picks);
         assert!(text.starts_with("## Report\n\n"));
         assert!(text.contains(
             "Call `update_progress` once real work starts and again before your final reply."
@@ -99,14 +121,14 @@ mod tests {
 
     #[test]
     fn a_missing_tool_is_looked_for_once_and_then_reported_to_the_user() {
-        let text = section(None, TurnEnd::SentBack);
+        let text = section(None, TurnEnd::SentBack, Identity::Picks);
         assert!(text.contains("`mcp__tidewatch__update_progress` with tool search once"));
         assert!(text.contains("Tidewatch reporting is down"));
     }
 
     #[test]
     fn a_list_of_must_dos_comes_after_the_report_paragraphs() {
-        let text = section(Some("- [ ] only this\n"), TurnEnd::SentBack);
+        let text = section(Some("- [ ] only this\n"), TurnEnd::SentBack, Identity::Picks);
         let at = text.find("Must-do steps from the user or this repo").unwrap();
         assert!(at > text.find("tell the user that Tidewatch reporting is down").unwrap());
         assert!(text.ends_with("- [ ] only this\n"), "{text}");
@@ -135,31 +157,31 @@ mod tests {
             assert_eq!(flatten_headings(input), want, "{name}");
         }
         let ten_phases = "### 1. Phase\n- [ ] x\n".repeat(10);
-        let text = section(Some(&ten_phases), TurnEnd::SentBack);
+        let text = section(Some(&ten_phases), TurnEnd::SentBack, Identity::Picks);
         let after = &text[text.find("Must-do steps").unwrap()..];
         assert!(!after.contains('#'), "{after}");
     }
 
     #[test]
     fn what_happens_to_a_turn_with_no_report_is_told_per_cli_and_is_true_of_it() {
-        let sent_back = section(None, TurnEnd::of(Wiring::Claude));
+        let sent_back = section(None, TurnEnd::of(Wiring::Claude), Identity::Picks);
         assert!(sent_back.contains("is sent back to write one."));
         assert!(!sent_back.contains("reminder"));
         for wiring in [Wiring::Codex, Wiring::Gemini, Wiring::Copilot] {
-            let text = section(None, TurnEnd::of(wiring));
+            let text = section(None, TurnEnd::of(wiring), Identity::Picks);
             assert!(text.contains("gets a reminder pasted to you, to write one."), "{wiring:?}");
             assert!(!text.contains("sent back"), "{wiring:?}");
         }
         for turn_end in [TurnEnd::SentBack, TurnEnd::Reminded] {
-            assert!(!section(None, turn_end).contains("{turn_end}"));
+            assert!(!section(None, turn_end, Identity::Picks).contains("{turn_end}"));
         }
     }
 
     #[test]
     fn every_cli_gets_the_same_text_but_for_the_one_sentence_on_a_turn_with_no_report() {
-        let claude = section(None, TurnEnd::of(Wiring::Claude));
+        let claude = section(None, TurnEnd::of(Wiring::Claude), Identity::Picks);
         for wiring in [Wiring::Codex, Wiring::Gemini, Wiring::Copilot] {
-            let other = section(None, TurnEnd::of(wiring));
+            let other = section(None, TurnEnd::of(wiring), Identity::Picks);
             assert_eq!(
                 other.replace(TurnEnd::Reminded.sentence(), TurnEnd::SentBack.sentence()),
                 claude,
@@ -169,10 +191,26 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_that_picks_its_face_is_told_once_to_name_its_tab_and_pick_an_icon() {
+        let picks = section(None, TurnEnd::SentBack, Identity::Picks);
+        assert_eq!(
+            picks
+                .matches("Call `set_name` and `set_avatar` once, with your first progress report.")
+                .count(),
+            1
+        );
+        assert!(picks.split_whitespace().count() <= 100, "{picks}");
+        let fixed = section(None, TurnEnd::SentBack, Identity::Fixed);
+        assert!(!fixed.contains("set_name") && !fixed.contains("set_avatar"), "{fixed}");
+        assert_eq!(picks.replace(Identity::Picks.sentence(), ""), fixed);
+    }
+
+    #[test]
     fn it_is_plain_ascii_and_names_both_tools() {
-        for text in
-            [section(None, TurnEnd::SentBack), section(Some("- [ ] a\n"), TurnEnd::Reminded)]
-        {
+        for text in [
+            section(None, TurnEnd::SentBack, Identity::Picks),
+            section(Some("- [ ] a\n"), TurnEnd::Reminded, Identity::Picks),
+        ] {
             assert!(text.is_ascii());
             assert!(text.contains("update_progress"));
             assert!(text.contains("get_progress"));

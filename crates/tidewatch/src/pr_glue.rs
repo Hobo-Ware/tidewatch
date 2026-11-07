@@ -18,7 +18,7 @@ use crate::jobs::Jobs;
 use crate::merge_cleanup::{Busy, Cleanup};
 use crate::pr_cards_view::Data;
 use crate::pr_jobs::{self, Done, Saver};
-use crate::pr_watch::{Facts, Out, Push, STAYS, Watch, push_of};
+use crate::pr_watch::{Budget, Facts, Out, Push, STAYS, Watch, push_of};
 
 /// What the app must do for a tab.
 #[derive(Debug, PartialEq, Eq)]
@@ -182,6 +182,7 @@ impl Host {
             }
             watch.set_live(fact.live, now);
             watch.autonomous = fact.autonomous;
+            watch.budget = if fact.spent { Budget::Spent } else { Budget::Left };
             watch.workflow = fact.workflow;
             watch.learn_shown(shown.get(fact.repo));
             watch.see_busy(fact.busy, now);
@@ -421,7 +422,7 @@ impl Host {
     }
 
     /// `TIDEWATCH_DEV_SEE=confirm`: whether the tab's watch took a waiting first message.
-    pub(crate) fn dev_pending(&mut self, tab: u64, body: Body) -> bool {
+    pub(crate) fn dev_pending(&mut self, tab: u64, body: &Body) -> bool {
         let Some(watch) = self.tabs.get_mut(&tab) else { return false };
         watch.dev_pending(body, 42);
         true

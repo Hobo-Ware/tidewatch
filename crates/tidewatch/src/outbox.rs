@@ -1,11 +1,10 @@
 //! The one gate every message Tidewatch types into an agent goes through (pure, table-tested): whether
 //! the tab may take text now, one send per tab until the agent leaves Done or `HOLD_SECS` pass, what
-//! waits in line behind that, and the shared cap on automatic sends so two rules cannot loop with an
-//! agent forever.
+//! waits in line behind that, and the tab's one budget of automatic sends, so no rules can loop with
+//! an agent forever. The owner typing resets the budget.
 
 use std::collections::{HashMap, VecDeque};
 
-use tidewatch_core::pr_cards::MAX_AUTO_SENDS;
 use tidewatch_core::sent::{Cap, Reason};
 use tidewatch_core::status::AgentStatus;
 
@@ -18,6 +17,14 @@ pub(crate) const LINE_FULL: &str = "Too many messages are already waiting for th
 const NO_BOX_PATIENCE_S: f64 = 30.0;
 const TYPED_PATIENCE_S: f64 = 120.0;
 const QUEUE_MAX: usize = 8;
+/// Automatic sends a supervised tab takes before the owner types again.
+pub(crate) const SUPERVISED_BUDGET: u32 = 5;
+/// Automatic sends a tab that runs on its own takes before the owner types again.
+pub(crate) const AUTONOMOUS_BUDGET: u32 = 10;
+
+pub(crate) fn budget(autonomous: bool) -> u32 {
+    if autonomous { AUTONOMOUS_BUDGET } else { SUPERVISED_BUDGET }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Origin {
@@ -36,7 +43,6 @@ pub(crate) enum Screen {
 pub(crate) struct Tell {
     pub(crate) reason: Reason,
     pub(crate) because: String,
-    pub(crate) cap: Option<Cap>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,7 +77,7 @@ impl Send {
         Self {
             text: text.to_owned(),
             origin: Origin::Auto,
-            tell: Some(Tell { reason, because: because.to_owned(), cap: None }),
+            tell: Some(Tell { reason, because: because.to_owned() }),
             mid_turn: false,
             reply: false,
         }
@@ -106,30 +112,10 @@ impl Send {
         self
     }
 
-    pub(crate) fn with_cap(mut self, cap: Cap) -> Self {
-        if let Some(tell) = &mut self.tell {
-            tell.cap = Some(cap);
-        }
-        self
-    }
-
-    /// A message Tidewatch chose to send on its own, which save mode holds back.
-    fn held_by_save_mode(&self) -> bool {
+    /// A message Tidewatch chose to send on its own: save mode holds it back and it spends the
+    /// tab's budget.
+    fn automatic(&self) -> bool {
         self.origin == Origin::Auto && self.tell.is_some()
-    }
-
-    fn counted(&self) -> bool {
-        self.origin == Origin::Auto
-            && self.tell.as_ref().is_some_and(|tell| {
-                tell.cap.is_none()
-                    && matches!(
-                        tell.reason,
-                        Reason::DoneCheck
-                            | Reason::CommentGuard
-                            | Reason::LedgerGuard
-                            | Reason::BackgroundJob
-                    )
-            })
     }
 }
 
@@ -174,6 +160,7 @@ struct Lane {
     hold_until: Option<f64>,
     queue: VecDeque<Send>,
     auto_sends: u32,
+    autonomous: bool,
     /// How many times the owner has written to this agent.
     spoke: u32,
     no_box_since: Option<f64>,
@@ -208,6 +195,10 @@ fn decide(status: Option<&AgentStatus>, kind: Kind, held: bool) -> Offer {
 }
 
 impl Lane {
+    fn spent(&self) -> bool {
+        self.auto_sends >= budget(self.autonomous)
+    }
+
     fn held(&self, now: f64) -> bool {
         self.hold_until.is_some_and(|until| now < until)
     }
@@ -265,6 +256,13 @@ impl Outbox {
         self.saving = saving;
     }
 
+    /// Whether the tab runs on its own, which gives it the larger budget.
+    pub(crate) fn set_autonomous(&mut self, tab: u64, autonomous: bool) {
+        if autonomous || self.lanes.contains_key(&tab) {
+            self.lane(tab).autonomous = autonomous;
+        }
+    }
+
     pub(crate) fn offer(
         &mut self,
         tab: u64,
@@ -273,28 +271,29 @@ impl Outbox {
         screen: Screen,
         now: f64,
     ) -> Offer {
-        if self.saving && send.held_by_save_mode() {
+        if self.saving && send.automatic() {
             return Offer::Saving;
         }
         let lane = self.lane(tab);
-        if send.counted() && lane.auto_sends >= MAX_AUTO_SENDS {
+        if send.automatic() && lane.spent() {
             return Offer::Paused;
         }
         lane.look(status, screen, send.kind(), now)
     }
 
+    /// The send's place in the tab's budget, for an automatic send.
     pub(crate) fn cap_for(&self, tab: u64, send: &Send) -> Option<Cap> {
-        let own = send.tell.as_ref().and_then(|tell| tell.cap);
-        own.or_else(|| {
-            send.counted().then(|| Cap {
-                n: self.lanes.get(&tab).map_or(0, |lane| lane.auto_sends) + 1,
-                max: MAX_AUTO_SENDS,
-            })
+        send.automatic().then(|| {
+            let lane = self.lanes.get(&tab);
+            Cap {
+                n: lane.map_or(0, |lane| lane.auto_sends) + 1,
+                max: budget(lane.is_some_and(|lane| lane.autonomous)),
+            }
         })
     }
 
     pub(crate) fn sent(&mut self, tab: u64, send: &Send, now: f64) {
-        let counted = send.counted();
+        let counted = send.automatic();
         let command = send.kind().command && send.reply;
         let lane = self.lane(tab);
         if !command {
@@ -325,7 +324,7 @@ impl Outbox {
     ) -> Ready {
         let Some(lane) = self.lanes.get_mut(&tab) else { return Ready::Nothing };
         if self.saving {
-            lane.queue.retain(|send| !send.held_by_save_mode());
+            lane.queue.retain(|send| !send.automatic());
         }
         let Some(front) = lane.queue.front() else { return Ready::Nothing };
         let kind = front.kind();
@@ -368,7 +367,7 @@ impl Outbox {
     }
 
     pub(crate) fn paused(&self, tab: u64) -> bool {
-        self.lanes.get(&tab).is_some_and(|lane| lane.auto_sends >= MAX_AUTO_SENDS)
+        self.lanes.get(&tab).is_some_and(Lane::spent)
     }
 
     pub(crate) fn forget(&mut self, tab: u64) {
@@ -434,20 +433,6 @@ mod tests {
     }
 
     #[test]
-    fn a_mid_turn_send_with_its_own_cap_is_not_counted_or_paused_by_the_shared_cap() {
-        let mut outbox = Outbox::default();
-        let send = Send::auto("x", Reason::LedgerGuard, "the report went stale")
-            .with_cap(Cap { n: 1, max: 4 })
-            .mid_turn();
-        for turn in 0..2 * MAX_AUTO_SENDS {
-            outbox.sent(TAB, &send, f64::from(turn) * 100.0);
-        }
-        assert!(!outbox.paused(TAB));
-        assert_eq!(offer(&mut outbox, &send, &AgentStatus::Working, 900.0), Offer::Go);
-        assert_eq!(outbox.cap_for(TAB, &send), Some(Cap { n: 1, max: 4 }));
-    }
-
-    #[test]
     fn two_senders_in_one_frame_paste_once_and_the_other_waits() {
         let mut outbox = Outbox::default();
         let first = Send::auto("one", Reason::DueToday, "an item is due");
@@ -485,20 +470,19 @@ mod tests {
     }
 
     #[test]
-    fn three_automatic_sweeps_then_paused_until_the_user_speaks() {
+    fn five_automatic_sends_then_paused_until_the_user_speaks() {
         let mut outbox = Outbox::default();
         let send = sweep();
         let mut caps = Vec::new();
-        for turn in 0..3 {
+        for turn in 0..SUPERVISED_BUDGET {
             let now = f64::from(turn) * 100.0;
             assert_eq!(offer(&mut outbox, &send, &AgentStatus::Done, now), Offer::Go);
             caps.push(outbox.cap_for(TAB, &send));
             outbox.sent(TAB, &send, now);
         }
-        assert_eq!(
-            caps,
-            [Some(Cap { n: 1, max: 3 }), Some(Cap { n: 2, max: 3 }), Some(Cap { n: 3, max: 3 })]
-        );
+        let want: Vec<Option<Cap>> =
+            (1..=5).map(|n| Some(Cap { n, max: SUPERVISED_BUDGET })).collect();
+        assert_eq!(caps, want);
         assert!(outbox.paused(TAB));
         assert_eq!(offer(&mut outbox, &send, &AgentStatus::Done, 500.0), Offer::Paused);
         outbox.user_spoke(TAB);
@@ -517,51 +501,84 @@ mod tests {
     }
 
     #[test]
-    fn ledger_reminders_and_comment_notes_share_the_three_automatic_sends() {
+    fn every_automatic_send_counts_in_one_budget_whatever_its_reason() {
+        let reasons = [
+            Reason::AutoFix,
+            Reason::PullRequest,
+            Reason::MeeseeksCheck,
+            Reason::DueToday,
+            Reason::LedgerGuard,
+            Reason::CommentGuard,
+            Reason::DoneCheck,
+            Reason::BackgroundJob,
+            Reason::KeepGoing,
+        ];
         let mut outbox = Outbox::default();
-        let reminder = Send::auto("ledger", Reason::LedgerGuard, "the ledger was not updated");
-        let sends = [sweep(), reminder.clone(), sweep()];
-        for (turn, send) in sends.iter().enumerate() {
+        for (turn, reason) in reasons.iter().take(SUPERVISED_BUDGET as usize).enumerate() {
+            let send = Send::auto("x", *reason, "a rule fired");
             let now = turn as f64 * 100.0;
-            assert_eq!(offer(&mut outbox, send, &AgentStatus::Done, now), Offer::Go);
-            outbox.sent(TAB, send, now);
+            assert_eq!(offer(&mut outbox, &send, &AgentStatus::Done, now), Offer::Go, "{reason:?}");
+            assert_eq!(
+                outbox.cap_for(TAB, &send),
+                Some(Cap { n: turn as u32 + 1, max: SUPERVISED_BUDGET }),
+                "{reason:?}"
+            );
+            outbox.sent(TAB, &send, now);
         }
-        assert_eq!(
-            outbox.cap_for(TAB, &reminder),
-            Some(Cap { n: 4, max: 3 }),
-            "the reminder is the fourth automatic send"
-        );
-        assert_eq!(offer(&mut outbox, &reminder, &AgentStatus::Done, 500.0), Offer::Paused);
+        for reason in reasons {
+            let send = Send::auto("x", reason, "a rule fired");
+            assert_eq!(
+                offer(&mut outbox, &send, &AgentStatus::Done, 900.0),
+                Offer::Paused,
+                "{reason:?} waits once the budget is spent"
+            );
+        }
         outbox.user_spoke(TAB);
-        assert_eq!(offer(&mut outbox, &reminder, &AgentStatus::Done, 500.0), Offer::Go);
+        assert!(!outbox.paused(TAB));
+        let send = Send::auto("x", Reason::AutoFix, "a rule fired");
+        assert_eq!(offer(&mut outbox, &send, &AgentStatus::Done, 900.0), Offer::Go);
     }
 
     #[test]
-    fn background_nudges_share_the_automatic_cap() {
+    fn a_tab_that_runs_on_its_own_gets_ten_sends_and_a_supervised_one_five() {
+        assert_eq!((budget(false), budget(true)), (5, 10));
         let mut outbox = Outbox::default();
-        let nudge = Send::auto("x", Reason::BackgroundJob, "a background job has no progress");
-        let sweep = sweep();
-        outbox.sent(TAB, &nudge, 0.0);
-        outbox.sent(TAB, &sweep, 100.0);
-        assert_eq!(outbox.cap_for(TAB, &nudge), Some(Cap { n: 3, max: MAX_AUTO_SENDS }));
-        outbox.sent(TAB, &nudge, 200.0);
-        assert_eq!(offer(&mut outbox, &nudge, &AgentStatus::Done, 500.0), Offer::Paused);
-        assert_eq!(offer(&mut outbox, &sweep, &AgentStatus::Done, 500.0), Offer::Paused);
+        outbox.set_autonomous(TAB, true);
+        let send = sweep();
+        for turn in 0..AUTONOMOUS_BUDGET {
+            assert!(!outbox.paused(TAB), "{turn}");
+            outbox.sent(TAB, &send, f64::from(turn) * 100.0);
+        }
+        assert!(outbox.paused(TAB));
+        assert_eq!(outbox.cap_for(TAB, &send), Some(Cap { n: 11, max: AUTONOMOUS_BUDGET }));
+        outbox.user_spoke(TAB);
+        assert!(!outbox.paused(TAB));
+        outbox.set_autonomous(TAB, false);
+        for turn in 0..SUPERVISED_BUDGET {
+            outbox.sent(TAB, &send, f64::from(turn) * 100.0);
+        }
+        assert!(outbox.paused(TAB), "turning autonomy off brings the smaller budget back");
+        outbox.set_autonomous(TAB + 1, false);
+        assert_eq!(outbox.waiting_tabs(), Vec::<u64>::new());
+        assert!(!outbox.paused(TAB + 1), "a supervised tab seen for the first time has no lane");
     }
 
     #[test]
-    fn hand_sends_and_sends_with_their_own_cap_are_not_counted() {
+    fn hand_sends_and_untold_sends_spend_nothing() {
         let mut outbox = Outbox::default();
         let by_hand = Send::by_hand("x", Reason::DoneCheck, "you asked");
-        let own = Send::auto("x", Reason::AutoFix, "Auto is on").with_cap(Cap { n: 1, max: 3 });
-        for turn in 0..5 {
+        let untold = Send::untold("x", Origin::Auto);
+        let reply = Send::reply("x");
+        for turn in 0..2 * SUPERVISED_BUDGET {
             let now = f64::from(turn) * 100.0;
-            outbox.sent(TAB, &by_hand, now);
-            outbox.sent(TAB, &own, now);
+            for send in [&by_hand, &untold, &reply] {
+                outbox.sent(TAB, send, now);
+            }
         }
         assert!(!outbox.paused(TAB));
-        assert_eq!(outbox.cap_for(TAB, &own), Some(Cap { n: 1, max: 3 }));
-        assert_eq!(outbox.cap_for(TAB, &by_hand), None);
+        for send in [&by_hand, &untold, &reply] {
+            assert_eq!(outbox.cap_for(TAB, send), None);
+        }
     }
 
     #[test]

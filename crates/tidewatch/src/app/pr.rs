@@ -7,7 +7,7 @@ use tidewatch_core::pr_ask;
 use tidewatch_core::pr_prompt::Trigger;
 use tidewatch_core::pr_status::{Body, Tone as PrTone};
 use tidewatch_core::prefs::GithubPrefs;
-use tidewatch_core::sent::{Cap, Reason, Switch, because};
+use tidewatch_core::sent::{Reason, Switch, because};
 
 use super::{Tidewatch, wall_ms};
 use crate::merge_cleanup::Busy;
@@ -33,6 +33,8 @@ fn auto_because(trigger: Trigger) -> &'static str {
         Trigger::Conflicts => because::AUTO_CONFLICTS,
     }
 }
+
+const PAUSED: &str = "Auto sends are paused until you type in this tab";
 
 fn now_ms() -> i64 {
     wall_ms() as i64
@@ -69,6 +71,7 @@ impl Tidewatch {
                     workflow: self.workflow.profile(&worktree.repo),
                     pr,
                     autonomous: agent.autonomous(),
+                    spent: self.flow.outbox.paused(tab.id),
                     busy: Busy::of(
                         &agent.run.at_rest_status(now),
                         self.progress.ledger(tab.id).map(|known| &known.ledger),
@@ -87,40 +90,20 @@ impl Tidewatch {
     }
 
     fn apply_pr(&mut self, applied: Vec<Applied>, ctx: &egui::Context, now: f64) {
-        let mut told: Option<(Cap, Trigger)> = None;
+        let mut told: Option<Trigger> = None;
         for Applied { tab, out } in applied {
             match out {
-                Out::Told { n, max, trigger } => told = Some((Cap { n, max }, trigger)),
+                Out::Told(trigger) => told = Some(trigger),
                 Out::Paste(text) => {
                     let send = match told.take() {
-                        Some((cap, trigger)) => {
-                            Send::auto(&text, Reason::AutoFix, auto_because(trigger)).with_cap(cap)
-                        }
+                        Some(trigger) => Send::auto(&text, Reason::AutoFix, auto_because(trigger)),
                         None => Send::untold(&text, Origin::Hand),
                     };
-                    if let Offer::Refuse(reason) = flow_glue::send_or_queue(
-                        &mut self.tabs,
-                        &mut self.flow,
-                        tab,
-                        send,
-                        ctx,
-                        now,
-                    ) {
-                        self.show_toast(reason, ctx);
-                    }
+                    self.send_pr_text(tab, send, ctx, now);
                 }
                 Out::Ended(text) => {
                     let send = Send::auto(&text, Reason::PullRequest, because::PR_ENDED);
-                    if let Offer::Refuse(reason) = flow_glue::send_or_queue(
-                        &mut self.tabs,
-                        &mut self.flow,
-                        tab,
-                        send,
-                        ctx,
-                        now,
-                    ) {
-                        self.show_toast(reason, ctx);
-                    }
+                    self.send_pr_text(tab, send, ctx, now);
                 }
                 Out::Toast(text) => self.show_toast(text, ctx),
                 Out::Notify(notice) => {
@@ -133,6 +116,14 @@ impl Tidewatch {
                 Out::Save => {}
                 Out::Remove => self.remove_merged(tab, ctx),
             }
+        }
+    }
+
+    fn send_pr_text(&mut self, tab: u64, send: Send, ctx: &egui::Context, now: f64) {
+        match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
+            Offer::Refuse(reason) => self.show_toast(reason, ctx),
+            Offer::Paused => self.show_toast(PAUSED, ctx),
+            Offer::Go | Offer::Wait | Offer::Saving => {}
         }
     }
 
@@ -162,7 +153,6 @@ impl Tidewatch {
                 CardAction::PushFix(card) => self.ask_to_push(tab, card, ctx, now),
                 CardAction::SendNow(id) => applied.extend(self.pr.send_now(tab, id, now, ms)),
                 CardAction::Cancel(id) => self.pr.cancel(tab, id),
-                CardAction::ChangeWording => self.open_updates_settings(),
             }
         }
         self.apply_pr(applied, ctx, now);

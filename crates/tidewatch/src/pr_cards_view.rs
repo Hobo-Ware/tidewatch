@@ -436,7 +436,7 @@ fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button]) -> Option<CardAction
 }
 
 /// The first Auto message of a kind in a repo: what it is, the exact words that would go to the
-/// agent, and Send, Change wording and Cancel.
+/// agent, and Send and Cancel.
 fn confirm_row(
     ui: &mut Ui,
     lead: &str,

@@ -78,7 +78,7 @@ fn the_pill_says_today_or_how_late() {
 }
 
 #[test]
-fn the_message_names_the_item_and_its_open_steps_and_asks_for_the_first() {
+fn the_message_names_the_item_and_its_open_steps() {
     let due = Due {
         what: "Switch off the old webhook (#42)".into(),
         days: 0,
@@ -91,10 +91,10 @@ fn the_message_names_the_item_and_its_open_steps_and_asks_for_the_first() {
     };
     assert_eq!(
         ask_text(&due),
-        "Due today: Switch off the old webhook (#42). Steps: Merge the switch; A week of traffic then remove. Start with the first open step."
+        "Due today: Switch off the old webhook (#42). Steps: Merge the switch; A week of traffic then remove."
     );
     let bare = Due { what: "Ship it.".into(), days: 0, steps: Vec::new() };
-    assert_eq!(ask_text(&bare), "Due today: Ship it. Start with the first open step.");
+    assert_eq!(ask_text(&bare), "Due today: Ship it.");
     let long = Due { what: "x".repeat(400), days: 0, steps: Vec::new() };
     assert!(ask_text(&long).contains(&format!("{}...", "x".repeat(137))));
 }

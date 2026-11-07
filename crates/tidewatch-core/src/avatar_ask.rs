@@ -1,14 +1,11 @@
-//! The asks for an avatar. One is pasted into an idle agent when the owner clicks Draw avatar. The
-//! other is sent once, with the owner's first message: on the answer to Claude's `UserPromptSubmit`
-//! hook (see `prompt_answer.rs`), so the icon shows while the agent starts on the task. It never
-//! touches the input box. The decision is pure; the listener reads the facts.
+//! The ask for an avatar, pasted into an idle agent when the owner clicks Draw avatar or Redraw. A
+//! tab is told about `set_avatar` once, in the launch text; whether its first prompt starts the
+//! fallback icon's clock is decided here (pure); the listener reads the facts.
 
 use crate::agents::Wiring;
 
 /// The line pasted into an idle agent when the owner clicks Draw avatar.
 pub const ASK: &str = "Call set_avatar once for this task: pick the Lucide icon of the one object the goal is about, send its name as icon with a color, and name the object in reason. Draw an svg only when no icon fits.";
-
-pub const CONTEXT: &str = "Before anything else, call set_avatar once with an icon that fits this task: the Lucide icon of the one object it is about, as icon with a color, and name the object in reason.";
 
 /// Whether the CLI gets the `set_avatar` tool: the two whose MCP config Tidewatch writes.
 #[must_use]
@@ -29,7 +26,7 @@ pub struct Facts {
     pub asked: bool,
 }
 
-/// Whether the prompt that just arrived asks the tab to pick its icon: a letter face, never asked.
+/// Whether the prompt that just arrived starts the tab's fallback icon clock: a letter face, never marked.
 #[must_use]
 pub fn due(facts: &Facts) -> bool {
     facts.face == Face::Letter && !facts.asked
@@ -55,20 +52,6 @@ mod tests {
         ];
         for (what, facts) in cases {
             assert!(!due(&facts), "{what}");
-        }
-    }
-
-    #[test]
-    fn the_hook_line_names_the_tool_and_asks_for_an_icon_that_fits_the_task() {
-        assert!(CONTEXT.contains(crate::avatar_mcp::SET_TOOL));
-        for want in [
-            "Before anything else",
-            "fits this task",
-            "Lucide icon",
-            "as icon with a color",
-            "name the object",
-        ] {
-            assert!(CONTEXT.contains(want), "{want} in {CONTEXT}");
         }
     }
 

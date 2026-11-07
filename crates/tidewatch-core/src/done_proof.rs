@@ -11,7 +11,6 @@ use crate::limited;
 use crate::meeseeks::tail_of;
 use crate::test_command::TestRun;
 use crate::text::squash;
-use crate::workflow_profile::{Fix, Workflow};
 
 /// What Tidewatch ran itself and what it left behind.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -67,20 +66,14 @@ impl TestsRun {
         }
     }
 
-    /// What the agent hears when the run failed: the result, where the fix goes (from the repo's
-    /// workflow profile) and the end of the output.
+    /// What the agent hears when the run failed: the result and the end of the output.
     #[must_use]
-    pub fn failure_note(&self, workflow: Workflow) -> String {
-        let (result, them, fix) = match self.failed {
-            Some(1) => ("1 failed".to_owned(), "it", Fix::The),
-            Some(n) => (format!("{n} failed"), "them", Fix::Each),
-            None => (format!("failed (exit {})", self.exit_code), "it", Fix::The),
+    pub fn failure_note(&self) -> String {
+        let result = match self.failed {
+            Some(n) => format!("{n} failed"),
+            None => format!("failed (exit {})", self.exit_code),
         };
-        let command = &self.command;
-        let fold = workflow.fold(fix);
-        let note = format!(
-            "Tidewatch ran {command}: {result} (output below). Fix {them}, {fold}, and say done again."
-        );
+        let note = format!("I ran {}: {result} (output below).", self.command);
         if self.tail.is_empty() { note } else { format!("{note}\n\n```\n{}\n```", self.tail) }
     }
 }
@@ -268,7 +261,8 @@ pub fn scope_status(files: &[String], plan: Option<&[String]>) -> (Status, Strin
 }
 
 /// What a fix branch with no test hears.
-pub const FIX_WITHOUT_TEST: &str = "This branch fixes something but adds no test that fails without the fix. Add one, or say why none fits.";
+pub const FIX_WITHOUT_TEST: &str =
+    "This branch fixes something but adds no test that fails without the fix.";
 
 /// Whether the branch says it fixes something: a commit subject that starts `fix`, or a branch
 /// name with `fix` as a word.

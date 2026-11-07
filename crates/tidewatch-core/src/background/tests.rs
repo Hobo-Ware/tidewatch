@@ -151,10 +151,11 @@ fn the_next_wake_is_the_quiet_moment_then_every_minute() {
 }
 
 #[test]
-fn the_nudge_names_the_command_and_carries_the_one_liner() {
-    let text = nudge_text("./import.sh --all");
-    assert!(text.contains("`./import.sh --all`"));
-    assert!(text.contains(PROGRESS_EXAMPLE));
-    assert!(text.contains("$TIDEWATCH_PROGRESS") && text.contains("tail the file"));
+fn the_text_states_the_command_and_how_long_it_was_quiet_and_asks_for_nothing() {
+    let text = quiet_text("./import.sh --all");
+    assert_eq!(
+        text,
+        "Your background command `./import.sh --all` hasn't reported progress in 90 s."
+    );
     assert!(!text.contains('\n') && !text.contains('\u{2014}') && !text.contains('\u{2013}'));
 }

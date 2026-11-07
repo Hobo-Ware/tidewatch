@@ -1,16 +1,20 @@
 //! What one agent tab does about its pull request (PLAN.md, D4 follow-up), as plain data: when to
 //! look at GitHub again, how a look turns into cards, whether a message goes to the agent now, later
-//! or only when the user presses the button, and the cap on Auto. Nothing here starts a thread or
-//! touches a terminal, so every rule is a unit test; `pr_glue` carries the decisions out.
+//! or only when the user presses the button. The agent is told at launch to watch its own pull
+//! request, so Auto is a fallback: news waits `GRACE_SECS`, and goes as a fact only if the agent
+//! started no turn since and the news still holds. Nothing here starts a thread or touches a
+//! terminal, so every rule is a unit test; `pr_glue` carries the decisions out.
 
 use std::path::{Path, PathBuf};
 
 use tidewatch_core::auto_seen::Shown;
 use tidewatch_core::github_hook::Hit;
-use tidewatch_core::pr_cards::{Cards, send_cap};
+use tidewatch_core::pr_cards::Cards;
 use tidewatch_core::pr_gh::Polled;
 use tidewatch_core::pr_prompt::{self, Message, Trigger, short_step};
-use tidewatch_core::pr_status::{Body, ReviewComment, Seen, State, Summary, Tone as PrTone, Via};
+use tidewatch_core::pr_status::{
+    Body, ReviewComment, Seen, State, Summary, SummaryChecks, Tone as PrTone, Via,
+};
 use tidewatch_core::prefs::{GithubPrefs, PrMode};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::GhError;
@@ -19,6 +23,7 @@ use tidewatch_core::worktree_cleanup::Report;
 
 use crate::merge_cleanup::{Busy, Cleanup};
 use crate::note_send::{HOLD_SECS, gate, gate_reason};
+use crate::outbox::budget;
 use tidewatch_core::panel_view::Tone;
 
 /// How soon to look again while checks run.
@@ -27,6 +32,8 @@ pub(crate) const FAST_SECS: f64 = 20.0;
 pub(crate) const SLOW_SECS: f64 = 120.0;
 pub(crate) const LIVE_FAST_SECS: f64 = 120.0;
 pub(crate) const LIVE_SLOW_SECS: f64 = 600.0;
+/// How long news waits for the agent to pick it up itself before Auto tells it.
+pub(crate) const GRACE_SECS: f64 = 300.0;
 const NEWS_LOOK_SECS: f64 = 2.0;
 /// How soon to look after the user re-ran the checks.
 const RERUN_LOOK_SECS: f64 = 5.0;
@@ -75,17 +82,28 @@ impl Pause {
     }
 }
 
-/// A message Auto would send as soon as the agent is idle.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A message Auto would send once the agent is idle and `GRACE_SECS` have passed without it
+/// picking the news up itself.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Pending {
     pub(crate) id: u64,
     pub(crate) message: Message,
-    /// What the message was made from, so a changed workflow can word it again.
-    pub(crate) body: Body,
     pub(crate) number: u64,
+    /// The turns the agent had started on its own when the news landed: one more means it reacted.
+    turns: u32,
+    due: f64,
+    /// The pull request's head when the news landed: a push since answers a review.
+    head: Option<String>,
     /// The first message of its kind in this repo: it waits for a click on Send instead of going on
     /// its own, so the owner reads the wording once.
     pub(crate) confirm: bool,
+}
+
+#[cfg(test)]
+impl Pending {
+    pub(crate) fn new(id: u64, message: Message, number: u64, confirm: bool) -> Self {
+        Self { id, message, number, turns: 0, due: 0.0, head: None, confirm }
+    }
 }
 
 /// A desktop notification, before the tab's name goes in front.
@@ -99,12 +117,8 @@ pub(crate) struct Notice {
 /// What the watch asks the app to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Out {
-    /// The next `Paste` is an Auto send, the `n`-th of `max` on this pull request.
-    Told {
-        n: u32,
-        max: u32,
-        trigger: Trigger,
-    },
+    /// The next `Paste` is an Auto send.
+    Told(Trigger),
     Paste(String),
     /// The pull request ended: Tidewatch tells the agent so on its own.
     Ended(String),
@@ -130,6 +144,7 @@ pub(crate) struct Facts<'a> {
     pub(crate) pr: Option<(u64, &'a str)>,
     /// A YOLO agent or a Meeseeks (`autonomy::autonomous`): the watch acts on its own.
     pub(crate) autonomous: bool,
+    pub(crate) spent: bool,
     /// Whether the agent still needs the worktree.
     pub(crate) busy: Busy,
     /// Whether GitHub tells Tidewatch about the repository now.
@@ -148,7 +163,7 @@ pub(crate) enum Handling {
     Answers,
     /// The agent, through Auto, on a tab that runs on its own: the cards are a record.
     Agent,
-    /// The agent, but the loop guard stopped the sends: the cards stay a record and one line says so.
+    /// The agent, but the tab's send budget is spent: the cards stay a record and one line says so.
     Paused,
 }
 
@@ -156,6 +171,26 @@ pub(crate) enum Handling {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Recount {
     Idle,
+    Due,
+}
+
+/// The tab's one budget of automatic sends, as the outbox last said.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Budget {
+    Left,
+    Spent,
+}
+
+impl Budget {
+    pub(crate) fn spent(self) -> bool {
+        self == Self::Spent
+    }
+}
+
+/// Whether a message Tidewatch typed is yet to start the turn it causes, which is not the agent's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnTurn {
+    None,
     Due,
 }
 
@@ -208,6 +243,7 @@ pub(crate) struct Watch {
     /// The note that the pull request merged or closed, until the agent is idle to read it.
     ending: Option<String>,
     pub(crate) autonomous: bool,
+    pub(crate) budget: Budget,
     pub(crate) workflow: Workflow,
     /// The kinds of Auto message this repo's owner has already read once.
     pub(crate) shown: Shown,
@@ -219,6 +255,9 @@ pub(crate) struct Watch {
     status: AgentStatus,
     head: Option<String>,
     recount: Recount,
+    /// Turns the agent started that no Tidewatch message started.
+    turns: u32,
+    own_turn: OwnTurn,
 }
 
 impl Watch {
@@ -240,6 +279,7 @@ impl Watch {
             pending: Vec::new(),
             ending: None,
             autonomous: false,
+            budget: Budget::Left,
             workflow: Workflow::default(),
             shown: Shown::default(),
             cleanup: Cleanup::default(),
@@ -250,6 +290,8 @@ impl Watch {
             status: AgentStatus::SettingUp,
             head: None,
             recount: Recount::Idle,
+            turns: 0,
+            own_turn: OwnTurn::None,
         }
     }
 
@@ -297,38 +339,29 @@ impl Watch {
         self.refresh_pending();
     }
 
-    /// The workflow or the autonomy changed: the waiting messages are worded again from what they
-    /// were made from, and the first-of-a-kind mark follows.
+    /// The autonomy changed: the first-of-a-kind mark of the waiting messages follows.
     pub(crate) fn refresh_pending(&mut self) {
-        let workflow = self.workflow;
         let waiting = std::mem::take(&mut self.pending);
         self.pending = waiting
             .into_iter()
             .map(|pending| {
-                let message = pr_prompt::message(&pending.body, pending.number, workflow)
-                    .unwrap_or(pending.message);
-                let confirm = self.needs_ok(message.trigger);
-                Pending { message, confirm, ..pending }
+                let confirm = self.needs_ok(pending.message.trigger);
+                Pending { confirm, ..pending }
             })
             .collect();
     }
 
-    fn cap(&self) -> u32 {
-        send_cap(self.autonomous)
-    }
-
-    /// The loop guard stopped a tab that runs on its own: it sends nothing more on this pull request.
+    /// The tab's send budget is spent: a tab that runs on its own sends nothing more until the
+    /// owner types.
     fn capped(&self, default: GithubPrefs) -> bool {
-        self.autonomous
-            && self.policy(default).mode == PrMode::Auto
-            && self.cards.auto_sends >= self.cap()
+        self.autonomous && self.policy(default).mode == PrMode::Auto && self.budget.spent()
     }
 
     pub(crate) fn handling(&self, default: GithubPrefs) -> Handling {
         if self.policy(default).mode != PrMode::Auto {
             Handling::Owner
         } else if !self.autonomous {
-            if self.cards.auto_sends >= self.cap() { Handling::Owner } else { Handling::Answers }
+            if self.budget.spent() { Handling::Owner } else { Handling::Answers }
         } else if self.capped(default) {
             Handling::Paused
         } else {
@@ -399,6 +432,12 @@ impl Watch {
         let became_idle = *status == AgentStatus::Done && self.status != AgentStatus::Done;
         if became_idle {
             self.recount = Recount::Due;
+        }
+        if *status == AgentStatus::Working && self.status != AgentStatus::Working {
+            match std::mem::replace(&mut self.own_turn, OwnTurn::None) {
+                OwnTurn::Due => {}
+                OwnTurn::None => self.turns += 1,
+            }
         }
         self.status = status.clone();
         became_idle && self.cards.fixing && self.cards.seen.is_some()
@@ -523,7 +562,8 @@ impl Watch {
         outs
     }
 
-    /// Auto on a new card: send now when the agent is idle, else wait for it.
+    /// Auto on a new card: the news waits for the agent to pick it up itself, and goes as a fact
+    /// when it has not after `GRACE_SECS`.
     fn react(
         &mut self,
         body: &Body,
@@ -533,43 +573,84 @@ impl Watch {
         now_ms: i64,
     ) -> Vec<Out> {
         let policy = self.policy(default);
-        let Some(message) = pr_prompt::message(body, number, self.workflow) else {
+        let Some(message) = pr_prompt::message(body, number) else {
             return Vec::new();
         };
         if policy.mode != PrMode::Auto
             || self.closed()
             || !pr_prompt::wanted(&policy, body)
-            || self.cards.auto_sends >= self.cap()
+            || self.budget.spent()
         {
             return Vec::new();
         }
-        self.queue(message, body.clone(), number);
+        self.queue(message, number, now + GRACE_SECS);
         self.flush(default, now, now_ms)
     }
 
-    fn queue(&mut self, message: Message, body: Body, number: u64) {
+    fn queue(&mut self, message: Message, number: u64, due: f64) {
         self.pending.retain(|pending| pending.message.ask.tag != message.ask.tag);
         self.next_pending += 1;
         let confirm = self.needs_ok(message.trigger);
-        self.pending.push(Pending { id: self.next_pending, message, body, number, confirm });
+        self.pending.push(Pending {
+            id: self.next_pending,
+            message,
+            number,
+            turns: self.turns,
+            due,
+            head: self.head.clone(),
+            confirm,
+        });
     }
 
     /// `TIDEWATCH_DEV_SEE=confirm`: a conflict message waiting for the first Send, for a capture.
-    pub(crate) fn dev_pending(&mut self, body: Body, number: u64) {
-        if let Some(message) = pr_prompt::message(&body, number, self.workflow) {
-            self.queue(message, body, number);
+    pub(crate) fn dev_pending(&mut self, body: &Body, number: u64) {
+        if let Some(message) = pr_prompt::message(body, number) {
+            self.queue(message, number, 0.0);
         }
     }
 
-    /// Sends the waiting message when the agent is idle and the last send has had its turn (the hook
-    /// that says the agent started may arrive a moment after the paste). Call every frame.
+    /// Whether the news behind `pending` is still true on the last look: the checks still fail,
+    /// the conflict is still there, no push answered the review, and the pull request is open.
+    fn holds(&self, pending: &Pending) -> bool {
+        let Some(seen) = self.cards.seen.as_ref() else { return true };
+        if self.ended {
+            return false;
+        }
+        match pending.message.trigger {
+            Trigger::FailedChecks => {
+                self.summary().is_none_or(|summary| summary.checks == SummaryChecks::Failed)
+            }
+            Trigger::Conflicts => seen.conflicting,
+            Trigger::Reviews => self.head == pending.head,
+        }
+    }
+
+    /// Drops the waiting messages the agent already picked up or that no longer hold. A message
+    /// the owner has yet to confirm stays until news says it is moot.
+    fn drop_settled(&mut self) {
+        let waiting = std::mem::take(&mut self.pending);
+        self.pending = waiting
+            .into_iter()
+            .filter(|pending| {
+                self.holds(pending) && (pending.confirm || self.turns == pending.turns)
+            })
+            .collect();
+    }
+
+    /// Sends the first waiting message whose grace period is over when the agent is idle and the
+    /// last send has had its turn (the hook that says the agent started may arrive a moment after
+    /// the paste). Call every frame.
     pub(crate) fn flush(&mut self, default: GithubPrefs, now: f64, now_ms: i64) -> Vec<Out> {
         let mut outs = self.flush_ending(now, now_ms);
         if !outs.is_empty() || self.pending.is_empty() || self.policy(default).mode != PrMode::Auto
         {
             return outs;
         }
-        if self.cards.auto_sends >= self.cap() {
+        self.drop_settled();
+        if self.pending.is_empty() {
+            return outs;
+        }
+        if self.budget.spent() {
             if self.autonomous {
                 self.pending.clear();
                 return outs;
@@ -580,16 +661,13 @@ impl Watch {
         if !self.idle(now) {
             return outs;
         }
-        let Some(at) = self.pending.iter().position(|pending| !pending.confirm) else {
+        let Some(at) =
+            self.pending.iter().position(|pending| !pending.confirm && now >= pending.due)
+        else {
             return outs;
         };
         let pending = self.pending.remove(at);
-        self.cards.auto_sends += 1;
         outs.extend(self.send(pending.message, Via::Auto, now, now_ms));
-        if self.cards.auto_sends >= self.cap() && !self.autonomous {
-            self.fall_back_to_asking(default);
-            outs.push(Out::Toast(fall_back_text()));
-        }
         outs
     }
 
@@ -612,6 +690,7 @@ impl Watch {
             },
         );
         self.hold_until = Some(now + HOLD_SECS);
+        self.own_turn = OwnTurn::Due;
         vec![Out::Ended(text), Out::Save]
     }
 
@@ -631,9 +710,9 @@ impl Watch {
         let message = self
             .cards
             .get(id)
-            .and_then(|card| pr_prompt::message(&card.body, number, self.workflow))
+            .and_then(|card| pr_prompt::message(&card.body, number))
             .ok_or_else(|| "There is nothing to ask the agent about".to_owned())?;
-        self.manual(message, now, now_ms)
+        self.manual(&message, now, now_ms)
     }
 
     /// `Send now` on a waiting row.
@@ -648,7 +727,7 @@ impl Watch {
         };
         let message = self.pending[at].message.clone();
         let read = self.pending[at].confirm.then_some(message.trigger);
-        let outs = self.manual(message, now, now_ms)?;
+        let outs = self.manual(&message, now, now_ms)?;
         self.pending.retain(|pending| pending.id != pending_id);
         if let Some(kind) = read {
             self.learn_shown(self.shown.with(kind));
@@ -660,12 +739,12 @@ impl Watch {
         self.pending.retain(|pending| pending.id != pending_id);
     }
 
-    fn manual(&mut self, message: Message, now: f64, now_ms: i64) -> Result<Vec<Out>, String> {
+    fn manual(&mut self, message: &Message, now: f64, now_ms: i64) -> Result<Vec<Out>, String> {
         if let Some(reason) = gate_reason(gate(Some(&self.status))) {
             return Err(reason.to_owned());
         }
         self.pending.retain(|pending| pending.message.ask.tag != message.ask.tag);
-        Ok(self.send(message, Via::You, now, now_ms))
+        Ok(self.send(message.asked(), Via::You, now, now_ms))
     }
 
     fn send(&mut self, message: Message, via: Via, now: f64, now_ms: i64) -> Vec<Out> {
@@ -682,11 +761,8 @@ impl Watch {
         );
         self.cards.fixing = true;
         self.hold_until = Some(now + HOLD_SECS);
-        let told = (via == Via::Auto).then_some(Out::Told {
-            n: self.cards.auto_sends,
-            max: self.cap(),
-            trigger,
-        });
+        self.own_turn = OwnTurn::Due;
+        let told = (via == Via::Auto).then_some(Out::Told(trigger));
         told.into_iter().chain([Out::Paste(message.text), Out::Save]).collect()
     }
 
@@ -765,10 +841,19 @@ impl Watch {
         outs
     }
 
-    /// The next wake-up for the hold after a send, when messages wait.
+    /// The next wake-up for the hold after a send, when messages wait, and for the end of a
+    /// waiting message's grace period.
     pub(crate) fn next_flush(&self, now: f64) -> Option<f64> {
-        self.hold_until
-            .filter(|until| *until > now && (!self.pending.is_empty() || self.ending.is_some()))
+        let hold = self
+            .hold_until
+            .filter(|until| *until > now && (!self.pending.is_empty() || self.ending.is_some()));
+        let grace = self
+            .pending
+            .iter()
+            .filter(|pending| !pending.confirm && pending.due > now)
+            .map(|pending| pending.due)
+            .reduce(f64::min);
+        [hold, grace].into_iter().flatten().reduce(f64::min)
     }
 
     pub(crate) fn summary(&self) -> Option<&Summary> {
@@ -802,12 +887,12 @@ pub(crate) fn push_of(watch: Option<&Watch>) -> Push {
 }
 
 fn fall_back_text() -> String {
-    format!("Auto sent {} times on this pull request. Back to Ask me", send_cap(false))
+    format!("Auto sent {} messages to this agent. Back to Ask me", budget(false))
 }
 
 /// The one line a paused tab shows at the end of its timeline.
 pub(crate) fn paused_note() -> String {
-    format!("Auto paused after {} sends on this pull request", send_cap(true))
+    format!("Auto paused after {} sends", budget(true))
 }
 
 fn first_comment(author: &str, comments: &[ReviewComment]) -> String {

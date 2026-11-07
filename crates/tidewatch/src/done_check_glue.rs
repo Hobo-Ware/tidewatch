@@ -11,7 +11,7 @@ use tidewatch_core::done_check::{
 use tidewatch_core::done_proof::{Findings, TestsRun, Verified};
 use tidewatch_core::status::AgentStatus;
 use tidewatch_core::tools::Tools;
-use tidewatch_core::workflow_profile::{Checks, Workflow};
+use tidewatch_core::workflow_profile::Checks;
 
 use crate::done_check_trigger::{Claim, Trigger};
 use crate::jobs::Jobs;
@@ -352,15 +352,10 @@ impl Host {
 
     /// The fix note a tab that runs on its own sends now: its check found something to fix, the
     /// agent may be asked (`blocked` is `ask_blocked`), and that same failure was not sent before.
-    pub(crate) fn auto_fix(
-        &mut self,
-        tab: u64,
-        blocked: Option<&str>,
-        workflow: Workflow,
-    ) -> Option<String> {
+    pub(crate) fn auto_fix(&mut self, tab: u64, blocked: Option<&str>) -> Option<String> {
         let tab = self.tabs.get_mut(&tab)?;
         let Some(Entry::Report { report, .. }) = &tab.entry else { return None };
-        let Some(note) = report.fix_note(workflow) else {
+        let Some(note) = report.fix_note() else {
             tab.auto_sent = None;
             return None;
         };
@@ -440,24 +435,15 @@ mod tests {
     #[test]
     fn a_fixable_problem_is_sent_once_when_the_agent_may_be_asked_and_a_new_one_is_sent_again() {
         let mut host = Host::new(true, Fake::Off);
-        assert_eq!(host.auto_fix(1, None, Workflow::default()), None, "no tab, nothing to send");
+        assert_eq!(host.auto_fix(1, None), None, "no tab, nothing to send");
         host.tabs.entry(1).or_default().entry = Some(blocked_report("2 commits not pushed"));
         let busy = Some("The agent is busy. Ask when it is idle");
-        assert_eq!(
-            host.auto_fix(1, busy, Workflow::default()),
-            None,
-            "busy: wait, and do not spend the one send"
-        );
-        let note = host.auto_fix(1, None, Workflow::default()).unwrap();
-        assert_eq!(
-            note,
-            "The done check found: 2 commits not pushed. Please fix that and tell me when it is done."
-        );
-        assert_eq!(host.auto_fix(1, None, Workflow::default()), None, "the same failure goes once");
+        assert_eq!(host.auto_fix(1, busy), None, "busy: wait, and do not spend the one send");
+        let note = host.auto_fix(1, None).unwrap();
+        assert_eq!(note, "I ran the done check: 2 commits not pushed.");
+        assert_eq!(host.auto_fix(1, None), None, "the same failure goes once");
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("3 commits not pushed"));
-        assert!(
-            host.auto_fix(1, None, Workflow::default()).unwrap().contains("3 commits not pushed")
-        );
+        assert!(host.auto_fix(1, None).unwrap().contains("3 commits not pushed"));
     }
 
     #[test]
@@ -465,7 +451,7 @@ mod tests {
         let mut host = Host::new(true, Fake::Off);
         let tab = host.tabs.entry(1).or_default();
         tab.entry = Some(Entry::Checking { job: 1, before: None });
-        assert_eq!(host.auto_fix(1, None, Workflow::default()), None);
+        assert_eq!(host.auto_fix(1, None), None);
         let passing = Report {
             head: "abc".into(),
             lines: vec![Line { kind: Kind::Pushed, status: Status::Pass, detail: "ok".into() }],
@@ -473,19 +459,16 @@ mod tests {
         };
         host.tabs.get_mut(&1).unwrap().entry =
             Some(Entry::Report { report: Box::new(passing), checked: STAMP });
-        assert_eq!(host.auto_fix(1, None, Workflow::default()), None);
+        assert_eq!(host.auto_fix(1, None), None);
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
-        assert!(host.auto_fix(1, None, Workflow::default()).is_some());
+        assert!(host.auto_fix(1, None).is_some());
         host.tabs.get_mut(&1).unwrap().entry = Some(Entry::Report {
             report: Box::new(Report { head: "abc".into(), ..Report::default() }),
             checked: STAMP,
         });
-        assert_eq!(host.auto_fix(1, None, Workflow::default()), None);
+        assert_eq!(host.auto_fix(1, None), None);
         host.tabs.get_mut(&1).unwrap().entry = Some(blocked_report("2 commits not pushed"));
-        assert!(
-            host.auto_fix(1, None, Workflow::default()).is_some(),
-            "fixed in between, so a return is new"
-        );
+        assert!(host.auto_fix(1, None).is_some(), "fixed in between, so a return is new");
     }
 
     #[test]
@@ -596,9 +579,9 @@ mod tests {
             panic!("no report")
         };
         assert_eq!(failed.outcome(), Outcome::Blocked);
-        let note = failed.fix_note(Workflow::default()).unwrap();
+        let note = failed.fix_note().unwrap();
         assert!(
-            note.starts_with("Tidewatch ran cargo test --workspace: 2 failed (output below)."),
+            note.starts_with("I ran cargo test --workspace: 2 failed (output below)."),
             "{note}"
         );
     }

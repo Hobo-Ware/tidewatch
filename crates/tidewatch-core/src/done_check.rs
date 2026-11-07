@@ -18,7 +18,7 @@ use crate::progress_report::WaitingOn;
 use crate::test_command::{self, Gate};
 use crate::text::plural;
 use crate::tools::{GhError, Tools, run_gh};
-use crate::workflow_profile::{Checks, Workflow};
+use crate::workflow_profile::Checks;
 
 const REMOTE: &str = "origin";
 const NAMED_CHECKS: usize = 3;
@@ -268,10 +268,9 @@ impl Report {
         self.on(today).outcome()
     }
 
-    /// The short note that asks the agent to fix what failed, with the wording of the repo's
-    /// workflow. `None` when nothing failed.
+    /// The short note that states what failed. `None` when nothing failed.
     #[must_use]
-    pub fn fix_note(&self, workflow: Workflow) -> Option<String> {
+    pub fn fix_note(&self) -> Option<String> {
         let failing =
             |kind| self.lines.iter().any(|line| line.kind == kind && line.status == Status::Fail);
         let mut parts: Vec<String> = Vec::new();
@@ -284,16 +283,13 @@ impl Report {
             .map(|line| line.detail.clone())
             .collect();
         if !others.is_empty() {
-            parts.push(format!(
-                "The done check found: {}. Please fix that and tell me when it is done.",
-                others.join("; ")
-            ));
+            parts.push(format!("I ran the done check: {}.", others.join("; ")));
         }
         if failing(Kind::FixTest) {
             parts.push(done_proof::FIX_WITHOUT_TEST.to_owned());
         }
         if let Some(run) = tests {
-            parts.push(run.failure_note(workflow));
+            parts.push(run.failure_note());
         }
         (!parts.is_empty()).then(|| parts.join("\n\n"))
     }
@@ -1056,12 +1052,10 @@ mod tests {
             found: Findings::default(),
         };
         assert_eq!(
-            report.fix_note(Workflow::default()).as_deref(),
-            Some(
-                "The done check found: 2 commits not pushed; PR #42 checks failing: build. Please fix that and tell me when it is done."
-            )
+            report.fix_note().as_deref(),
+            Some("I ran the done check: 2 commits not pushed; PR #42 checks failing: build.")
         );
         let clean = Report { lines: vec![line(Status::Unknown, "x")], ..report };
-        assert_eq!(clean.fix_note(Workflow::default()), None);
+        assert_eq!(clean.fix_note(), None);
     }
 }

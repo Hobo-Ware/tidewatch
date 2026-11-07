@@ -9,7 +9,7 @@ use common::{FakeGh, commit_file, git_available, ok, path_with_only_git, reply, 
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::done_check::{Input, Kind, Outcome, PrFact, Report, Status, Unverified, run};
 use tidewatch_core::tools::Tools;
-use tidewatch_core::workflow_profile::{Checks, Workflow};
+use tidewatch_core::workflow_profile::Checks;
 
 const BRANCH: &str = "agent/rename-helper";
 
@@ -92,10 +92,8 @@ fn loose_changes_and_an_unpushed_commit_block_with_each_reason_named() {
     );
     assert_eq!(status_of(&report, Kind::Pushed), (Status::Fail, "1 commit not pushed"));
     assert_eq!(
-        report.fix_note(Workflow::default()).as_deref(),
-        Some(
-            "The done check found: 1 file with uncommitted changes; 1 commit not pushed. Please fix that and tell me when it is done."
-        )
+        report.fix_note().as_deref(),
+        Some("I ran the done check: 1 file with uncommitted changes; 1 commit not pushed.")
     );
 }
 
@@ -306,7 +304,7 @@ fn tidewatch_runs_the_tests_itself_and_shows_the_command_and_the_result() {
 }
 
 #[test]
-fn a_failing_test_run_blocks_and_the_fix_note_carries_the_count_the_profile_words_and_the_output() {
+fn a_failing_test_run_blocks_and_the_fix_note_carries_the_count_and_the_output() {
     if !git_available() {
         return;
     }
@@ -319,12 +317,9 @@ fn a_failing_test_run_blocks_and_the_fix_note_carries_the_count_the_profile_word
     assert_eq!(status, Status::Fail);
     assert!(detail.ends_with("2 failed"), "{detail}");
     assert_eq!(report.outcome(), Outcome::Blocked);
-    let note = report.fix_note(Workflow::default()).unwrap();
-    assert!(note.starts_with("Tidewatch ran echo 'test result: FAILED."), "{note}");
-    assert!(
-        note.contains(": 2 failed (output below). Fix them, fold each fix into its commit, and say done again."),
-        "{note}"
-    );
+    let note = report.fix_note().unwrap();
+    assert!(note.starts_with("I ran echo 'test result: FAILED."), "{note}");
+    assert!(note.contains(": 2 failed (output below).\n"), "{note}");
     assert!(
         note.ends_with("```\ntest result: FAILED. 1 passed; 2 failed; 0 ignored\n```"),
         "{note}"
@@ -364,10 +359,8 @@ fn a_fix_branch_with_no_test_fails_and_one_that_changes_a_test_passes() {
         (Status::Fail, "the branch fixes something but adds no test")
     );
     assert_eq!(
-        bare.fix_note(Workflow::default()).as_deref(),
-        Some(
-            "This branch fixes something but adds no test that fails without the fix. Add one, or say why none fits."
-        )
+        bare.fix_note().as_deref(),
+        Some("This branch fixes something but adds no test that fails without the fix.")
     );
     std::fs::create_dir_all(r.work.join("tests")).unwrap();
     commit_file(
@@ -407,7 +400,7 @@ fn verified_items_with_no_command_are_claimed_and_never_block() {
     );
     assert_eq!(report.found.claimed, ["it looks right in Safari"]);
     assert_eq!(report.outcome(), Outcome::Done);
-    assert_eq!(report.fix_note(Workflow::default()), None);
+    assert_eq!(report.fix_note(), None);
 }
 
 #[test]
@@ -429,7 +422,7 @@ fn files_changed_outside_what_the_plan_named_are_listed_and_never_block() {
     );
     assert_eq!(report.found.outside, ["src/surprise.rs"]);
     assert_eq!(report.outcome(), Outcome::Done);
-    assert_eq!(report.fix_note(Workflow::default()), None);
+    assert_eq!(report.fix_note(), None);
 }
 
 #[test]

@@ -1,50 +1,6 @@
-//! The answer to Claude's `UserPromptSubmit` hook: extra context the model reads with the prompt,
-//! so what Tidewatch needs to say never touches the input box (pure).
-
-use crate::progress::{Ledger, Mark, real};
-use crate::progress_mcp::UPDATE_TOOL;
-use crate::text::squash;
-
-const NAMED_ITEMS: usize = 3;
-const NAME_CHARS: usize = 60;
-
-/// The pending done checks (Not verified) and the unchecked steps of the ledger, in that order.
-fn open_items(ledger: &Ledger) -> Vec<String> {
-    let checks = real(&ledger.not_verified).map(|entry| entry.text.as_str());
-    let steps = ledger
-        .checklist
-        .iter()
-        .flat_map(|phase| &phase.items)
-        .filter(|item| matches!(item.mark, Mark::Todo | Mark::Doing | Mark::Blocked))
-        .map(|item| item.text.as_str());
-    checks.chain(steps).map(short_name).collect()
-}
-
-fn short_name(text: &str) -> String {
-    let one_line = squash(text);
-    if one_line.chars().count() <= NAME_CHARS {
-        return one_line;
-    }
-    let head: String = one_line.chars().take(NAME_CHARS - 3).collect();
-    format!("{}...", head.trim_end())
-}
-
-/// The one line that tells the agent what its ledger still holds open, so a message that settles
-/// one of them reaches `update_progress`; `None` when nothing is open.
-#[must_use]
-pub fn ledger_context(ledger: &Ledger) -> Option<String> {
-    let open = open_items(ledger);
-    if open.is_empty() {
-        return None;
-    }
-    let named = open.iter().take(NAMED_ITEMS).map(|name| format!("\"{name}\"")).collect::<Vec<_>>();
-    let more = open.len().saturating_sub(NAMED_ITEMS);
-    let more = if more > 0 { format!(" (+{more} more)") } else { String::new() };
-    Some(format!(
-        "Open in your report: {}{more}. If this message changes any of them, call {UPDATE_TOOL}.",
-        named.join("; ")
-    ))
-}
+//! The answer to Claude's hook events: extra context the model reads before its next message, so
+//! what Tidewatch needs to say after a resume or when the repo's services change never touches the
+//! input box (pure).
 
 /// The `UserPromptSubmit` answer carrying every line as one `additionalContext`, `None` for no lines.
 #[must_use]
@@ -88,7 +44,7 @@ mod tests {
 
     #[test]
     fn one_line_is_the_shape_claude_reads_for_a_prompt() {
-        let line = "Open in your report: \"x\".";
+        let line = "Services changed.";
         assert_eq!(context_of(&answer(&[line]).unwrap()), line);
     }
 
@@ -104,88 +60,5 @@ mod tests {
             serde_json::from_str(&answer_to("SessionStart", &["here"]).unwrap()).unwrap();
         assert_eq!(answer["hookSpecificOutput"]["hookEventName"], "SessionStart");
         assert_eq!(answer["hookSpecificOutput"]["additionalContext"], "here");
-    }
-
-    fn ledger(status: &str, checklist: &str, not_verified: &str) -> Ledger {
-        Ledger::parse(&format!(
-            "# Goal\nShip\n\n## Status\nstate: {status}\n\n## Checklist\n### 1. Build\n{checklist}\n\n## Not verified\n{not_verified}\n"
-        ))
-    }
-
-    #[test]
-    fn the_line_names_what_is_open_and_nothing_is_said_when_nothing_is() {
-        let long = "x".repeat(80);
-        let cases = [
-            ("nothing open", ledger("working", "- [x] Build", "- Nothing"), None),
-            ("no ledger content", Ledger::default(), None),
-            (
-                "a pending check",
-                ledger("working", "- [x] Build", "- Verified live"),
-                Some(
-                    "Open in your report: \"Verified live\". If this message changes any of them, call update_progress.",
-                ),
-            ),
-            (
-                "a pending check on a finished ledger",
-                ledger("done", "- [x] Build", "- Verified live"),
-                Some(
-                    "Open in your report: \"Verified live\". If this message changes any of them, call update_progress.",
-                ),
-            ),
-            (
-                "an unchecked step",
-                ledger("working", "- [x] Build\n- [ ] Add tests", "- Nothing"),
-                Some(
-                    "Open in your report: \"Add tests\". If this message changes any of them, call update_progress.",
-                ),
-            ),
-            (
-                "doing and blocked steps count, skipped ones do not",
-                ledger("working", "- [~] Wire it\n- [!] Ship\n- [-] Skip me", "- Nothing"),
-                Some(
-                    "Open in your report: \"Wire it\"; \"Ship\". If this message changes any of them, call update_progress.",
-                ),
-            ),
-            (
-                "checks come before steps",
-                ledger("working", "- [ ] Add tests", "- Verified live"),
-                Some(
-                    "Open in your report: \"Verified live\"; \"Add tests\". If this message changes any of them, call update_progress.",
-                ),
-            ),
-            (
-                "more than three names three",
-                ledger("working", "- [ ] a\n- [ ] b\n- [ ] c", "- d\n- e"),
-                Some(
-                    "Open in your report: \"d\"; \"e\"; \"a\" (+2 more). If this message changes any of them, call update_progress.",
-                ),
-            ),
-            (
-                "a long name is cut",
-                ledger("working", "- [x] Build", &format!("- {long}")),
-                Some(&format!(
-                    "Open in your report: \"{}...\". If this message changes any of them, call update_progress.",
-                    "x".repeat(57)
-                )),
-            ),
-            (
-                "a ledger that waits on the owner names its open items like any other",
-                ledger("waiting", "- [ ] Add tests", "- Verified live"),
-                Some(
-                    "Open in your report: \"Verified live\"; \"Add tests\". If this message changes any of them, call update_progress.",
-                ),
-            ),
-        ];
-        for (what, ledger, want) in cases {
-            assert_eq!(ledger_context(&ledger).as_deref(), want, "{what}");
-        }
-    }
-
-    #[test]
-    fn the_open_line_is_one_line_of_ascii_that_names_the_tool() {
-        let line = ledger_context(&ledger("working", "- [ ] a\n- [ ] b", "- c")).unwrap();
-        assert_eq!(line.lines().count(), 1);
-        assert!(line.is_ascii());
-        assert!(line.contains(UPDATE_TOOL));
     }
 }
