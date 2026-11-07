@@ -1,15 +1,13 @@
-//! The app's side of long jobs: per-tab boards fed by the progress file, `report_job` and the terminal.
+//! The app's side of long jobs: per-tab boards fed by the progress file and `report_job`.
 //! `TIDEWATCH_FAKE_JOBS=1` gives every agent tab six fake jobs and writes nothing; `idle` or `done`
 //! also treats every agent as not working or as done.
 
-use std::collections::{HashMap, HashSet};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use stdusk_core::terminal::GridSnap;
 use tidewatch_core::background::{Launch, Signal, Watch};
 use tidewatch_core::job::{Agent, JobBoard, JobState, Report, next_second_at};
-use tidewatch_core::job_bar;
 use tidewatch_core::job_feed::Feed;
 use tidewatch_core::job_store;
 use tidewatch_core::paths::{jobs_file_beside, progress_feed_file_beside};
@@ -17,8 +15,6 @@ use tidewatch_core::paths::{jobs_file_beside, progress_feed_file_beside};
 use crate::jobs::Jobs;
 
 const SAVE_EVERY_MS: i64 = 3_000;
-const SCAN_EVERY_MS: i64 = 1_000;
-const SEEN_LINES_CAP: usize = 4_096;
 const MIN_MS: i64 = 60_000;
 
 #[derive(Clone, Copy, Debug)]
@@ -38,13 +34,6 @@ struct Files {
 }
 
 #[derive(Default)]
-struct Scan {
-    output: u64,
-    at_ms: i64,
-    seen: HashSet<u64>,
-}
-
-#[derive(Default)]
 struct Tab {
     board: JobBoard,
     feed: Feed,
@@ -54,7 +43,6 @@ struct Tab {
     polled_ms: i64,
     dirty: bool,
     saved_ms: i64,
-    scan: Scan,
     watch: Watch,
     last_report_ms: Option<i64>,
 }
@@ -238,42 +226,6 @@ impl Host {
             tab.dirty |= tab.board.report(&report, now_ms);
         }
         tab.polled_ms = i64::MIN;
-    }
-
-    pub(crate) fn scan(
-        &mut self,
-        id: u64,
-        output: u64,
-        now_ms: i64,
-        rows: impl FnOnce() -> Vec<String>,
-    ) -> Option<i64> {
-        let tab = self.tabs.get_mut(&id).filter(|tab| tab.loaded)?;
-        if output == tab.scan.output {
-            return None;
-        }
-        let due = tab.scan.at_ms + SCAN_EVERY_MS;
-        if now_ms < due {
-            return Some(due);
-        }
-        tab.scan.output = output;
-        tab.scan.at_ms = now_ms;
-        for line in rows() {
-            let mut hasher = DefaultHasher::new();
-            line.hash(&mut hasher);
-            if !tab.scan.seen.insert(hasher.finish()) {
-                continue;
-            }
-            if let Some(report) = job_bar::parse(&line)
-                && tab.board.report_known(&report, now_ms)
-            {
-                self.told.push((id, report));
-                tab.dirty = true;
-            }
-        }
-        if tab.scan.seen.len() > SEEN_LINES_CAP {
-            tab.scan.seen.clear();
-        }
-        None
     }
 }
 
