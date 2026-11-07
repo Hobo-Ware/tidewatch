@@ -10,6 +10,8 @@
 
 @.agents/rules/testing.md
 
+@.agents/rules/agent-channels.md
+
 # Domain rules - load on demand
 
 Not auto-imported, to keep the baseline context small. Read them with the Read tool when the
