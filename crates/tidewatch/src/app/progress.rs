@@ -241,7 +241,7 @@ impl Tidewatch {
             .collect();
         for tab in idle {
             let Some(launch) = self.job_live.background_due(tab, true, now_ms) else { continue };
-            let text = background::nudge_text(&launch.command);
+            let text = background::quiet_text(&launch.command);
             let send = Send::auto(&text, Said::BackgroundJob, because::BACKGROUND_JOB);
             match flow_glue::send_or_queue(&mut self.tabs, &mut self.flow, tab, send, ctx, now) {
                 Offer::Go | Offer::Wait => {

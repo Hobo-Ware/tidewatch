@@ -13,7 +13,7 @@ use crate::autonomy::autonomous;
 use crate::fsutil::write_atomic;
 use crate::meeseeks_target::Target;
 use crate::paths::TidewatchPaths;
-use crate::progress_prompt::{self, TurnEnd};
+use crate::progress_prompt::{self, Identity, TurnEnd};
 use crate::workflow_profile::Workflow;
 
 pub const DEFAULT_HOUSE_STYLE: &str = "\
@@ -50,6 +50,26 @@ const JOBS: &str = "\
 
 Background work writes JSON lines to `$TIDEWATCH_PROGRESS`, because you cannot call a tool while you wait: `{\"name\",\"done\",\"total\",\"unit\"}`. Call `report_job` only for work you drive turn by turn.
 ";
+
+const PR_HEAD: &str = "\
+## Your pull request
+
+Once you open a pull request, it's yours to watch: CI checks, review comments and threads, and conflicts with the base branch. React yourself: fix failures, answer every review thread, and resolve conflicts the way this repo's workflow says.";
+
+const PR_WATCH_CLAUDE: &str = "Start a Monitor on a script that polls `gh pr checks` and new review comments, or set a CronCreate check-in.";
+const PR_WATCH_OTHER: &str = "Check again before you end your turn.";
+const PR_TAIL: &str = "Tidewatch only tells you about something you haven't picked up.";
+
+fn pr_section(role: Role, turn_end: TurnEnd) -> String {
+    if !matches!(role, Role::Agent | Role::Autonomous) {
+        return String::new();
+    }
+    let watch = match turn_end {
+        TurnEnd::SentBack => PR_WATCH_CLAUDE,
+        TurnEnd::Reminded => PR_WATCH_OTHER,
+    };
+    format!("\n{PR_HEAD} {watch} {PR_TAIL}\n")
+}
 
 const PUSH_LINE: &str =
     "You may push any branch except the default branch. Tags and the default branch are refused.";
@@ -223,10 +243,15 @@ pub fn compose_for_cli(
         String::new()
     };
     let awake = if presence.kept_awake { format!("\n{KEPT_AWAKE_NOTE}") } else { String::new() };
+    let identity = match role {
+        Role::Agent | Role::Autonomous => Identity::Picks,
+        Role::Meeseeks | Role::MeeseeksOnPr => Identity::Fixed,
+    };
     format!(
-        "{}\n\n{INTRO}\n{}\n{ASKING}\n{JOBS}{}{one_task}{away}{awake}",
+        "{}\n\n{INTRO}\n{}\n{ASKING}\n{JOBS}{}{}{one_task}{away}{awake}",
         house_style.trim_end(),
-        progress_prompt::section(must_dos, turn_end),
+        progress_prompt::section(must_dos, turn_end, identity),
+        pr_section(role, turn_end),
         workflow.unwrap_or_default(),
     )
 }
@@ -386,7 +411,7 @@ mod tests {
         let with = |turn_end| compose_for_cli("be brief", None, Role::Agent, turn_end, None, away);
         let claude = with(TurnEnd::SentBack);
         for tool in ["CronCreate", "Monitor", "recurring false"] {
-            assert_eq!(claude.matches(tool).count(), 1, "{tool}");
+            assert_eq!(WAKE_YOURSELF.matches(tool).count(), 1, "{tool}");
         }
         assert!(claude.contains(WAKE_YOURSELF) && !claude.contains(WAIT_IN_REPORT));
         let other = with(TurnEnd::Reminded);
@@ -520,7 +545,6 @@ mod tests {
         let checklist = Some("- [ ] only this\n");
         let plain = compose("be brief", checklist);
         assert!(!plain.contains("Meeseeks") && !plain.contains("meeseeks_done"));
-        assert!(!plain.contains("set_name"));
         assert_eq!(compose_for("be brief", checklist, Role::Agent), plain);
         let text = compose_for("be brief", checklist, Role::Meeseeks);
         let launch = text.find("# Working in Tidewatch").unwrap();
@@ -561,15 +585,58 @@ mod tests {
     }
 
     #[test]
-    fn no_role_is_told_to_draw_an_avatar_or_to_write_its_reply_in_a_certain_place() {
+    fn a_face_is_picked_by_the_roles_that_have_none_fixed_and_a_reply_has_no_set_place() {
         for role in ROLES {
             let text = compose_for("be brief", Some("- [ ] only this\n"), role);
             assert!(!text.contains("call `set_avatar` once"), "{role:?}");
             assert!(!text.contains("one message at the end of the turn"), "{role:?}");
             assert!(!text.contains("Never put the answer before tool calls"), "{role:?}");
+            let told = text.contains(
+                "Call `set_name` and `set_avatar` once, with your first progress report.",
+            );
+            assert_eq!(told, matches!(role, Role::Agent | Role::Autonomous), "{role:?}");
+            assert_eq!(
+                text.matches("`set_avatar`").count(),
+                1,
+                "{role:?}: each tool is named once"
+            );
         }
         let meeseeks = compose_for("be brief", None, Role::Meeseeks);
         assert!(meeseeks.contains("Do not call `set_avatar`: your face is fixed."));
+    }
+
+    #[test]
+    fn only_an_agent_that_may_open_a_pull_request_is_told_to_watch_it_and_how_depends_on_the_cli() {
+        for role in ROLES {
+            for (turn_end, monitors) in [(TurnEnd::SentBack, true), (TurnEnd::Reminded, false)] {
+                let text = compose_for_cli(
+                    "be brief",
+                    None,
+                    role,
+                    turn_end,
+                    Some(Workflow::default()),
+                    Presence::default(),
+                );
+                let watches = matches!(role, Role::Agent | Role::Autonomous);
+                assert_eq!(text.contains("## Your pull request"), watches, "{role:?}");
+                if !watches {
+                    assert!(!text.contains("Monitor") && !text.contains("CronCreate"), "{role:?}");
+                    continue;
+                }
+                for needle in [
+                    "it's yours to watch: CI checks, review comments and threads, and conflicts with the base branch",
+                    "React yourself: fix failures, answer every review thread",
+                    "Tidewatch only tells you about something you haven't picked up.",
+                ] {
+                    assert!(text.contains(needle), "{role:?} {turn_end:?}: {needle}");
+                }
+                assert_eq!(text.contains(PR_WATCH_CLAUDE), monitors, "{role:?} {turn_end:?}");
+                assert_eq!(text.contains(PR_WATCH_OTHER), !monitors, "{role:?} {turn_end:?}");
+                let at = text.find("## Your pull request").unwrap();
+                assert!(text.find("## Long jobs").unwrap() < at);
+                assert!(at < text.find("## This repo's workflow").unwrap());
+            }
+        }
     }
 
     #[test]

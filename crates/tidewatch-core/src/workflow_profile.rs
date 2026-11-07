@@ -33,13 +33,6 @@ pub enum PullRequests {
     Ready,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fix {
-    The,
-    Each,
-    It,
-}
-
 /// The checks Tidewatch runs itself on an agent that says it is done, one switch each. The first
 /// three are on by default; the other two cost tokens or send a message, so a repo turns them on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,8 +78,6 @@ pub struct Workflow {
     pub checks: Checks,
 }
 
-const LEASE: &str = "push with --force-with-lease";
-
 impl Workflow {
     #[must_use]
     pub fn catch_up_rewrites(self) -> bool {
@@ -96,41 +87,6 @@ impl Workflow {
     #[must_use]
     pub fn fix_rewrites(self) -> bool {
         self.fixes == Fixes::Fixup
-    }
-
-    #[must_use]
-    pub fn catch_up_clause(self, base: &str) -> String {
-        match self.catch_up {
-            CatchUp::Rebase => format!("Rebase onto origin/{base}"),
-            CatchUp::Merge => format!("Merge origin/{base} into this branch"),
-        }
-    }
-
-    #[must_use]
-    pub fn push_after_catch_up(self) -> &'static str {
-        if self.catch_up_rewrites() { LEASE } else { "push" }
-    }
-
-    /// Where a fix goes, without the push.
-    #[must_use]
-    pub fn fold(self, fix: Fix) -> &'static str {
-        match (self.fixes, fix) {
-            (Fixes::Fixup, Fix::The) => "fold the fix into the commit it belongs to",
-            (Fixes::Fixup, Fix::Each) => "fold each fix into its commit",
-            (Fixes::Fixup, Fix::It) => "fold it into its commit",
-            (Fixes::NewCommits, Fix::The) => "commit the fix",
-            (Fixes::NewCommits, Fix::Each) => "commit each fix",
-            (Fixes::NewCommits, Fix::It) => "commit it",
-        }
-    }
-
-    #[must_use]
-    pub fn fix_and_push(self, fix: Fix) -> String {
-        let fold = self.fold(fix);
-        match self.fixes {
-            Fixes::Fixup => format!("{fold} and {LEASE}"),
-            Fixes::NewCommits => format!("{fold} and push"),
-        }
     }
 
     /// What happens to each fix a review asked for, before any push.

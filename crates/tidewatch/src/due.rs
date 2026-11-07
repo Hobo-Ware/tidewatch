@@ -95,7 +95,7 @@ fn one_line(text: &str) -> String {
     }
 }
 
-/// The message pasted into the agent when the user asks it to start.
+/// The fact pasted into the agent about an item due today: the item and its open steps.
 pub(crate) fn ask_text(due: &Due) -> String {
     let open: Vec<String> = due
         .steps
@@ -105,10 +105,7 @@ pub(crate) fn ask_text(due: &Due) -> String {
         .collect();
     let steps =
         if open.is_empty() { String::new() } else { format!(" Steps: {}.", open.join("; ")) };
-    format!(
-        "Due today: {}.{steps} Start with the first open step.",
-        one_line(due.what.trim().trim_end_matches('.'))
-    )
+    format!("Due today: {}.{steps}", one_line(due.what.trim().trim_end_matches('.')))
 }
 
 /// Why Ask is off, or `None` when the agent is idle and may be given the message.

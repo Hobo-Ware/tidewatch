@@ -10,7 +10,7 @@ use tidewatch_core::workflow_profile::Workflow;
 use tidewatch_core::worktree::{self, Worktree};
 
 use super::*;
-use crate::pr_watch::Facts;
+use crate::pr_watch::{Facts, Pending};
 use crate::test_support::git;
 
 struct Merged {
@@ -65,6 +65,7 @@ impl Merged {
             live: false,
             pr: None,
             autonomous: false,
+            spent: false,
             busy: self.busy,
             workflow: self.workflow,
         }];
@@ -211,15 +212,9 @@ fn a_kind_the_owner_sent_once_is_remembered_by_the_repo_across_a_restart() {
     let mut tab = merged_tab();
     tab.tick();
     let conflict = Body::Conflict { base: "main".into() };
-    let message = pr_prompt::message(&conflict, 42, Workflow::default()).unwrap();
+    let message = pr_prompt::message(&conflict, 42).unwrap();
     let watch = tab.host.tabs.get_mut(&1).unwrap();
-    watch.pending.push(crate::pr_watch::Pending {
-        id: 7,
-        message,
-        body: conflict,
-        number: 42,
-        confirm: true,
-    });
+    watch.pending.push(Pending::new(7, message, 42, true));
     let applied = tab.host.send_now(1, 7, 1.0, 5);
     assert!(applied.iter().any(|a| matches!(a.out, Out::Paste(_))), "{applied:?}");
     tab.tick();

@@ -1,5 +1,4 @@
 use super::*;
-use tidewatch_core::pr_cards::{MAX_AUTO_SENDS, MAX_AUTONOMOUS_SENDS};
 use tidewatch_core::pr_status::{Decision, Event, Job, ReviewComment, State, SummaryChecks};
 use tidewatch_core::status::Reason;
 
@@ -61,13 +60,14 @@ fn failed() -> Body {
 }
 
 fn polled(bodies: Vec<Body>, pending: bool, ended: bool) -> Polled {
+    let conflicting = bodies.iter().any(|body| matches!(body, Body::Conflict { .. }));
     Polled {
         events: bodies
             .into_iter()
             .enumerate()
             .map(|(n, body)| Event { at_ms: 1_000 + n as i64, body })
             .collect(),
-        seen: Seen { opened: true, ..Seen::default() },
+        seen: Seen { opened: true, conflicting, ..Seen::default() },
         summary: summary(SummaryChecks::Failed),
         head: "head-1".into(),
         checks_pending: pending,
@@ -332,30 +332,101 @@ fn ask_me_shows_the_card_and_notifies_but_sends_nothing() {
 }
 
 #[test]
-fn auto_fix_sends_at_once_when_the_agent_is_idle() {
+fn auto_waits_out_the_grace_period_and_then_tells_an_idle_agent_the_fact() {
     let mut watch = ready(Some(42));
     watch.set_policy(auto(), 0.0);
     watch.observe(&AgentStatus::Done);
     watch.look_started();
     let outs = watch.polled(Ok(polled(vec![failed()], false, false)), auto(), "t", 5.0, 9_000);
-    let text = pasted(&outs);
-    assert_eq!(text.len(), 1);
-    assert!(
-        text[0].starts_with("check (ubuntu-latest) failed at \"clippy\" on PR #42 (log below)."),
-        "{}",
-        text[0]
+    assert_eq!(pasted(&outs), Vec::<&str>::new(), "the agent gets the grace period first");
+    assert_eq!(watch.pending.len(), 1);
+    assert_eq!(watch.next_flush(5.0), Some(5.0 + GRACE_SECS));
+    let early = watch.flush(auto(), 5.0 + GRACE_SECS - 1.0, 9_100);
+    assert_eq!(pasted(&early), Vec::<&str>::new());
+    let outs = watch.flush(auto(), 5.0 + GRACE_SECS, 9_200);
+    assert_eq!(
+        pasted(&outs),
+        [
+            "PR #42: checks failed: check (ubuntu-latest) at \"clippy\".\n\ncheck (ubuntu-latest):\n```\nerror: unused import\n```"
+        ]
     );
-    assert_eq!(watch.cards.auto_sends, 1);
+    assert!(outs.contains(&Out::Told(Trigger::FailedChecks)));
     let Body::Sent { via, tag, .. } = &watch.cards.cards().last().unwrap().body else {
         panic!("no message card")
     };
     assert_eq!((*via, tag.as_str()), (Via::Auto, "CI failure"));
     assert_eq!(watch.pending, []);
     assert!(watch.cards.fixing);
+    let again = watch.flush(auto(), 5.0 + GRACE_SECS + 60.0, 9_300);
+    assert_eq!(pasted(&again), Vec::<&str>::new(), "once");
 }
 
 #[test]
-fn auto_fix_waits_for_a_busy_agent_and_never_pastes_into_one_that_waits_on_you() {
+fn news_the_agent_picked_up_by_starting_a_turn_is_never_sent() {
+    let mut watch = ready(Some(42));
+    watch.set_policy(auto(), 0.0);
+    watch.observe(&AgentStatus::Done);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![failed()], false, false)), auto(), "t", 5.0, 9_000);
+    assert_eq!(watch.pending.len(), 1);
+    watch.observe(&AgentStatus::Working);
+    watch.observe(&AgentStatus::Done);
+    let outs = watch.flush(auto(), 5.0 + GRACE_SECS, 9_100);
+    assert_eq!(pasted(&outs), Vec::<&str>::new());
+    assert_eq!(watch.pending, [], "the agent reacted, so nothing waits");
+    assert_eq!(sent_count(&watch), 0);
+}
+
+#[test]
+fn a_turn_the_agent_was_already_in_when_the_news_landed_is_not_a_reaction() {
+    let mut watch = ready(Some(42));
+    watch.set_policy(auto(), 0.0);
+    watch.observe(&AgentStatus::Working);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![failed()], false, false)), auto(), "t", 5.0, 9_000);
+    watch.observe(&AgentStatus::Done);
+    let outs = watch.flush(auto(), 5.0 + GRACE_SECS, 9_100);
+    assert_eq!(pasted(&outs).len(), 1);
+}
+
+#[test]
+fn news_that_no_longer_holds_is_dropped_instead_of_sent() {
+    let default = auto();
+    let mut passed = polled(vec![], false, false);
+    passed.summary = summary(SummaryChecks::Passed);
+    let mut clean = polled(vec![], false, false);
+    clean.seen.conflicting = false;
+    let cases = [
+        ("checks pass again", failed(), passed, None),
+        ("the conflict is gone", conflict(), clean, None),
+        (
+            "a push answered the review",
+            changes_requested(),
+            polled(vec![], false, false),
+            Some("head-2"),
+        ),
+    ];
+    for (what, news, later, new_head) in cases {
+        let mut watch = ready(Some(42));
+        watch.set_policy(default, 0.0);
+        watch.observe(&AgentStatus::Done);
+        watch.look_started();
+        watch.polled(Ok(polled(vec![news], false, false)), default, "t", 5.0, 9_000);
+        assert_eq!(watch.pending.len(), 1, "{what}");
+        watch.look_started();
+        watch.polled(Ok(later), default, "t", 100.0, 9_100);
+        if let Some(head) = new_head {
+            watch.learn(42, head, 100.0);
+        }
+        let outs = watch.flush(default, 5.0 + GRACE_SECS, 9_200);
+        assert_eq!(pasted(&outs), Vec::<&str>::new(), "{what}");
+        assert_eq!(watch.pending, [], "{what}");
+    }
+}
+
+#[test]
+fn auto_waits_for_a_busy_agent_and_never_pastes_into_one_that_waits_on_you() {
+    let due = 5.0 + GRACE_SECS;
     let mut watch = ready(Some(42));
     watch.set_policy(auto(), 0.0);
     watch.observe(&AgentStatus::Working);
@@ -364,34 +435,34 @@ fn auto_fix_waits_for_a_busy_agent_and_never_pastes_into_one_that_waits_on_you()
     assert_eq!(pasted(&outs), Vec::<&str>::new());
     assert_eq!(watch.pending.len(), 1);
     assert_eq!(watch.pending[0].message.ask.phrase, "fix CI");
+    assert_eq!(pasted(&watch.flush(auto(), due, 9_050)), Vec::<&str>::new(), "busy");
     watch.observe(&AgentStatus::NeedsYou(Reason::Permission));
-    assert_eq!(pasted(&watch.flush(auto(), 6.0, 9_100)), Vec::<&str>::new());
+    assert_eq!(pasted(&watch.flush(auto(), due + 1.0, 9_100)), Vec::<&str>::new());
     watch.observe(&AgentStatus::Done);
-    let outs = watch.flush(auto(), 7.0, 9_200);
+    let outs = watch.flush(auto(), due + 2.0, 9_200);
     assert_eq!(pasted(&outs).len(), 1);
     assert_eq!(watch.pending, []);
-    assert_eq!(watch.cards.auto_sends, 1);
 }
 
 #[test]
-fn one_idle_moment_sends_one_message_and_the_hold_keeps_the_next_for_later() {
+fn one_idle_moment_sends_one_message_and_the_turn_it_causes_is_not_the_agents_reaction() {
+    let due = 5.0 + GRACE_SECS;
     let mut watch = ready(Some(42));
     watch.set_policy(auto(), 0.0);
-    watch.observe(&AgentStatus::Working);
+    watch.observe(&AgentStatus::Done);
     let two = vec![failed(), Body::Conflict { base: "main".into() }];
     watch.look_started();
     watch.polled(Ok(polled(two, false, false)), auto(), "t", 5.0, 9_000);
     assert_eq!(watch.pending.len(), 2);
-    watch.observe(&AgentStatus::Done);
-    assert_eq!(pasted(&watch.flush(auto(), 10.0, 9_100)).len(), 1);
+    assert_eq!(pasted(&watch.flush(auto(), due, 9_100)).len(), 1);
     assert_eq!(
-        pasted(&watch.flush(auto(), 10.1, 9_200)),
+        pasted(&watch.flush(auto(), due + 0.1, 9_200)),
         Vec::<&str>::new(),
         "held until the agent works again"
     );
     watch.observe(&AgentStatus::Working);
     watch.observe(&AgentStatus::Done);
-    assert_eq!(pasted(&watch.flush(auto(), 30.0, 9_300)).len(), 1);
+    assert_eq!(pasted(&watch.flush(auto(), due + 30.0, 9_300)).len(), 1);
     assert_eq!(watch.pending, []);
 }
 
@@ -408,50 +479,34 @@ fn a_trigger_switched_off_is_a_card_and_not_a_message() {
         url: String::new(),
     };
     watch.look_started();
-    let outs = watch.polled(Ok(polled(vec![comment, failed()], false, false)), policy, "t", 5.0, 0);
+    watch.polled(Ok(polled(vec![comment, failed()], false, false)), policy, "t", 5.0, 0);
+    assert_eq!(watch.pending.len(), 1, "only the failed check waits");
+    let outs = watch.flush(policy, 5.0 + GRACE_SECS, 0);
     assert_eq!(pasted(&outs).len(), 1, "only the failed check goes");
     assert_eq!(watch.cards.cards().len(), 3, "both cards and the message");
 }
 
 #[test]
-fn after_three_automatic_sends_the_tab_asks_again() {
+fn once_the_tabs_budget_is_spent_a_supervised_tab_asks_again() {
+    let due = 5.0 + GRACE_SECS;
     let mut watch = ready(Some(42));
     watch.set_policy(auto(), 0.0);
-    let mut toasts = Vec::new();
-    for round in 0..3 {
-        watch.observe(&AgentStatus::Done);
-        watch.look_started();
-        let policy = watch.policy(GithubPrefs::default());
-        let outs = watch.polled(
-            Ok(polled(vec![failed()], false, false)),
-            policy,
-            "t",
-            f64::from(round) * 100.0,
-            0,
-        );
-        assert_eq!(pasted(&outs).len(), 1, "round {round}");
-        toasts.extend(outs.into_iter().filter(|o| matches!(o, Out::Toast(_))));
-        watch.observe(&AgentStatus::Working);
-    }
-    assert_eq!(watch.cards.auto_sends, MAX_AUTO_SENDS);
+    watch.observe(&AgentStatus::Done);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![failed()], false, false)), auto(), "t", 5.0, 0);
+    watch.budget = Budget::Spent;
+    let outs = watch.flush(auto(), due, 0);
+    assert_eq!(pasted(&outs), Vec::<&str>::new());
     assert_eq!(watch.policy(GithubPrefs::default()).mode, PrMode::Ask);
     assert_eq!(
-        toasts,
-        [Out::Toast("Auto sent 3 times on this pull request. Back to Ask me".into())]
+        outs,
+        [Out::Toast("Auto sent 5 messages to this agent. Back to Ask me".into()), Out::Save]
     );
-    watch.observe(&AgentStatus::Done);
     watch.look_started();
     let policy = watch.policy(GithubPrefs::default());
     let outs = watch.polled(Ok(polled(vec![failed()], false, false)), policy, "t", 900.0, 0);
-    assert_eq!(pasted(&outs), Vec::<&str>::new(), "the fourth waits for a click");
-}
-
-#[test]
-fn a_following_a_new_pull_request_gives_auto_fix_a_fresh_count() {
-    let mut watch = ready(Some(42));
-    watch.cards.auto_sends = 2;
-    assert!(watch.learn(43, "h", 1.0));
-    assert_eq!(watch.cards.auto_sends, 0);
+    assert_eq!(pasted(&outs), Vec::<&str>::new(), "the next waits for a click");
+    assert_eq!(watch.pending, []);
 }
 
 #[test]
@@ -475,7 +530,16 @@ fn the_button_sends_to_a_working_or_idle_agent_and_refuses_one_that_waits_on_you
     assert_eq!(reason, "There is nothing to ask the agent about");
     let Body::Sent { via, .. } = &watch.cards.cards().last().unwrap().body else { panic!() };
     assert_eq!(*via, Via::You);
-    assert_eq!(watch.cards.auto_sends, 0, "a click is not an automatic send");
+}
+
+#[test]
+fn a_click_adds_the_owners_request_to_the_facts_and_is_no_automatic_send() {
+    let mut watch = ready(Some(42));
+    watch.observe(&AgentStatus::Done);
+    let id = watch.cards.add(1_000, Body::Conflict { base: "main".into() });
+    let outs = watch.ask(id, 1.0, 2_000).unwrap();
+    assert_eq!(pasted(&outs), ["PR #42 conflicts with main. Please resolve the conflicts."]);
+    assert!(outs.iter().all(|out| !matches!(out, Out::Told(_))), "{outs:?}");
 }
 
 #[test]
@@ -745,55 +809,31 @@ fn a_tab_that_runs_on_its_own_is_auto_for_the_fixes_whatever_the_default_and_the
 }
 
 #[test]
-fn comments_review_changes_failed_checks_and_conflicts_go_to_an_idle_agent_without_a_click() {
+fn comments_review_changes_failed_checks_and_conflicts_go_to_an_idle_agent_after_the_grace_period()
+{
     let default = GithubPrefs::default();
     let news = [
-        (commented(), "Comment"),
-        (changes_requested(), "Review"),
-        (failed(), "CI failure"),
-        (Body::Conflict { base: "main".into() }, "Conflict"),
+        (commented(), "Comment", "PR #42: rev commented.\n\n> why?"),
+        (changes_requested(), "Review", "PR #42: rev requested changes.\n\n> rename it"),
+        (
+            failed(),
+            "CI failure",
+            "PR #42: checks failed: check (ubuntu-latest) at \"clippy\".\n\ncheck (ubuntu-latest):\n```\nerror: unused import\n```",
+        ),
+        (Body::Conflict { base: "main".into() }, "Conflict", "PR #42 conflicts with main."),
     ];
-    for (body, tag) in news {
+    for (body, tag, text) in news {
         let mut watch = on_its_own();
         watch.observe(&AgentStatus::Done);
         watch.look_started();
         let outs = watch.polled(Ok(polled(vec![body], false, false)), default, "t", 5.0, 9_000);
-        assert_eq!(pasted(&outs).len(), 1, "{tag}");
-        assert_eq!(watch.cards.auto_sends, 1, "{tag}");
+        assert_eq!(pasted(&outs), Vec::<&str>::new(), "{tag}: not before the grace period");
+        let outs = watch.flush(default, 5.0 + GRACE_SECS, 9_100);
+        assert_eq!(pasted(&outs), [text], "{tag}");
         let Body::Sent { via, tag: sent, .. } = &watch.cards.cards().last().unwrap().body else {
             panic!("{tag}: no record of the send")
         };
         assert_eq!((*via, sent.as_str()), (Via::Auto, tag));
-    }
-}
-
-#[test]
-fn the_tabs_workflow_profile_decides_the_method_words_of_what_auto_sends() {
-    use tidewatch_core::workflow_profile::{CatchUp, Fixes};
-    let default = GithubPrefs::default();
-    let merge =
-        Workflow { catch_up: CatchUp::Merge, fixes: Fixes::NewCommits, ..Workflow::default() };
-    let table = [
-        (Workflow::default(), "Rebase onto origin/main", "fold the fix"),
-        (merge, "Merge origin/main into this branch", "commit the fix"),
-    ];
-    for (workflow, catch_up, fix) in table {
-        let mut conflict = on_its_own();
-        conflict.workflow = workflow;
-        conflict.observe(&AgentStatus::Done);
-        conflict.look_started();
-        let body = Body::Conflict { base: "main".into() };
-        let outs = conflict.polled(Ok(polled(vec![body], false, false)), default, "t", 5.0, 9_000);
-        assert!(pasted(&outs)[0].contains(catch_up), "{outs:?}");
-        assert!(!pasted(&outs)[0].contains("Do not rebase"), "{outs:?}");
-
-        let mut checks = on_its_own();
-        checks.workflow = workflow;
-        checks.observe(&AgentStatus::Done);
-        checks.look_started();
-        let outs =
-            checks.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
-        assert!(pasted(&outs)[0].contains(fix), "{outs:?}");
     }
 }
 
@@ -819,18 +859,18 @@ fn a_comment_or_review_from_a_stranger_is_never_pasted_on_its_own_and_ci_still_i
         let outs = watch.polled(Ok(polled(vec![body], false, false)), default, "t", 5.0, 9_000);
         assert_eq!(pasted(&outs), Vec::<&str>::new());
         assert_eq!(watch.pending.len(), 0);
-        assert_eq!(watch.cards.auto_sends, 0);
+        assert_eq!(pasted(&watch.flush(default, 5.0 + GRACE_SECS, 9_100)), Vec::<&str>::new());
         assert_eq!(watch.cards.cards().len(), 1, "the card is still shown, with its Ask button");
     }
     let mut watch = on_its_own();
     watch.observe(&AgentStatus::Done);
     watch.look_started();
-    let outs = watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
-    assert_eq!(pasted(&outs).len(), 1);
+    watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
+    assert_eq!(pasted(&watch.flush(default, 5.0 + GRACE_SECS, 9_100)).len(), 1);
 }
 
 #[test]
-fn a_busy_agent_gets_the_news_when_it_is_idle_and_not_before() {
+fn a_busy_agent_gets_the_news_when_it_is_idle_and_the_grace_period_is_over_and_not_before() {
     let default = GithubPrefs::default();
     let mut watch = on_its_own();
     watch.observe(&AgentStatus::Working);
@@ -838,48 +878,40 @@ fn a_busy_agent_gets_the_news_when_it_is_idle_and_not_before() {
     let outs = watch.polled(Ok(polled(vec![commented()], false, false)), default, "t", 5.0, 9_000);
     assert_eq!(pasted(&outs), Vec::<&str>::new());
     assert_eq!(watch.pending.len(), 1);
+    assert_eq!(pasted(&watch.flush(default, 5.0 + GRACE_SECS, 9_050)), Vec::<&str>::new());
     watch.observe(&AgentStatus::Done);
-    assert_eq!(pasted(&watch.flush(default, 7.0, 9_100)).len(), 1);
+    assert_eq!(pasted(&watch.flush(default, 5.0 + GRACE_SECS + 2.0, 9_100)).len(), 1);
 }
 
 #[test]
-fn the_loop_guard_of_a_tab_on_its_own_is_ten_sends_and_then_it_pauses_without_asking() {
+fn a_tab_on_its_own_whose_budget_is_spent_pauses_without_asking() {
     let default = GithubPrefs::default();
     let mut watch = on_its_own();
-    for round in 0..MAX_AUTONOMOUS_SENDS {
-        watch.observe(&AgentStatus::Done);
-        watch.look_started();
-        let outs = watch.polled(
-            Ok(polled(vec![failed()], false, false)),
-            default,
-            "t",
-            f64::from(round) * 100.0,
-            0,
-        );
-        assert_eq!(pasted(&outs).len(), 1, "round {round}");
-        assert!(!outs.iter().any(|o| matches!(o, Out::Toast(_))), "no toast, round {round}");
-        watch.observe(&AgentStatus::Working);
-    }
-    assert_eq!(watch.cards.auto_sends, MAX_AUTONOMOUS_SENDS);
-    assert_eq!(watch.policy(default).mode, PrMode::Auto, "no fall back to Ask me");
-    assert_eq!(watch.handling(default), Handling::Paused);
     watch.observe(&AgentStatus::Done);
+    watch.budget = Budget::Spent;
+    assert_eq!(watch.policy(default).mode, PrMode::Auto);
+    assert_eq!(watch.handling(default), Handling::Paused);
     watch.look_started();
     let outs = watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 9_000.0, 0);
     assert_eq!(pasted(&outs), Vec::<&str>::new(), "paused");
     assert_eq!(watch.pending, [], "nothing waits for a button either");
     assert!(!outs.iter().any(|o| matches!(o, Out::Toast(_))));
-    assert_eq!(paused_note(), "Auto paused after 10 sends on this pull request");
+    assert_eq!(paused_note(), "Auto paused after 10 sends");
 }
 
 #[test]
-fn a_new_pull_request_lifts_the_pause() {
+fn news_waiting_when_the_budget_runs_out_is_dropped_for_a_tab_on_its_own_without_a_toast() {
     let default = GithubPrefs::default();
     let mut watch = on_its_own();
-    watch.cards.auto_sends = MAX_AUTONOMOUS_SENDS;
-    assert_eq!(watch.handling(default), Handling::Paused);
-    watch.learn(43, "h", 1.0);
-    assert_eq!(watch.handling(default), Handling::Agent);
+    watch.observe(&AgentStatus::Done);
+    watch.look_started();
+    watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 0);
+    assert_eq!(watch.pending.len(), 1);
+    watch.budget = Budget::Spent;
+    let outs = watch.flush(default, 5.0 + GRACE_SECS, 0);
+    assert_eq!(outs, Vec::<Out>::new());
+    assert_eq!(watch.pending, []);
+    assert_eq!(watch.policy(default).mode, PrMode::Auto, "no fall back to Ask me");
 }
 
 #[test]
@@ -906,15 +938,15 @@ fn who_handles_the_news_follows_the_tab_and_the_mode_the_owner_left_it_in() {
 }
 
 #[test]
-fn an_ordinary_tab_in_auto_fix_answers_its_cards_until_the_loop_guard_hands_them_back() {
+fn an_ordinary_tab_in_auto_answers_its_cards_until_the_budget_hands_them_back() {
     let default = GithubPrefs::default();
     let mut watch = ready(Some(42));
     watch.set_policy(auto(), 0.0);
     assert_eq!(watch.handling(default), Handling::Answers);
-    watch.cards.auto_sends = MAX_AUTO_SENDS;
+    watch.budget = Budget::Spent;
     assert_eq!(watch.handling(default), Handling::Owner, "the sends are used up");
-    watch.cards.auto_sends = 0;
-    assert_eq!(watch.handling(default), Handling::Answers, "a new pull request lifts it");
+    watch.budget = Budget::Left;
+    assert_eq!(watch.handling(default), Handling::Answers, "the owner typing lifts it");
 }
 
 #[test]
@@ -997,14 +1029,14 @@ fn a_merged_pull_request_with_no_known_head_shuts_the_delivery_for_every_tab() {
 }
 
 #[test]
-fn a_yolo_tab_with_settings_on_ask_me_auto_sends_the_fixes() {
+fn a_yolo_tab_with_settings_on_ask_me_auto_sends_the_news_after_the_grace_period() {
     let default = GithubPrefs { mode: PrMode::Ask, ..GithubPrefs::default() };
     let mut watch = on_its_own();
     watch.observe(&AgentStatus::Done);
     watch.look_started();
-    let outs = watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
-    assert_eq!(pasted(&outs).len(), 1, "the fix goes to the idle agent");
-    assert_eq!(watch.cards.auto_sends, 1);
+    watch.polled(Ok(polled(vec![failed()], false, false)), default, "t", 5.0, 9_000);
+    let outs = watch.flush(default, 5.0 + GRACE_SECS, 9_100);
+    assert_eq!(pasted(&outs).len(), 1, "the news goes to the idle agent");
 }
 
 #[test]
@@ -1151,7 +1183,6 @@ fn the_first_message_of_a_kind_in_a_repo_waits_for_a_click_on_send() {
     watch.look_started();
     let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
     assert_eq!(pasted(&outs), Vec::<&str>::new());
-    assert_eq!(watch.cards.auto_sends, 0);
     assert_eq!(watch.pending.len(), 1);
     assert!(watch.pending[0].confirm);
     for at in [10.0, 500.0, 90_000.0] {
@@ -1167,14 +1198,14 @@ fn send_on_that_message_goes_now_is_no_automatic_send_and_the_kind_then_goes_on_
     let id = watch.pending[0].id;
     let outs = watch.send_now(id, 6.0, 9_100).unwrap();
     assert_eq!(pasted(&outs).len(), 1);
-    assert!(outs.iter().all(|out| !matches!(out, Out::Told { .. })), "{outs:?}");
-    assert_eq!(watch.cards.auto_sends, 0);
+    assert!(outs.iter().all(|out| !matches!(out, Out::Told(_))), "{outs:?}");
     assert_eq!(watch.shown, Shown { conflicts: true, ..Shown::default() });
     watch.observe(&AgentStatus::Done);
     watch.look_started();
-    let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 400.0, 9_200);
+    watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 400.0, 9_200);
+    let outs = watch.flush(auto(), 400.0 + GRACE_SECS, 9_300);
     assert_eq!(pasted(&outs).len(), 1, "the second conflict goes on its own");
-    assert!(outs.iter().any(|out| matches!(out, Out::Told { .. })));
+    assert!(outs.iter().any(|out| matches!(out, Out::Told(_))));
 }
 
 #[test]
@@ -1192,7 +1223,9 @@ fn a_tab_that_runs_on_its_own_is_never_held_up_by_the_first_send() {
     let mut watch = first_time(42);
     watch.autonomous = true;
     watch.look_started();
-    let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    assert!(!watch.pending[0].confirm);
+    let outs = watch.flush(auto(), 5.0 + GRACE_SECS, 9_100);
     assert_eq!(pasted(&outs).len(), 1);
     assert_eq!(watch.pending, []);
 }
@@ -1204,20 +1237,21 @@ fn learning_that_the_kind_was_read_elsewhere_releases_the_waiting_message() {
     watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
     watch.learn_shown(Shown { conflicts: true, ..Shown::default() });
     assert!(!watch.pending[0].confirm);
-    let outs = watch.flush(auto(), 6.0, 9_100);
+    let outs = watch.flush(auto(), 5.0 + GRACE_SECS, 9_100);
     assert_eq!(pasted(&outs).len(), 1);
 }
 
 #[test]
-fn a_waiting_message_is_worded_again_when_the_workflow_changes() {
+fn a_waiting_message_does_not_depend_on_the_workflow() {
     use tidewatch_core::workflow_profile::CatchUp;
     let mut watch = first_time(42);
     watch.look_started();
     watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
-    assert!(watch.pending[0].message.text.starts_with("PR #42 conflicts with main. Rebase onto"));
+    let before = watch.pending[0].message.text.clone();
+    assert_eq!(before, "PR #42 conflicts with main.");
     watch.workflow = Workflow { catch_up: CatchUp::Merge, ..Workflow::default() };
     watch.refresh_pending();
-    assert!(watch.pending[0].message.text.contains("Merge origin/main into this branch"));
+    assert_eq!(watch.pending[0].message.text, before);
     assert!(watch.pending[0].confirm);
 }
 
@@ -1227,11 +1261,9 @@ fn the_kind_a_message_was_told_for_comes_with_it() {
     watch.set_policy(auto(), 0.0);
     watch.observe(&AgentStatus::Done);
     watch.look_started();
-    let outs = watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
-    assert!(
-        outs.iter().any(|out| matches!(out, Out::Told { trigger: Trigger::Conflicts, .. })),
-        "{outs:?}"
-    );
+    watch.polled(Ok(polled(vec![conflict()], false, false)), auto(), "t", 5.0, 9_000);
+    let outs = watch.flush(auto(), 5.0 + GRACE_SECS, 9_100);
+    assert!(outs.contains(&Out::Told(Trigger::Conflicts)), "{outs:?}");
 }
 
 #[test]
@@ -1248,8 +1280,7 @@ fn a_merge_is_told_to_the_idle_agent_once_in_every_mode_that_watches() {
         let outs = watch.flush(prefs, 6.0, 9_100);
         let text = pasted(&outs);
         assert_eq!(text.len(), 1, "{mode:?}");
-        assert!(text[0].starts_with("PR #42 was merged into main."), "{}", text[0]);
-        assert_eq!(watch.cards.auto_sends, 0, "{mode:?}: the news counts toward no cap");
+        assert_eq!(text[0], "PR #42 was merged into main.");
         assert_eq!(pasted(&watch.flush(prefs, 99.0, 9_200)), Vec::<&str>::new(), "{mode:?}");
     }
 }
@@ -1264,7 +1295,7 @@ fn a_close_is_told_and_never_pasted_into_an_agent_that_waits_on_you() {
     assert_eq!(pasted(&watch.flush(default, 6.0, 9_100)), Vec::<&str>::new());
     watch.observe(&AgentStatus::Done);
     let outs = watch.flush(default, 7.0, 9_200);
-    assert!(pasted(&outs)[0].starts_with("PR #42 was closed without merging."));
+    assert_eq!(pasted(&outs), ["PR #42 was closed without merging."]);
     let Body::Sent { tag, .. } = &watch.cards.cards().last().unwrap().body else {
         panic!("no message card")
     };

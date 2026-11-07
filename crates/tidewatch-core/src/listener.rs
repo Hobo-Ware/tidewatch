@@ -38,12 +38,10 @@ use crate::launch::HookListener;
 use crate::mcp::{AskWait, McpReply, TabRole, ToolCtx, handle_post};
 use crate::paths::{
     TidewatchPaths, avatar_asked_file_beside, avatar_file_beside, progress_file_beside,
-    sent_file_beside,
 };
-use crate::sent::{self, Reason, Record, because};
+use crate::prompt_answer;
 use crate::status::{parse_hook, scheduled_from_hook};
 use crate::workflow_detect;
-use crate::{name_ask, progress_store, prompt_answer};
 
 /// The hook agent whose `UserPromptSubmit` answer reaches the model as context.
 const PROMPT_ANSWERING_AGENT: &str = "claude";
@@ -129,9 +127,6 @@ impl Shared {
     }
 
     fn emit(&self, entry: &Entry, event: TabEvent) {
-        if matches!(event, TabEvent::TabName { .. }) {
-            let _ = name_ask::mark_asked(&entry.notes_file);
-        }
         let _ = self.events.send(TabMessage {
             tab_id: entry.tab_id,
             generation: entry.generation,
@@ -604,11 +599,11 @@ fn refresh_line(entry: &Entry, payload: &serde_json::Value, why: &Why) -> String
     context_refresh::line(why, &context_refresh::gather(&entry.notes_file, &folder))
 }
 
-/// The answer to a prompt: the refresh line a resume left due when no `SessionStart` took it, extra
-/// context that asks a tab with a goal and no icon, never asked, to
-/// pick one, names what the tab's report still holds open, and gives the repo's services when they
-/// changed since the tab last heard. The avatar marker is written first, so a tab whose state
-/// folder cannot be written is not asked on every prompt.
+/// The answer to a prompt: the refresh line a resume left due when no `SessionStart` took it, and
+/// the repo's services when they changed since the tab last heard. Nothing else rides on a prompt.
+/// The owner's first prompt also writes the avatar marker, which keeps the prompt's text for the
+/// fallback icon and starts its clock; the marker is written first, so a tab whose state folder
+/// cannot be written is not marked on every prompt.
 fn prompt_reply(
     shared: &Shared,
     entry: &Entry,
@@ -620,39 +615,18 @@ fn prompt_reply(
     if !on_prompt || agent != PROMPT_ANSWERING_AGENT {
         return None;
     }
-    let ledger = progress_store::load(&progress_file_beside(&entry.notes_file));
     let message = payload.get("prompt").and_then(serde_json::Value::as_str).unwrap_or_default();
-    let (avatar, name) = asks_due(shared, entry, message);
+    mark_first_prompt(shared, entry, message);
     let refresh =
         take_resume_due(shared, entry.tab_id).map(|why| refresh_line(entry, payload, &why));
-    let mut contexts: Vec<String> = refresh.into_iter().chain(avatar).collect();
-    if let Some(line) = ledger.as_ref().and_then(prompt_answer::ledger_context) {
-        contexts.push(line);
-    }
-    contexts.extend(name);
+    let mut contexts: Vec<String> = refresh.into_iter().collect();
     if let Some(line) = service_line_due(shared, entry.tab_id) {
         contexts.push(line);
     }
     prompt_answer::answer(&contexts.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
-/// The icon ask and the name ask that are due now, each once per tab; `message` is the owner's
-/// message the icon ask goes with, kept for the fallback icon.
-fn asks_due(shared: &Shared, entry: &Entry, message: &str) -> (Option<String>, Option<String>) {
-    let avatar = avatar_due(shared, entry, message).then(|| {
-        tell(entry, Reason::Avatar, because::AVATAR_ASK, avatar_ask::CONTEXT);
-        avatar_ask::CONTEXT.to_owned()
-    });
-    let name = name_ask::line_due(&entry.notes_file).map(str::to_owned);
-    (avatar, name)
-}
-
-fn tell(entry: &Entry, reason: Reason, because: &str, text: &str) {
-    let record = Record::new(reason, because, text, None);
-    let _ = sent::append(&sent_file_beside(&entry.notes_file), &record);
-}
-
-fn avatar_due(shared: &Shared, entry: &Entry, message: &str) -> bool {
+fn mark_first_prompt(shared: &Shared, entry: &Entry, message: &str) {
     let exempt = shared
         .avatar_ask_exempt
         .lock()
@@ -667,8 +641,9 @@ fn avatar_due(shared: &Shared, entry: &Entry, message: &str) -> bool {
     } else {
         Face::Letter
     };
-    let due = avatar_ask::due(&avatar_ask::Facts { face, asked: avatar_store::was_asked(&marker) });
-    due && avatar_store::mark_asked_for(&marker, message).is_ok()
+    if avatar_ask::due(&avatar_ask::Facts { face, asked: avatar_store::was_asked(&marker) }) {
+        let _ = avatar_store::mark_asked_for(&marker, message);
+    }
 }
 
 fn replace_service_lines(shared: &Shared, lines: HashMap<u64, String>) {
@@ -710,15 +685,6 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
     let alive = || client_waits(stream);
     let progress_file = progress_file_beside(&entry.notes_file);
     let workflow = || workflow_detect::profile_for(&shared.paths, &entry.repo);
-    let after_save = || {
-        if entry.agent != PROMPT_ANSWERING_AGENT {
-            return Vec::new();
-        }
-        let ledger = progress_store::load(&progress_file);
-        let goal = ledger.as_ref().map_or("", |ledger| ledger.goal.as_str());
-        let (avatar, name) = asks_due(shared, entry, goal);
-        avatar.into_iter().chain(name).collect()
-    };
     let ctx = ToolCtx {
         agent: &entry.agent,
         role: entry.role,
@@ -732,7 +698,6 @@ fn mcp_route(shared: &Shared, entry: &Entry, request: &Request, stream: &TcpStre
             away: &|| shared.away.load(Ordering::SeqCst),
         },
         workflow: &workflow,
-        after_save: &after_save,
     };
     match handle_post(&request.body, &ctx, &|event| shared.emit(entry, event)) {
         McpReply::Json(body) => Response::json(200, body),
@@ -970,6 +935,8 @@ fn write_response(stream: &mut TcpStream, response: &Response, keep_alive: bool)
 mod tests {
     use super::*;
     use crate::notes::Notes;
+    use crate::paths::sent_file_beside;
+    use crate::{progress_store, sent};
     use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicUsize;
@@ -1105,52 +1072,41 @@ mod tests {
 
     const NO_GOAL: &str = "# Goal\n\n## Status\nstate: working\n";
 
-    fn already_asked(f: &Fixture, token: &str) {
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(f, token))).unwrap();
-    }
+    const OPEN: &str =
+        "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
 
-    fn asks_for_an_icon(response: &Response) -> bool {
-        response.status == 200
-            && context_of(response).contains(avatar_ask::CONTEXT)
-            && body_json(response)["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    fn marker_of(f: &Fixture, token: &str) -> PathBuf {
+        avatar_asked_file_beside(&notes_of(f, token))
     }
 
     #[test]
-    fn the_first_prompt_is_answered_with_the_icon_ask_and_only_that_one() {
+    fn the_first_prompt_starts_the_fallback_clock_and_carries_no_context() {
         let f = fixture();
         let token = f.register(1, "a");
         let notes = notes_of(&f, &token);
-        let marker = avatar_asked_file_beside(&notes);
+        let marker = marker_of(&f, &token);
         let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert!(asks_for_an_icon(&first), "no report needed: {}", first.body);
-        assert_eq!(context_of(&first), format!("{}\n{}", avatar_ask::CONTEXT, name_ask::ASK));
+        assert_eq!(first.body, "{}", "a plain prompt adds no hidden context");
         assert_eq!(avatar_store::asked_message(&marker).as_deref(), Some("hi"));
         save_ledger(&f, &token, CALM);
         let second = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert!(!asks_for_an_icon(&second), "{}", second.body);
+        assert_eq!(second.body, "{}");
         assert_eq!(f.events().len(), 2, "every prompt is still a status event");
-        let told: Vec<_> = sent::load(&sent_file_beside(&notes))
-            .into_iter()
-            .filter(|record| record.reason == Reason::Avatar)
-            .collect();
-        assert_eq!(told.len(), 1);
-        assert_eq!(told[0].because, because::AVATAR_ASK);
-        assert_eq!(told[0].text, avatar_ask::CONTEXT);
+        assert_eq!(sent::load(&sent_file_beside(&notes)), [], "no ask is recorded: none is sent");
     }
 
     #[test]
-    fn each_tab_is_asked_for_its_icon_once_on_its_own_first_prompt() {
+    fn each_tab_is_marked_on_its_own_first_prompt_only() {
         let f = fixture();
         let token = f.register(1, "a");
         let other = f.register(2, "b");
         save_ledger(&f, &other, NO_GOAL);
-        let first = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        let again = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        let other_first = f.send("POST", "/hook/claude", Some(&other), PROMPT);
-        assert_eq!(
-            (asks_for_an_icon(&first), asks_for_an_icon(&again), asks_for_an_icon(&other_first)),
-            (true, false, true)
-        );
+        let (one, two) = (marker_of(&f, &token), marker_of(&f, &other));
+        assert!(!one.exists() && !two.exists());
+        f.send("POST", "/hook/claude", Some(&token), PROMPT);
+        assert!(one.exists() && !two.exists());
+        f.send("POST", "/hook/claude", Some(&other), PROMPT);
+        assert!(two.exists());
     }
 
     #[test]
@@ -1162,10 +1118,10 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_asked_before_a_tab_with_a_picture_and_a_tab_that_is_exempt_are_not_asked() {
+    fn a_tab_marked_before_a_tab_with_a_picture_and_a_tab_that_is_exempt_keep_their_markers() {
         let f = fixture();
-        let asked = f.register(1, "asked");
-        avatar_store::mark_asked(&avatar_asked_file_beside(&notes_of(&f, &asked))).unwrap();
+        let marked = f.register(1, "marked");
+        avatar_store::mark_asked_for(&marker_of(&f, &marked), "first words").unwrap();
         let drawn = f.register(2, "drawn");
         let svg = "<svg><circle cx=\"1\" cy=\"1\" r=\"1\"/></svg>";
         avatar_store::save(
@@ -1174,24 +1130,26 @@ mod tests {
         )
         .unwrap();
         let fixed = f.register(3, "fixed");
-        let fixed_marker = avatar_asked_file_beside(&notes_of(&f, &fixed));
         f.shared.avatar_ask_exempt.lock().unwrap().extend([3]);
-        for (what, token) in [("asked", &asked), ("drawn", &drawn), ("fixed", &fixed)] {
-            name_ask::mark_asked(&notes_of(&f, token)).unwrap();
+        for (what, token) in [("marked", &marked), ("drawn", &drawn), ("fixed", &fixed)] {
             save_ledger(&f, token, CALM);
             let response = f.send("POST", "/hook/claude", Some(token), PROMPT);
             assert_eq!(response.body, "{}", "{what}");
         }
-        assert!(!fixed_marker.exists(), "an exempt tab leaves no marker");
+        assert_eq!(
+            avatar_store::asked_message(&marker_of(&f, &marked)).as_deref(),
+            Some("first words")
+        );
+        assert!(!marker_of(&f, &drawn).exists(), "a tab with a picture needs no fallback");
+        assert!(!marker_of(&f, &fixed).exists(), "an exempt tab leaves no marker");
     }
 
     #[test]
-    fn only_a_claude_prompt_carries_the_icon_ask() {
+    fn only_a_claude_prompt_starts_the_clock() {
         let f = fixture();
         let token = f.register(1, "a");
-        name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
         save_ledger(&f, &token, CALM);
-        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
+        let marker = marker_of(&f, &token);
         let others = [
             ("/hook/claude", STOP),
             ("/hook/claude", r#"{"hook_event_name":"SessionStart"}"#),
@@ -1207,109 +1165,31 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_whose_marker_cannot_be_written_is_not_asked() {
+    fn a_tab_whose_marker_cannot_be_written_still_gets_a_plain_answer() {
         let f = fixture();
         let token = f.register(1, "a");
-        let marker = avatar_asked_file_beside(&notes_of(&f, &token));
+        let marker = marker_of(&f, &token);
         let state_dir = marker.parent().unwrap();
         std::fs::create_dir_all(state_dir.parent().unwrap()).unwrap();
         std::fs::write(state_dir, "not a folder").unwrap();
         let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert!(!asks_for_an_icon(&response), "{}", response.body);
+        assert_eq!(response.body, "{}");
     }
 
     #[test]
-    fn the_icon_ask_rides_the_answer_beside_the_report_line() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        save_ledger(
-            &f,
-            &token,
-            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n",
-        );
-        let context = context_of(&f.send("POST", "/hook/claude", Some(&token), PROMPT));
-        assert!(context.contains(avatar_ask::CONTEXT), "{context}");
-        assert!(context.contains("\"Verified live\""), "{context}");
-    }
-
-    const SET_NAME: &str = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"set_name","arguments":{"name":"fix-login-redirect"}}}"#;
-
-    #[test]
-    fn a_tab_with_no_name_is_asked_for_one_on_its_first_prompt_and_never_twice() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        already_asked(&f, &token);
-        let notes = notes_of(&f, &token);
-        assert!(!name_ask::was_asked(&notes));
-        let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(context_of(&response), name_ask::ASK);
-        assert!(name_ask::was_asked(&notes), "the marker is written with the ask");
-        for _ in 0..2 {
-            assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}");
-        }
-        assert_eq!(sent::load(&sent_file_beside(&notes)), [], "the ask leaves no record");
-    }
-
-    #[test]
-    fn the_name_ask_shares_an_answer_with_the_open_line_and_each_tab_is_asked_on_its_own() {
-        let open =
-            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
-        let f = fixture();
-        let (one, two) = (f.register(1, "a"), f.register(2, "b"));
-        already_asked(&f, &one);
-        already_asked(&f, &two);
-        save_ledger(&f, &one, open);
-        save_ledger(&f, &two, CALM);
-        let both = context_of(&f.send("POST", "/hook/claude", Some(&one), PROMPT));
-        let lines: Vec<&str> = both.lines().collect();
-        assert_eq!(lines.len(), 2, "{both}");
-        assert!(lines[0].starts_with("Open in your report:") && lines[1] == name_ask::ASK);
-        assert_eq!(context_of(&f.send("POST", "/hook/claude", Some(&two), PROMPT)), name_ask::ASK);
-        let again = context_of(&f.send("POST", "/hook/claude", Some(&one), PROMPT));
-        assert!(!again.contains("set_name"), "{again}");
-    }
-
-    #[test]
-    fn a_tab_that_named_itself_is_never_asked() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        already_asked(&f, &token);
-        save_ledger(&f, &token, CALM);
-        let reply = f.send("POST", "/mcp", Some(&token), SET_NAME);
-        assert_eq!(body_json(&reply)["result"]["isError"], false, "{}", reply.body);
-        assert!(name_ask::was_asked(&notes_of(&f, &token)));
-        assert_eq!(f.send("POST", "/hook/claude", Some(&token), PROMPT).body, "{}");
-    }
-
-    #[test]
-    fn a_bad_name_does_not_stop_the_ask() {
-        let f = fixture();
-        let token = f.register(1, "a");
-        already_asked(&f, &token);
-        save_ledger(&f, &token, CALM);
-        let bad = SET_NAME.replace("fix-login-redirect", "Fix Login");
-        let reply = f.send("POST", "/mcp", Some(&token), &bad);
-        assert_eq!(body_json(&reply)["result"]["isError"], true, "{}", reply.body);
-        assert_eq!(
-            context_of(&f.send("POST", "/hook/claude", Some(&token), PROMPT)),
-            name_ask::ASK
-        );
-    }
-
-    #[test]
-    fn a_prompt_to_a_tab_that_never_saved_a_report_or_waits_on_the_owner_adds_no_report_line() {
+    fn a_plain_prompt_carries_no_context_whatever_the_report_holds() {
         let cases = [
             ("no report yet", None),
             ("a question", Some(QUESTION)),
             ("waiting, no question", Some("# Goal\nShip\n\n## Status\nstate: waiting\n")),
             ("blocked", Some("# Goal\nShip\n\n## Status\nstate: blocked\n")),
             ("working", Some("# Goal\nShip\n\n## Status\nstate: working\n")),
+            ("open items", Some(OPEN)),
+            ("no goal", Some(NO_GOAL)),
         ];
         for (what, text) in cases {
             let f = fixture();
             let token = f.register(1, "a");
-            already_asked(&f, &token);
-            name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
             if let Some(text) = text {
                 save_ledger(&f, &token, text);
             }
@@ -1319,33 +1199,6 @@ mod tests {
             }
             assert_eq!(sent::load(&sent_file_beside(&notes_of(&f, &token))), [], "{what}");
         }
-    }
-
-    #[test]
-    fn a_prompt_to_a_tab_whose_report_holds_open_items_is_answered_with_the_open_line() {
-        let open =
-            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
-        let f = fixture();
-        let token = f.register(1, "a");
-        already_asked(&f, &token);
-        name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
-        save_ledger(&f, &token, open);
-        for _ in 0..2 {
-            let response = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-            let context = context_of(&response);
-            assert!(context.contains("\"Verified live\""), "{context}");
-            assert!(context.contains("update_progress"), "{context}");
-            assert_eq!(context.lines().count(), 1, "{context}");
-        }
-        save_ledger(
-            &f,
-            &token,
-            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Nothing\n",
-        );
-        let closed = f.send("POST", "/hook/claude", Some(&token), PROMPT);
-        assert_eq!(closed.body, "{}", "nothing open, nothing said");
-        let told = sent::load(&sent_file_beside(&notes_of(&f, &token)));
-        assert_eq!(told, [], "a line that rides every prompt leaves no record");
     }
 
     fn start(source: &str, cwd: &Path) -> String {
@@ -1396,8 +1249,6 @@ mod tests {
     fn a_resume_is_explained_once_on_session_start_or_else_on_the_next_prompt() {
         let f = fixture();
         let token = f.register(1, "a");
-        already_asked(&f, &token);
-        name_ask::mark_asked(&notes_of(&f, &token)).unwrap();
         let cwd = f.paths.root();
         let from = PathBuf::from("/elsewhere/web");
         let due = |why: Why| {
@@ -1426,11 +1277,10 @@ mod tests {
 
     #[test]
     fn only_a_claude_prompt_carries_a_line() {
-        let open =
-            "# Goal\nShip\n\n## Status\nstate: working\n\n## Not verified\n- Verified live\n";
         let f = fixture();
         let token = f.register(1, "a");
-        save_ledger(&f, &token, open);
+        save_ledger(&f, &token, OPEN);
+        replace_service_lines(&f.shared, HashMap::from([(1, "db is running".to_owned())]));
         let others = [
             ("/hook/claude", STOP),
             ("/hook/claude", r#"{"hook_event_name":"SessionStart"}"#),
@@ -1450,9 +1300,7 @@ mod tests {
         let one = f.register(1, "a");
         let two = f.register(2, "b");
         for token in [&one, &two] {
-            already_asked(&f, token);
             save_ledger(&f, token, CALM);
-            name_ask::mark_asked(&notes_of(&f, token)).unwrap();
         }
         let line = |text: &str| HashMap::from([(1, text.to_owned()), (2, text.to_owned())]);
         let ask = |token: &str| f.send("POST", "/hook/claude", Some(token), PROMPT);
@@ -1743,36 +1591,25 @@ mod tests {
     }
 
     #[test]
-    fn the_first_saved_report_with_a_goal_carries_the_icon_and_name_asks_once() {
+    fn a_saved_report_answers_with_saved_and_nothing_else() {
         let f = fixture();
         let token = f.register(1, "a");
-        let notes = notes_of(&f, &token);
-        let save = || {
-            let args = json!({
-                "goal": "Fix the email",
-                "state": "working",
-                "now": "Reading",
-                "stages": [
-                    { "name": "Build", "kind": "build", "status": "active" },
-                    { "name": "Ship", "kind": "ship", "status": "todo" }
-                ],
-            });
+        let args = json!({
+            "goal": "Fix the email",
+            "state": "working",
+            "now": "Reading",
+            "stages": [
+                { "name": "Build", "kind": "build", "status": "active" },
+                { "name": "Ship", "kind": "ship", "status": "todo" }
+            ],
+        });
+        for _ in 0..2 {
             let reply =
                 body_json(&f.send("POST", "/mcp", Some(&token), &call("update_progress", &args)));
-            reply["result"]["content"][0]["text"].as_str().unwrap().to_owned()
-        };
-        let first = save();
-        assert!(first.starts_with("saved"), "{first}");
-        assert!(first.contains(avatar_ask::CONTEXT), "{first}");
-        assert!(first.contains(name_ask::ASK), "{first}");
-        assert!(avatar_store::was_asked(&avatar_asked_file_beside(&notes)));
-        assert!(name_ask::was_asked(&notes));
-        let second = save();
-        assert!(
-            !second.contains(avatar_ask::CONTEXT) && !second.contains(name_ask::ASK),
-            "{second}"
-        );
-        assert!(!f.send("POST", "/hook/claude", Some(&token), PROMPT).body.contains("set_avatar"));
+            let text = reply["result"]["content"][0]["text"].as_str().unwrap().to_owned();
+            assert!(text.starts_with("saved"), "{text}");
+            assert!(!text.contains("set_avatar") && !text.contains("set_name"), "{text}");
+        }
     }
 
     #[test]

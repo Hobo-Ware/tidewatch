@@ -16,37 +16,6 @@ fn the_defaults_are_rebase_fixup_and_draft() {
 }
 
 #[test]
-fn the_catch_up_words_follow_the_profile() {
-    let rebase = Workflow::default();
-    let merge = Workflow { catch_up: CatchUp::Merge, ..rebase };
-    assert_eq!(rebase.catch_up_clause("main"), "Rebase onto origin/main");
-    assert_eq!(rebase.push_after_catch_up(), "push with --force-with-lease");
-    assert_eq!(merge.catch_up_clause("develop"), "Merge origin/develop into this branch");
-    assert_eq!(merge.push_after_catch_up(), "push");
-}
-
-#[test]
-fn the_fix_words_follow_the_profile() {
-    let fixup = Workflow::default();
-    let new = Workflow { fixes: Fixes::NewCommits, ..fixup };
-    let table = [
-        (
-            fixup,
-            Fix::The,
-            "fold the fix into the commit it belongs to and push with --force-with-lease",
-        ),
-        (fixup, Fix::Each, "fold each fix into its commit and push with --force-with-lease"),
-        (fixup, Fix::It, "fold it into its commit and push with --force-with-lease"),
-        (new, Fix::The, "commit the fix and push"),
-        (new, Fix::Each, "commit each fix and push"),
-        (new, Fix::It, "commit it and push"),
-    ];
-    for (workflow, fix, want) in table {
-        assert_eq!(workflow.fix_and_push(fix), want, "{workflow:?} {fix:?}");
-    }
-}
-
-#[test]
 fn each_fix_follows_the_fixes_setting() {
     let fixup = Workflow::default();
     let new = Workflow { fixes: Fixes::NewCommits, ..fixup };
@@ -201,21 +170,4 @@ fn the_checks_are_saved_with_the_profile_and_come_back() {
     let text = std::fs::read_to_string(paths.workflow_file()).unwrap();
     assert!(text.contains("[repo.\"/work/web\".checks]"), "{text}");
     assert_eq!(Store::load(&paths).get(Path::new("/work/web")), Some(workflow));
-}
-
-#[test]
-fn where_a_fix_goes_follows_the_profile_without_the_push() {
-    let fixup = Workflow::default();
-    let new = Workflow { fixes: Fixes::NewCommits, ..fixup };
-    let table = [
-        (fixup, Fix::The, "fold the fix into the commit it belongs to"),
-        (fixup, Fix::Each, "fold each fix into its commit"),
-        (fixup, Fix::It, "fold it into its commit"),
-        (new, Fix::The, "commit the fix"),
-        (new, Fix::Each, "commit each fix"),
-        (new, Fix::It, "commit it"),
-    ];
-    for (workflow, fix, want) in table {
-        assert_eq!(workflow.fold(fix), want, "{workflow:?} {fix:?}");
-    }
 }

@@ -85,7 +85,6 @@ pub mod meeseeks_mcp;
 pub mod meeseeks_target;
 pub mod merged_branch;
 pub mod message_history;
-pub mod name_ask;
 pub mod names;
 pub mod note_paste;
 pub mod notes;

@@ -425,24 +425,20 @@ fn first_line(text: &str) -> &str {
 
 #[must_use]
 pub fn fix_note(step: Step, detail: &str) -> String {
-    let again = "then call meeseeks_done again";
     match step {
-        Step::Change => format!(
-            "Tidewatch checked your work and it is not committed yet: {}. Commit everything on this branch, {again}.",
-            first_line(detail)
-        ),
+        Step::Change => {
+            format!("I checked your work and it is not committed yet: {}.", first_line(detail))
+        }
         Step::Tests => format!(
-            "Tidewatch ran the tests and they failed. Fix them, {again}. The end of the output:\n```\n{}\n```",
+            "I ran the tests and they failed. The end of the output:\n```\n{}\n```",
             tail_of(detail)
         ),
-        Step::Proof => format!(
-            "Tidewatch cannot finish while the worktree has loose changes: {}. Commit or remove them, {again}.",
-            first_line(detail)
-        ),
-        Step::HandOff => format!(
-            "Tidewatch could not open the pull request: {}. If the code is the cause, fix it, {again}. Otherwise say so and wait.",
-            first_line(detail)
-        ),
+        Step::Proof => {
+            format!("I cannot finish while the worktree has loose changes: {}.", first_line(detail))
+        }
+        Step::HandOff => {
+            format!("I checked the hand-off and it failed: {}", first_line(detail))
+        }
     }
 }
 

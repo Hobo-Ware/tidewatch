@@ -21,7 +21,7 @@ use crate::flow_jobs::Which;
 use crate::note_send::ENTER_DELAY_SECS;
 use crate::notes_strip::StripAction;
 use crate::outbox::{LINE_FULL, NO_AGENT, Offer, Origin, Ready as Next, Screen, Send};
-use crate::pane::{Body, Pane};
+use crate::pane::{AgentTab, Body, Pane};
 use crate::post_confirm::{self, Answer, Plan};
 use crate::pr_glue;
 use crate::prompt_ghost;
@@ -131,6 +131,10 @@ pub(crate) fn deliver(
     true
 }
 
+fn runs_on_its_own(tabs: &Tabs<Pane<PtyTerm>>, tab: u64) -> bool {
+    tabs.agent(tab).is_some_and(AgentTab::autonomous)
+}
+
 fn status_of(tabs: &Tabs<Pane<PtyTerm>>, tab: u64) -> Option<AgentStatus> {
     let found = tabs.get(tab)?;
     found.pane.agent.as_ref().map(|agent| agent.run.status().clone())
@@ -147,6 +151,7 @@ pub(crate) fn offer_to_agent(
     now: f64,
 ) -> Offer {
     let status = status_of(tabs, tab);
+    flow.outbox.set_autonomous(tab, runs_on_its_own(tabs, tab));
     let held = flow.outbox.held(tab, now) && status == Some(AgentStatus::Done);
     let screen = match tabs.get(tab) {
         Some(found) if send.origin == Origin::Auto && !held => {
@@ -237,6 +242,7 @@ pub(crate) fn drain_outbox(
     }
     for tab in tabs.items_mut() {
         if let Some(agent) = tab.pane.agent.as_mut() {
+            flow.outbox.set_autonomous(tab.id, agent.autonomous());
             agent.reader.rows.set_auto_paused(flow.outbox.paused(tab.id));
         }
     }

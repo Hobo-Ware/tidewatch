@@ -12,16 +12,6 @@ use crate::prefs::GithubPrefs;
 
 /// Older cards are dropped past this, so a long-lived tab keeps a small file.
 pub const MAX_CARDS: usize = 80;
-/// Auto-fix sends at most this many times per pull request, then the tab falls back to asking.
-pub const MAX_AUTO_SENDS: u32 = 3;
-/// A tab that runs on its own sends this many times per pull request, then pauses without asking.
-pub const MAX_AUTONOMOUS_SENDS: u32 = 10;
-
-/// The loop guard for a tab: how many auto-fix sends one pull request gets.
-#[must_use]
-pub fn send_cap(autonomous: bool) -> u32 {
-    if autonomous { MAX_AUTONOMOUS_SENDS } else { MAX_AUTO_SENDS }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
@@ -46,8 +36,6 @@ pub struct Cards {
     pub summary: Option<Summary>,
     #[serde(default)]
     pub policy: Option<GithubPrefs>,
-    #[serde(default)]
-    pub auto_sends: u32,
     #[serde(default)]
     pub fixing: bool,
     /// Commits a tab that runs on its own left on the branch after its pull request merged.
@@ -96,7 +84,6 @@ impl Cards {
         self.number = Some(number);
         self.seen = None;
         self.summary = None;
-        self.auto_sends = 0;
         self.fixing = false;
         self.after_merge = 0;
     }
@@ -341,12 +328,6 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_that_runs_on_its_own_gets_a_longer_loop_guard() {
-        assert_eq!(send_cap(false), MAX_AUTO_SENDS);
-        assert_eq!(send_cap(true), MAX_AUTONOMOUS_SENDS);
-    }
-
-    #[test]
     fn saved_noise_cards_go_and_real_comments_stay() {
         let mut cards = Cards::default();
         let comment = |author: &str, text: &str| Body::Commented {
@@ -465,16 +446,12 @@ mod tests {
         let mut cards = Cards::default();
         cards.follow(1);
         cards.seen = Some(Seen::default());
-        cards.auto_sends = 2;
         cards.fixing = true;
         cards.add(10, opened());
         cards.follow(1);
-        assert_eq!((cards.seen.is_some(), cards.auto_sends, cards.fixing), (true, 2, true));
+        assert_eq!((cards.seen.is_some(), cards.fixing), (true, true));
         cards.follow(2);
-        assert_eq!(
-            (cards.number, cards.seen.is_some(), cards.auto_sends, cards.fixing),
-            (Some(2), false, 0, false)
-        );
+        assert_eq!((cards.number, cards.seen.is_some(), cards.fixing), (Some(2), false, false));
         assert_eq!(kinds(&cards), ["opened"]);
     }
 

@@ -4,7 +4,6 @@ use crate::text::squash;
 use serde_json::Value;
 
 pub const QUIET_MS: i64 = 90_000;
-pub const PROGRESS_EXAMPLE: &str = "printf '{\"name\":\"import\",\"done\":%s,\"total\":%s,\"unit\":\"rows\",\"phase\":\"load\"}\\n' \"$n\" \"$total\" >> \"$TIDEWATCH_PROGRESS\"";
 
 /// What the prompt of a background task's notice starts with.
 pub const NOTICE_OPENING: &str = "<task-notification>";
@@ -65,9 +64,10 @@ fn short_command(command: &str) -> String {
 }
 
 #[must_use]
-pub fn nudge_text(command: &str) -> String {
+pub fn quiet_text(command: &str) -> String {
     format!(
-        "Your background command `{command}` has reported no progress to Tidewatch. Make the job itself append JSON lines to `$TIDEWATCH_PROGRESS`, for example `{PROGRESS_EXAMPLE}`, then tail the file and confirm the first line landed."
+        "Your background command `{command}` hasn't reported progress in {} s.",
+        QUIET_MS / 1000
     )
 }
 

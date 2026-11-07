@@ -16,14 +16,14 @@ const KEPT: usize = 200;
 /// The `because` of each sender: a clause that reads after "Because". It starts in lower case,
 /// except for a feature name listed in `NAMED`.
 pub mod because {
-    pub const AUTO_CHECKS: &str = "Auto fixes failed checks on this PR";
-    pub const AUTO_REVIEWS: &str = "Auto answers reviews on this PR";
-    pub const AUTO_CONFLICTS: &str = "Auto fixes conflicts on this PR";
+    pub const AUTO_CHECKS: &str = "Auto saw failed checks on this PR the agent had not picked up";
+    pub const AUTO_REVIEWS: &str =
+        "Auto saw review comments on this PR the agent had not picked up";
+    pub const AUTO_CONFLICTS: &str = "Auto saw conflicts on this PR the agent had not picked up";
     pub const ASK_PR_CLICK: &str = "you asked the agent to open the pull request";
     pub const ASK_PUSH_CLICK: &str = "you asked the agent to push its new commits";
     pub const LEDGER_STOP: &str = "the progress report was not updated this turn";
     pub const LEDGER_FINAL: &str = "the progress report still said working at the end of the turn";
-    pub const AVATAR_ASK: &str = "this tab has a goal now and no icon yet";
     pub const AVATAR_DRAW: &str = "you asked for an avatar";
     pub const AVATAR_REDRAW: &str = "you asked for a new avatar";
     pub const DUE_CLICK: &str = "you pressed Ask on the Due today card";
@@ -43,7 +43,7 @@ pub mod because {
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 23] = [
+    pub const ALL: [&str; 22] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
@@ -51,7 +51,6 @@ pub mod because {
         ASK_PUSH_CLICK,
         LEDGER_STOP,
         LEDGER_FINAL,
-        AVATAR_ASK,
         AVATAR_DRAW,
         AVATAR_REDRAW,
         DUE_CLICK,
@@ -136,7 +135,7 @@ impl Reason {
     /// The message was filled in from the repo's workflow profile, so the profile is what changes it.
     #[must_use]
     pub fn uses_workflow(self) -> bool {
-        matches!(self, Self::AutoFix | Self::PullRequest)
+        self == Self::PullRequest
     }
 
     /// Told through a hook, so the transcript holds no user turn for it.
@@ -239,7 +238,7 @@ impl Record {
         !self.hand && self.reason.quiet_words().is_some()
     }
 
-    /// `Because Auto fixes conflicts on this PR · 1 of 10`.
+    /// `Because Auto saw conflicts on this PR the agent had not picked up · 1 of 10`.
     #[must_use]
     pub fn footer(&self) -> String {
         match self.cap {
@@ -445,7 +444,10 @@ mod tests {
             cap: Some(Cap { n: 1, max: 10 }),
             ..record(Reason::AutoFix, "x", 0)
         };
-        assert_eq!(capped.footer(), "Because Auto fixes conflicts on this PR \u{b7} 1 of 10");
+        assert_eq!(
+            capped.footer(),
+            "Because Auto saw conflicts on this PR the agent had not picked up \u{b7} 1 of 10"
+        );
         let sweep =
             Record { cap: Some(Cap { n: 2, max: 3 }), ..record(Reason::CommentGuard, "x", 0) };
         assert!(sweep.footer().ends_with("\u{b7} 2 of 3"));
@@ -600,9 +602,9 @@ mod tests {
     }
 
     #[test]
-    fn the_workflow_words_sit_on_the_pull_request_messages_only() {
+    fn the_workflow_words_sit_on_the_ask_for_a_pull_request_only() {
         let table = [
-            (Reason::AutoFix, true),
+            (Reason::AutoFix, false),
             (Reason::PullRequest, true),
             (Reason::MeeseeksCheck, false),
             (Reason::LedgerGuard, false),

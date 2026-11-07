@@ -4,7 +4,7 @@
 use crate::note_paste::clean;
 use crate::pr_status::{Body, Job, ReviewComment};
 use crate::prefs::{AutoJob, GithubPrefs};
-use crate::workflow_profile::{Fix, Workflow};
+use crate::text::plural;
 
 const MAX_CHARS: usize = 6000;
 
@@ -85,12 +85,8 @@ pub fn wanted(prefs: &GithubPrefs, body: &Body) -> bool {
 #[must_use]
 pub fn ended_text(body: &Body) -> Option<String> {
     match body {
-        Body::Merged { number, base } => Some(format!(
-            "PR #{number} was merged into {base}. Push nothing more to this branch. Mark the finished steps done in your progress report and stop. If work is left, list it there."
-        )),
-        Body::Closed { number } => Some(format!(
-            "PR #{number} was closed without merging. Stop work on it and say in your progress report what is left."
-        )),
+        Body::Merged { number, base } => Some(format!("PR #{number} was merged into {base}.")),
+        Body::Closed { number } => Some(format!("PR #{number} was closed without merging.")),
         _ => None,
     }
 }
@@ -100,86 +96,78 @@ pub struct Message {
     pub ask: Ask,
     pub trigger: Trigger,
     pub headline: String,
+    pub detail: String,
     pub text: String,
     pub extra_lines: usize,
 }
 
+impl Message {
+    /// The same facts with the owner's short request after them, for a click on Ask or Send now.
+    #[must_use]
+    pub fn asked(&self) -> Self {
+        let headline = format!("{} Please {}.", self.headline, self.ask.phrase);
+        let text = join(&headline, &self.detail);
+        Self { text: cap(&text), ..self.clone() }
+    }
+}
+
+fn join(headline: &str, detail: &str) -> String {
+    if detail.is_empty() { headline.to_owned() } else { format!("{headline}\n\n{detail}") }
+}
+
+/// What happened on the pull request, as facts: the agent was told at launch how to react.
 #[must_use]
-pub fn message(body: &Body, number: u64, workflow: Workflow) -> Option<Message> {
+pub fn message(body: &Body, number: u64) -> Option<Message> {
     let (ask, trigger) = ask_of(body)?;
     let (headline, detail, extra_lines) = match body {
-        Body::ChecksFailed { jobs, .. } => checks(jobs, number, workflow),
+        Body::ChecksFailed { jobs, .. } => checks(jobs, number),
         Body::ChangesRequested { author, body, comments, .. } => {
-            let did = format!("@{author} requested changes on PR #{number}");
-            review(&did, "Fix them", body, comments, workflow)
+            let with = match comments.len() {
+                0 => String::new(),
+                n => format!(" ({})", plural(n, "review comment", "review comments")),
+            };
+            review(&format!("PR #{number}: {author} requested changes{with}."), body, comments)
         }
         Body::Reviewed { author, body, comments, .. } => {
-            let did = format!("@{author} reviewed PR #{number}");
-            review(&did, "Fix what holds up, answer the rest on GitHub", body, comments, workflow)
+            let did = match comments.len() {
+                0 => format!("PR #{number}: {author} left a review."),
+                n => format!(
+                    "PR #{number}: {} from {author}.",
+                    plural(n, "new review comment", "new review comments")
+                ),
+            };
+            review(&did, body, comments)
         }
         Body::Commented { author, text, .. } => {
             let detail = quote(text);
             let lines = detail.lines().count();
-            (
-                format!(
-                    "@{author} commented on PR #{number} (below). Answer on GitHub. If it needs a code change, {}.",
-                    workflow.fix_and_push(Fix::It)
-                ),
-                detail,
-                lines,
-            )
+            (format!("PR #{number}: {author} commented."), detail, lines)
         }
-        Body::Conflict { base } => (
-            format!(
-                "PR #{number} conflicts with {base}. {}, resolve the conflicts, run the tests, and {}.",
-                workflow.catch_up_clause(base),
-                workflow.push_after_catch_up()
-            ),
-            String::new(),
-            0,
-        ),
+        Body::Conflict { base } => {
+            (format!("PR #{number} conflicts with {base}."), String::new(), 0)
+        }
         _ => return None,
     };
     let headline = clean(&headline);
     let detail = clean(&detail);
-    let text = if detail.is_empty() { headline.clone() } else { format!("{headline}\n\n{detail}") };
-    Some(Message { ask, trigger, headline, text: cap(&text), extra_lines })
+    let text = cap(&join(&headline, &detail));
+    Some(Message { ask, trigger, headline, detail, text, extra_lines })
 }
 
-fn checks(jobs: &[Job], number: u64, workflow: Workflow) -> (String, String, usize) {
+fn checks(jobs: &[Job], number: u64) -> (String, String, usize) {
     let failed: Vec<&Job> = jobs.iter().filter(|job| !job.passed).collect();
     let step_of = |job: &Job| job.step.as_deref().map(short_step).filter(|step| !step.is_empty());
-    let has_log = failed.iter().any(|job| !job.log.is_empty());
-    let headline = match failed.as_slice() {
-        [] => format!(
-            "The checks failed on PR #{number}. Find out why, fix it, run the same checks locally, then {}.",
-            workflow.fix_and_push(Fix::The)
-        ),
-        [job] => {
-            let at = step_of(job).map_or_else(String::new, |step| format!(" at \"{step}\""));
-            let log = if has_log { " (log below)" } else { "" };
-            format!(
-                "{} failed{at} on PR #{number}{log}. Fix it, run the same check locally, then {}.",
-                job.name,
-                workflow.fix_and_push(Fix::The)
-            )
-        }
-        many => {
-            let named: Vec<String> = many
-                .iter()
-                .map(|job| match step_of(job) {
-                    Some(step) => format!("{} at \"{step}\"", job.name),
-                    None => job.name.clone(),
-                })
-                .collect();
-            let log = if has_log { " (logs below)" } else { "" };
-            format!(
-                "{} checks failed on PR #{number}: {}{log}. Fix them, run the same checks locally, then {}.",
-                many.len(),
-                named.join(", "),
-                workflow.fix_and_push(Fix::Each)
-            )
-        }
+    let named: Vec<String> = failed
+        .iter()
+        .map(|job| match step_of(job) {
+            Some(step) => format!("{} at \"{step}\"", job.name),
+            None => job.name.clone(),
+        })
+        .collect();
+    let headline = if named.is_empty() {
+        format!("PR #{number}: checks failed.")
+    } else {
+        format!("PR #{number}: checks failed: {}.", named.join(", "))
     };
     let logs: Vec<String> = failed
         .iter()
@@ -190,21 +178,7 @@ fn checks(jobs: &[Job], number: u64, workflow: Workflow) -> (String, String, usi
     (headline, logs.join("\n\n"), lines)
 }
 
-fn review(
-    did: &str,
-    fix: &str,
-    body: &str,
-    comments: &[ReviewComment],
-    workflow: Workflow,
-) -> (String, String, usize) {
-    let below = match comments.len() {
-        0 if body.trim().is_empty() => String::new(),
-        0 => " (below)".to_owned(),
-        1 => " (1 comment below)".to_owned(),
-        n => format!(" ({n} comments below)"),
-    };
-    let headline =
-        format!("{did}{below}. {fix}, run the tests, {}.", workflow.fix_and_push(Fix::Each));
+fn review(headline: &str, body: &str, comments: &[ReviewComment]) -> (String, String, usize) {
     let mut parts: Vec<String> = Vec::new();
     if !body.trim().is_empty() {
         parts.push(quote(body));
@@ -216,7 +190,7 @@ fn review(
         };
         format!("- `{place}` {}", comment.text.trim())
     }));
-    (headline, parts.join("\n"), comments.len())
+    (headline.to_owned(), parts.join("\n"), comments.len())
 }
 
 fn quote(text: &str) -> String {
@@ -249,20 +223,6 @@ fn cap(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow_profile::{CatchUp, Checks, Fixes};
-
-    const REBASE: Workflow = Workflow {
-        catch_up: CatchUp::Rebase,
-        fixes: Fixes::Fixup,
-        pull_requests: crate::workflow_profile::PullRequests::Draft,
-        checks: Checks::OFF,
-    };
-    const MERGE: Workflow = Workflow {
-        catch_up: CatchUp::Merge,
-        fixes: Fixes::NewCommits,
-        pull_requests: crate::workflow_profile::PullRequests::Draft,
-        checks: Checks::OFF,
-    };
 
     fn job(name: &str, passed: bool, step: Option<&str>, log: &[&str]) -> Job {
         Job {
@@ -281,8 +241,12 @@ mod tests {
         Body::ChecksFailed { head: "h".into(), jobs }
     }
 
+    fn comment(path: &str, line: Option<u32>, text: &str) -> ReviewComment {
+        ReviewComment { path: path.into(), line, text: text.into() }
+    }
+
     #[test]
-    fn one_failed_check_gets_the_short_sentence_and_its_log_in_a_fence() {
+    fn one_failed_check_is_a_fact_and_its_log_follows_in_a_fence() {
         let body = failed(vec![
             job("check (macos-14)", true, None, &[]),
             job(
@@ -295,14 +259,11 @@ mod tests {
                 ],
             ),
         ]);
-        let message = message(&body, 42, REBASE).unwrap();
-        assert_eq!(
-            message.headline,
-            "check (ubuntu-latest) failed at \"clippy\" on PR #42 (log below). Fix it, run the same check locally, then fold the fix into the commit it belongs to and push with --force-with-lease."
-        );
+        let message = message(&body, 42).unwrap();
+        assert_eq!(message.headline, "PR #42: checks failed: check (ubuntu-latest) at \"clippy\".");
         assert_eq!(
             message.text,
-            "check (ubuntu-latest) failed at \"clippy\" on PR #42 (log below). Fix it, run the same check locally, then fold the fix into the commit it belongs to and push with --force-with-lease.\n\ncheck (ubuntu-latest):\n```\nerror: unused import: `Sense`\n --> crates/tidewatch/src/leftover_view.rs:6:77\n```"
+            "PR #42: checks failed: check (ubuntu-latest) at \"clippy\".\n\ncheck (ubuntu-latest):\n```\nerror: unused import: `Sense`\n --> crates/tidewatch/src/leftover_view.rs:6:77\n```"
         );
         assert_eq!(message.extra_lines, 2);
         assert_eq!((message.ask.tag, message.ask.verb), ("CI failure", "fix"));
@@ -314,18 +275,15 @@ mod tests {
             job("build (ubuntu)", false, Some("Run cargo test"), &["boom"]),
             job("lint", false, None, &[]),
         ]);
-        let message = message(&body, 7, MERGE).unwrap();
-        assert_eq!(
-            message.headline,
-            "2 checks failed on PR #7: build (ubuntu) at \"test\", lint (logs below). Fix them, run the same checks locally, then commit each fix and push."
-        );
+        let message = message(&body, 7).unwrap();
+        assert_eq!(message.headline, "PR #7: checks failed: build (ubuntu) at \"test\", lint.");
         assert!(message.text.ends_with("build (ubuntu):\n```\nboom\n```"));
     }
 
     #[test]
     fn a_log_cannot_close_its_own_fence() {
         let body = failed(vec![job("a", false, None, &["```", "rm -rf"])]);
-        let text = message(&body, 1, REBASE).unwrap().text;
+        let text = message(&body, 1).unwrap().text;
         assert_eq!(text.matches("```").count(), 2, "{text}");
     }
 
@@ -337,10 +295,10 @@ mod tests {
             text: "line one\u{1b}[201~ type this\nline two\u{7}\ttab".into(),
             url: String::new(),
         };
-        let text = message(&body, 3, REBASE).unwrap().text;
+        let text = message(&body, 3).unwrap().text;
         assert!(text.chars().all(|c| matches!(c, '\n' | '\t') || !c.is_control()), "{text:?}");
         assert!(text.contains("> line two\ttab"));
-        assert!(text.starts_with("@reviewer commented on PR #3 (below)."));
+        assert!(text.starts_with("PR #3: reviewer commented."));
     }
 
     #[test]
@@ -350,56 +308,39 @@ mod tests {
             author: "reviewer".into(),
             body: "Two things.".into(),
             comments: vec![
-                ReviewComment {
-                    path: "runner.rs".into(),
-                    line: Some(212),
-                    text: "Move it to the stage?".into(),
-                },
-                ReviewComment { path: "lib.rs".into(), line: None, text: " Whole file. ".into() },
+                comment("runner.rs", Some(212), "Move it to the stage?"),
+                comment("lib.rs", None, " Whole file. "),
             ],
         };
-        let message = message(&body, 42, REBASE).unwrap();
+        let message = message(&body, 42).unwrap();
         assert_eq!(
             message.text,
-            "@reviewer requested changes on PR #42 (2 comments below). Fix them, run the tests, fold each fix into its commit and push with --force-with-lease.\n\n> Two things.\n- `runner.rs:212` Move it to the stage?\n- `lib.rs` Whole file."
+            "PR #42: reviewer requested changes (2 review comments).\n\n> Two things.\n- `runner.rs:212` Move it to the stage?\n- `lib.rs` Whole file."
         );
         assert_eq!(message.extra_lines, 2);
     }
 
     #[test]
-    fn a_review_without_a_verdict_lists_its_comments_and_leaves_the_rest_to_a_reply() {
+    fn a_review_without_a_verdict_counts_its_comments() {
         let body = Body::Reviewed {
             trusted: true,
             author: "chatgpt-codex-connector".into(),
             body: "### Codex Review\n\nHere are some automated review suggestions.".into(),
-            comments: vec![ReviewComment {
-                path: "stage.rs".into(),
-                line: Some(54),
-                text: "Reset the counter between stages.".into(),
-            }],
+            comments: vec![comment("stage.rs", Some(54), "Reset the counter between stages.")],
         };
-        let message = message(&body, 7, REBASE).unwrap();
+        let message = message(&body, 7).unwrap();
         assert_eq!(
             message.text,
-            "@chatgpt-codex-connector reviewed PR #7 (1 comment below). Fix what holds up, answer the rest on GitHub, run the tests, fold each fix into its commit and push with --force-with-lease.\n\n> ### Codex Review\n> \n> Here are some automated review suggestions.\n- `stage.rs:54` Reset the counter between stages."
+            "PR #7: 1 new review comment from chatgpt-codex-connector.\n\n> ### Codex Review\n> \n> Here are some automated review suggestions.\n- `stage.rs:54` Reset the counter between stages."
         );
         assert_eq!((message.ask.verb, message.trigger), ("address", Trigger::Reviews));
     }
 
     #[test]
-    fn a_conflict_names_the_fact_and_fills_the_method_from_the_profile() {
-        let conflict = Body::Conflict { base: "main".into() };
-        let rebase = message(&conflict, 9, REBASE).unwrap();
-        assert_eq!(
-            rebase.text,
-            "PR #9 conflicts with main. Rebase onto origin/main, resolve the conflicts, run the tests, and push with --force-with-lease."
-        );
-        let merge = message(&conflict, 9, MERGE).unwrap();
-        assert_eq!(
-            merge.text,
-            "PR #9 conflicts with main. Merge origin/main into this branch, resolve the conflicts, run the tests, and push."
-        );
-        assert_eq!((rebase.ask.verb, rebase.extra_lines), ("resolve", 0));
+    fn a_conflict_is_one_fact_with_no_method() {
+        let message = message(&Body::Conflict { base: "main".into() }, 9).unwrap();
+        assert_eq!(message.text, "PR #9 conflicts with main.");
+        assert_eq!((message.ask.verb, message.extra_lines), ("resolve", 0));
     }
 
     fn every_kind() -> Vec<Body> {
@@ -411,11 +352,7 @@ mod tests {
                 trusted: true,
                 author: "rev".into(),
                 body: "Two things.".into(),
-                comments: vec![ReviewComment {
-                    path: "a.rs".into(),
-                    line: Some(1),
-                    text: "x".into(),
-                }],
+                comments: vec![comment("a.rs", Some(1), "x")],
             },
             Body::Commented {
                 trusted: true,
@@ -428,88 +365,78 @@ mod tests {
                 trusted: true,
                 author: "rev".into(),
                 body: String::new(),
-                comments: vec![ReviewComment { path: "a.rs".into(), line: None, text: "x".into() }],
+                comments: vec![comment("a.rs", None, "x")],
+            },
+            Body::Reviewed {
+                trusted: true,
+                author: "rev".into(),
+                body: "Looks fine.".into(),
+                comments: vec![],
             },
         ]
     }
 
     #[test]
-    fn no_message_says_a_method_the_profile_did_not_choose() {
-        for body in every_kind() {
-            let rebase = message(&body, 5, REBASE).unwrap().text;
-            for banned in [
-                "Do not rebase",
-                "do not rebase",
-                "merge origin",
-                "Merge origin",
-                "and commit",
-                "Fetch, merge",
-            ] {
-                assert!(!rebase.contains(banned), "{banned:?} in {rebase}");
-            }
-            let merge = message(&body, 5, MERGE).unwrap().text;
-            for banned in ["Rebase onto", "fold ", "fixup", "autosquash"] {
-                assert!(!merge.contains(banned), "{banned:?} in {merge}");
-            }
-            for text in [&rebase, &merge] {
-                assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
-            }
+    fn each_message_headline_states_the_fact() {
+        let table = [
+            "PR #5: checks failed: lint at \"bun run check\".",
+            "PR #5: checks failed: a, b.",
+            "PR #5: checks failed.",
+            "PR #5: rev requested changes (1 review comment).",
+            "PR #5: rev commented.",
+            "PR #5 conflicts with develop.",
+            "PR #5: 1 new review comment from rev.",
+            "PR #5: rev left a review.",
+        ];
+        for (body, want) in every_kind().iter().zip(table) {
+            assert_eq!(message(body, 5).unwrap().headline, want);
         }
     }
 
     #[test]
-    fn each_message_under_the_two_profiles() {
+    fn no_message_tells_the_agent_what_to_do() {
+        for body in every_kind() {
+            let text = message(&body, 5).unwrap().text.to_lowercase();
+            for banned in
+                ["fix ", "please", "rebase", "merge origin", "push", "commit", "run the", "answer"]
+            {
+                assert!(!text.contains(banned), "{banned:?} in {text}");
+            }
+            assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_click_adds_the_owners_short_request_after_the_facts() {
+        let bodies = every_kind();
         let table = [
             (
                 0,
-                "lint failed at \"bun run check\" on PR #5 (log below). Fix it, run the same check locally, then fold the fix into the commit it belongs to and push with --force-with-lease.",
-                "lint failed at \"bun run check\" on PR #5 (log below). Fix it, run the same check locally, then commit the fix and push.",
+                "PR #5: checks failed: lint at \"bun run check\". Please fix CI.\n\nlint:\n```\nboom\n```",
             ),
-            (
-                2,
-                "The checks failed on PR #5. Find out why, fix it, run the same checks locally, then fold the fix into the commit it belongs to and push with --force-with-lease.",
-                "The checks failed on PR #5. Find out why, fix it, run the same checks locally, then commit the fix and push.",
-            ),
-            (
-                3,
-                "@rev requested changes on PR #5 (1 comment below). Fix them, run the tests, fold each fix into its commit and push with --force-with-lease.",
-                "@rev requested changes on PR #5 (1 comment below). Fix them, run the tests, commit each fix and push.",
-            ),
-            (
-                4,
-                "@rev commented on PR #5 (below). Answer on GitHub. If it needs a code change, fold it into its commit and push with --force-with-lease.",
-                "@rev commented on PR #5 (below). Answer on GitHub. If it needs a code change, commit it and push.",
-            ),
-            (
-                5,
-                "PR #5 conflicts with develop. Rebase onto origin/develop, resolve the conflicts, run the tests, and push with --force-with-lease.",
-                "PR #5 conflicts with develop. Merge origin/develop into this branch, resolve the conflicts, run the tests, and push.",
-            ),
-            (
-                6,
-                "@rev reviewed PR #5 (1 comment below). Fix what holds up, answer the rest on GitHub, run the tests, fold each fix into its commit and push with --force-with-lease.",
-                "@rev reviewed PR #5 (1 comment below). Fix what holds up, answer the rest on GitHub, run the tests, commit each fix and push.",
-            ),
+            (4, "PR #5: rev commented. Please answer the comment.\n\n> Why?"),
+            (5, "PR #5 conflicts with develop. Please resolve the conflicts."),
         ];
-        let bodies = every_kind();
-        for (at, under_rebase, under_merge) in table {
-            assert_eq!(message(&bodies[at], 5, REBASE).unwrap().headline, under_rebase, "{at}");
-            assert_eq!(message(&bodies[at], 5, MERGE).unwrap().headline, under_merge, "{at}");
+        for (at, want) in table {
+            let message = message(&bodies[at], 5).unwrap();
+            assert_eq!(message.asked().text, want, "{at}");
+            assert!(!message.text.contains("Please"), "the facts stay without a request");
         }
     }
 
     #[test]
-    fn a_review_that_is_only_a_body_says_below_and_one_with_nothing_says_nothing() {
+    fn a_review_that_is_only_a_body_has_no_comment_count() {
         let review = |body: &str| Body::ChangesRequested {
             trusted: true,
             author: "a".into(),
             body: body.into(),
             comments: vec![],
         };
-        assert!(
-            message(&review("Please."), 1, REBASE).unwrap().headline.contains("PR #1 (below).")
+        assert_eq!(
+            message(&review("Please."), 1).unwrap().text,
+            "PR #1: a requested changes.\n\n> Please."
         );
-        assert!(message(&review(""), 1, REBASE).unwrap().headline.contains("PR #1. Fix them"));
+        assert_eq!(message(&review(""), 1).unwrap().text, "PR #1: a requested changes.");
     }
 
     #[test]
@@ -523,17 +450,21 @@ mod tests {
             Body::PushFix { commits: 1, head: "h".into() },
         ];
         for body in silent {
-            assert_eq!(message(&body, 1, REBASE), None, "{body:?}");
+            assert_eq!(message(&body, 1), None, "{body:?}");
             assert_eq!(ask_of(&body), None, "{body:?}");
         }
     }
 
     #[test]
-    fn only_a_merge_or_a_close_has_an_ending_note() {
-        let merged = ended_text(&Body::Merged { number: 7, base: "main".into() }).unwrap();
-        assert!(merged.starts_with("PR #7 was merged into main."), "{merged}");
-        let closed = ended_text(&Body::Closed { number: 7 }).unwrap();
-        assert!(closed.starts_with("PR #7 was closed without merging."), "{closed}");
+    fn only_a_merge_or_a_close_has_an_ending_note_and_it_is_a_fact() {
+        assert_eq!(
+            ended_text(&Body::Merged { number: 7, base: "main".into() }).as_deref(),
+            Some("PR #7 was merged into main.")
+        );
+        assert_eq!(
+            ended_text(&Body::Closed { number: 7 }).as_deref(),
+            Some("PR #7 was closed without merging.")
+        );
         assert_eq!(ended_text(&Body::Approved { author: "a".into() }), None);
         assert_eq!(ended_text(&Body::Conflict { base: "main".into() }), None);
     }
@@ -546,9 +477,10 @@ mod tests {
             text: "x".repeat(20_000),
             url: String::new(),
         };
-        let text = message(&body, 1, REBASE).unwrap().text;
-        assert!(text.chars().count() < MAX_CHARS + 10);
-        assert!(text.ends_with("\n..."));
+        let message = message(&body, 1).unwrap();
+        assert!(message.text.chars().count() < MAX_CHARS + 10);
+        assert!(message.text.ends_with("\n..."));
+        assert!(message.asked().text.chars().count() < MAX_CHARS + 10);
     }
 
     #[test]

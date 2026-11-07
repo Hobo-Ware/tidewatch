@@ -443,16 +443,13 @@ mod tests {
     }
 
     #[test]
-    fn the_buttons_under_a_row_are_its_workflow_and_the_switch_of_its_kind() {
+    fn the_buttons_under_a_row_are_its_workflow_for_a_pr_ask_and_the_switch_of_its_kind() {
         use tidewatch_core::prefs::AutoJob;
         use tidewatch_core::sent::because;
         let table = [
             (
                 record_of(Reason::AutoFix, because::AUTO_CONFLICTS, false),
-                vec![
-                    ("Change workflow", Click::ChangeWorkflow),
-                    ("Turn off for conflicts", Click::TurnOff(Switch::Auto(AutoJob::Conflicts))),
-                ],
+                vec![("Turn off for conflicts", Click::TurnOff(Switch::Auto(AutoJob::Conflicts)))],
             ),
             (
                 record_of(Reason::PullRequest, because::ASK_PR_CLICK, true),
