@@ -17,8 +17,6 @@ use tidewatch_core::user_markup;
 use crate::agent_avatar;
 use crate::avatar_glue::meeseeks_avatar;
 use crate::brand;
-use crate::last_turn::LastTurn;
-use crate::last_turn_view;
 use crate::link_text::Text;
 use crate::meeseeks_model::Look;
 use crate::meeseeks_summary::{BranchLine, Quiet, StageRow, Summary};
@@ -112,19 +110,6 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action>
             ui.add_space(SECTION_GAP);
             section_label(ui, "Branch");
             placed.branch = Some(branch_rows(ui, width, branch));
-        }
-        if !summary.done.is_empty() || !summary.next.is_empty() {
-            ui.add_space(SECTION_GAP);
-            let turn = LastTurn {
-                done: summary.done.clone(),
-                needs: Vec::new(),
-                next: summary.next.clone(),
-                check: None,
-                can_ask: Ok(()),
-                owner_asks: false,
-                today: crate::progress_glue::today(),
-            };
-            last_turn_view::show(ui, width, &turn, None);
         }
         if !summary.stages.is_empty() {
             ui.add_space(SECTION_GAP);

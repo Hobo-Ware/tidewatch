@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn reported_links_are_kept_beside_the_report_and_announced_to_the_app() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
+        let file = dir.path().join("progress.json");
         let args = typed(&serde_json::json!({ "links": [
             { "url": "https://claude.ai/artifact/abc", "title": "Board", "for": "the pick" },
         ]}));
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn a_later_report_never_drops_a_link_and_a_report_without_links_touches_none() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
+        let file = dir.path().join("progress.json");
         let first = typed(&serde_json::json!({ "links": [
             { "url": "https://a.dev/1", "title": "One" },
             { "url": "https://a.dev/2", "title": "Two" },
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn a_bad_link_refuses_the_whole_report_and_saves_no_link() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
+        let file = dir.path().join("progress.json");
         let args = typed(&serde_json::json!({ "links": [
             { "url": "https://a.dev/1", "title": "Fine" },
             { "url": "ftp://a.dev/2", "title": "Bad" },
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn the_old_ledger_field_is_a_tool_error_that_names_the_typed_fields_and_saves_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
+        let file = dir.path().join("progress.json");
         let sent = std::cell::Cell::new(0);
         let args = serde_json::json!({ "ledger": "# Goal\ng\n" });
         let (reply, is_error) =
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn a_ledger_beside_good_typed_fields_is_still_refused_and_nothing_is_saved() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
+        let file = dir.path().join("progress.json");
         let args = typed(&serde_json::json!({ "ledger": "# Goal\ng\n" }));
         let (reply, is_error, _) = run(&args, &file);
         assert!(is_error, "{reply}");

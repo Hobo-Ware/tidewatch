@@ -105,7 +105,6 @@ impl Tidewatch {
 
     fn last_turn(&self, tab: u64) -> Option<LastTurn> {
         LastTurn::of(
-            self.waiting_end_block().as_ref(),
             self.done_check_look(tab),
             self.done_check_can_ask(tab),
             crate::progress_glue::today(),

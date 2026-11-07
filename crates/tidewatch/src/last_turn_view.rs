@@ -1,7 +1,6 @@
-//! The done check of the Progress panel (`show_check`), and the "Last turn" section of a poofed
-//! Meeseeks' summary (`show`): the Done, Needs you and Next lists and the done check as small rows
-//! with a status dot, its two buttons and when it was made. What each part says is `LastTurn` and
-//! `done_check_view::card_of`; this file only draws it.
+//! The done check of the Progress panel (`show_check`): small rows with a status dot, its two
+//! buttons and when it was made. What it says is `LastTurn` and `done_check_view::card_of`; this
+//! file only draws it.
 
 use egui::epaint::text::TextFormat;
 use egui::{Color32, FontId, Rect, RichText, Sense, Ui, pos2, vec2};
@@ -18,30 +17,16 @@ use crate::pr_strip::tone_ink;
 use crate::progress_view::Action;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_SECONDARY;
-use crate::screen_kit::{Size, body, heading, mono, primary_button, quiet_button};
+use crate::screen_kit::{Size, body, heading, primary_button, quiet_button};
 use crate::selectable;
 
 const ITEM_FONT: f32 = 14.0;
-const CODE_FONT: f32 = 13.0;
 const ROW_FONT: f32 = 13.0;
 const NOTE_FONT: f32 = TEXT_SECONDARY;
 const BULLET_W: f32 = 16.0;
 const ITEM_GAP: f32 = 6.0;
-const GROUP_GAP: f32 = 14.0;
-const MAX_ITEMS: usize = 5;
-const ITEM_ROWS: usize = 3;
 const CHECK_ROWS: usize = 2;
 const BUTTONS_GAP: f32 = 8.0;
-
-/// Splits `text` at its backticks into spans, each flagged as code; the markers and bold go.
-pub(crate) fn spans(text: &str) -> Vec<(String, bool)> {
-    let text = text.replace("**", "");
-    text.split('`')
-        .enumerate()
-        .filter(|(_, span)| !span.is_empty())
-        .map(|(i, span)| (span.to_owned(), i % 2 == 1))
-        .collect()
-}
 
 pub(crate) fn show_check(
     ui: &mut Ui,
@@ -49,53 +34,12 @@ pub(crate) fn show_check(
     turn: &LastTurn,
     age: Option<&str>,
 ) -> Option<Action> {
-    let look = turn.check.as_ref()?;
     let head = label(ui, "Done check", heading(13.0), brand::SOFT);
     if let Some(age) = age {
         panel_blocks::paint_age(ui.painter(), head.right(), head.center().y - 2.0, age);
     }
     ui.add_space(6.0);
-    check(ui, width, look, turn).map(Action::DoneCheck)
-}
-
-pub(crate) fn show(ui: &mut Ui, width: f32, turn: &LastTurn, age: Option<&str>) -> Option<Action> {
-    let mut action = None;
-    if turn.done.is_empty() && turn.needs.is_empty() && turn.next.is_empty() && turn.check.is_none()
-    {
-        return action;
-    }
-    let head = label(ui, "Last turn", heading(13.0), brand::MUTED);
-    if let Some(age) = age {
-        panel_blocks::paint_age(ui.painter(), head.right(), head.center().y - 2.0, age);
-    }
-    ui.add_space(6.0);
-    let mut shown = 0;
-    let mut caption = |ui: &mut Ui, text: &str| {
-        if shown > 0 {
-            ui.add_space(GROUP_GAP);
-        }
-        shown += 1;
-        label(ui, text, body(12.0), brand::MUTED);
-    };
-    if !turn.done.is_empty() {
-        caption(ui, "Done");
-        items(ui, width, "done", &turn.done, brand::TEXT, brand::DONE);
-    }
-    if !turn.needs.is_empty() {
-        caption(ui, "Needs you");
-        items(ui, width, "needs", &turn.needs, brand::TEXT, brand::NEEDS);
-    }
-    if !turn.next.is_empty() {
-        caption(ui, "Next");
-        items(ui, width, "next", &turn.next, brand::MUTED, brand::FAINT);
-    }
-    if let Some(look) = &turn.check {
-        caption(ui, "Checks");
-        if let Some(picked) = check(ui, width, look, turn) {
-            action = Some(Action::DoneCheck(picked));
-        }
-    }
-    action
+    check(ui, width, &turn.check, turn).map(Action::DoneCheck)
 }
 
 fn label(ui: &mut Ui, text: &str, font: FontId, ink: Color32) -> Rect {
@@ -112,36 +56,6 @@ fn button_row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
         ui.add_space(BULLET_W - BUTTONS_GAP);
         add(ui);
     });
-}
-
-fn items(ui: &mut Ui, width: f32, salt: &str, list: &[String], ink: Color32, bullet: Color32) {
-    let painter = ui.painter().clone();
-    for (index, item) in list.iter().take(MAX_ITEMS).enumerate() {
-        let mut text = Text::new();
-        for (span, code) in spans(item) {
-            let format = if code {
-                TextFormat::simple(mono(CODE_FONT), brand::SOFT)
-            } else {
-                TextFormat::simple(body(ITEM_FONT), ink)
-            };
-            text.run(&span, &format);
-        }
-        let laid = text.wrapped((width - BULLET_W).max(40.0), ITEM_ROWS).lay_out(&painter);
-        let (rect, _) =
-            ui.allocate_exact_size(vec2(width, laid.size().y + ITEM_GAP), Sense::hover());
-        let dot = pos2(rect.left() + 4.0, rect.top() + ITEM_FONT / 2.0 + 1.0);
-        painter.circle_filled(dot, 2.5, bullet);
-        laid.paint_selectable(
-            ui,
-            ui.id().with((salt, index)),
-            pos2(rect.left() + BULLET_W, rect.top()),
-            ink,
-        );
-    }
-    let more = list.len().saturating_sub(MAX_ITEMS);
-    if more > 0 {
-        label(ui, &format!("+{more} more"), body(12.0), brand::FAINT);
-    }
 }
 
 fn checking_note(ui: &mut Ui, width: f32) -> Option<CheckAction> {
@@ -229,25 +143,4 @@ fn check(ui: &mut Ui, width: f32, look: &Look, turn: &LastTurn) -> Option<CheckA
         });
     }
     picked
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn code_spans_keep_their_text_and_lose_their_markers() {
-        assert_eq!(
-            spans("added `expiry()` in `src/auth.rs:12`"),
-            [
-                ("added ".to_owned(), false),
-                ("expiry()".to_owned(), true),
-                (" in ".to_owned(), false),
-                ("src/auth.rs:12".to_owned(), true),
-            ]
-        );
-        assert_eq!(spans("**Done** it"), [("Done it".to_owned(), false)]);
-        assert_eq!(spans("`only`"), [("only".to_owned(), true)]);
-        assert_eq!(spans(""), Vec::<(String, bool)>::new());
-    }
 }

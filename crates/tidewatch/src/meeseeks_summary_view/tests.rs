@@ -32,8 +32,6 @@ fn record() -> Poofed {
     ]
     .map(|(step, detail)| CheckLine { step, verdict: Verdict::Passed, detail: detail.into() })
     .to_vec();
-    record.done = vec!["Added `promo.test.ts`".into()];
-    record.next = vec!["Review the pull request".into()];
     record.stages = vec![StageLine { name: "Build".into(), done: 2, total: 2, steps: Vec::new() }];
     record
 }

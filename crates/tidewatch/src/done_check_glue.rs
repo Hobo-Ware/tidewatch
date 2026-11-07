@@ -387,6 +387,7 @@ mod tests {
     use super::*;
     use crate::done_check_trigger::claim;
     use tidewatch_core::done_check::Outcome;
+    use tidewatch_core::progress::Ledger;
 
     const STAMP: Checked = Checked { at: 0, same: false };
 
@@ -397,7 +398,7 @@ mod tests {
     #[test]
     fn a_turn_that_ends_with_a_claim_fires_once_and_a_new_turn_clears_the_card() {
         let mut host = Host::new(true, Fake::Off);
-        let claim = claim(true, None);
+        let claim = claim(Some(&Ledger::parse("# Goal\ng\n\n## Status\nstate: done\n")));
         host.tick(&[facts(&AgentStatus::Working, None, true)]);
         assert_eq!(host.tick(&[facts(&AgentStatus::Done, claim.as_ref(), true)]), [1]);
         assert_eq!(
@@ -412,7 +413,7 @@ mod tests {
 
     #[test]
     fn nothing_fires_while_off_or_for_a_tab_that_is_not_an_ordinary_agent() {
-        let claim = claim(true, None);
+        let claim = claim(Some(&Ledger::parse("# Goal\ng\n\n## Status\nstate: done\n")));
         for (enabled, eligible) in [(false, true), (true, false)] {
             let mut host = Host::new(enabled, Fake::Off);
             host.tick(&[facts(&AgentStatus::Working, None, eligible)]);

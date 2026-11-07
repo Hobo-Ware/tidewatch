@@ -34,11 +34,6 @@ pub struct Poofed {
     pub ended_ms: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checks: Vec<CheckLine>,
-    /// The Done and Next lines of the agent's last turn.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub done: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub next: Vec<String>,
     /// The stages of the ledger the agent kept, as it left them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<StageLine>,
@@ -126,8 +121,6 @@ impl Poofed {
             branch: String::new(),
             ended_ms: 0,
             checks: Vec::new(),
-            done: Vec::new(),
-            next: Vec::new(),
             stages: Vec::new(),
             decisions: Vec::new(),
             verified: Vec::new(),
@@ -221,8 +214,6 @@ mod tests {
             CheckLine { step: Step::Change, verdict: Verdict::Passed, detail: "2 commits".into() },
             CheckLine { step: Step::HandOff, verdict: Verdict::Skipped, detail: String::new() },
         ];
-        full.done = vec!["Added `promo.test.ts`".into()];
-        full.next = vec!["Review it".into()];
         let step = |text: &str, why: Option<&str>, state| StepLine {
             text: text.into(),
             why: why.map(Into::into),

@@ -17,6 +17,11 @@ struct Lab {
     repo: PathBuf,
 }
 
+fn save_ledger(file: &Path, markdown: &str) {
+    tidewatch_core::progress_store::save(file, &tidewatch_core::progress::Ledger::parse(markdown))
+        .unwrap();
+}
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -37,7 +42,7 @@ impl Lab {
     }
 
     fn ledger(&self) -> PathBuf {
-        self.tab_dir().join("progress.md")
+        self.tab_dir().join("progress.json")
     }
 
     fn ctx(&self) -> GuardCtx {
@@ -133,14 +138,14 @@ fn a_turn_with_tools_and_no_ledger_is_sent_back_once_and_the_ledger_ends_the_ask
     assert_eq!(lab.stop(&transcript, true).status.code(), Some(0));
 
     lab.start_turn();
-    std::fs::write(lab.ledger(), "# Goal\ng\n").unwrap();
+    save_ledger(&lab.ledger(), "# Goal\ng\n\n## Status\nstate: done\n");
     assert_eq!(lab.stop(&transcript, false).status.code(), Some(0), "written this turn");
 }
 
 #[test]
 fn a_ledger_older_than_the_turn_counts_as_not_written() {
     let lab = Lab::new();
-    std::fs::write(lab.ledger(), "# Goal\ng\n").unwrap();
+    save_ledger(&lab.ledger(), "# Goal\ng\n\n## Status\nstate: done\n");
     let old = SystemTime::now() - Duration::from_secs(3600);
     std::fs::File::options().write(true).open(lab.ledger()).unwrap().set_modified(old).unwrap();
     lab.start_turn();
@@ -170,7 +175,7 @@ fn a_turn_without_tool_calls_and_a_tab_without_the_environment_are_left_alone() 
 fn a_ledger_written_this_turn_that_still_says_working_is_asked_for_its_final_state_once() {
     let lab = Lab::new();
     lab.start_turn();
-    std::fs::write(lab.ledger(), "# Goal\ng\n\n## Status\nstate: working\n").unwrap();
+    save_ledger(&lab.ledger(), "# Goal\ng\n\n## Status\nstate: working\n");
     let transcript = lab.transcript(&[USER, CALL, RESULT, SAY]);
 
     let first = lab.stop(&transcript, false);
@@ -182,7 +187,7 @@ fn a_ledger_written_this_turn_that_still_says_working_is_asked_for_its_final_sta
     assert_eq!(lab.stop(&transcript, true).status.code(), Some(0));
 
     lab.start_turn();
-    std::fs::write(lab.ledger(), "# Goal\ng\n\n## Status\nstate: waiting\n").unwrap();
+    save_ledger(&lab.ledger(), "# Goal\ng\n\n## Status\nstate: waiting\n");
     assert_eq!(lab.stop(&transcript, false).status.code(), Some(0), "a stopped state ends it");
 }
 
@@ -208,7 +213,7 @@ fn the_guard_leaves_one_record_per_ask_for_the_reader() {
 fn the_final_state_ask_leaves_its_own_record() {
     let lab = Lab::new();
     lab.start_turn();
-    std::fs::write(lab.ledger(), "# Goal\ng\n\n## Status\nstate: working\n").unwrap();
+    save_ledger(&lab.ledger(), "# Goal\ng\n\n## Status\nstate: working\n");
     let transcript = lab.transcript(&[USER, CALL, RESULT, SAY]);
     assert_eq!(lab.stop(&transcript, false).status.code(), Some(2));
     assert_eq!(lab.stop(&transcript, false).status.code(), Some(0));

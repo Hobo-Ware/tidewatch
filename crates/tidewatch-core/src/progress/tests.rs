@@ -199,11 +199,10 @@ fn messy_input_is_read_as_far_as_it_makes_sense_and_the_rest_is_kept() {
 }
 
 #[test]
-fn text_before_the_first_heading_is_kept_and_written_first() {
+fn text_before_the_first_heading_is_kept() {
     let l = Ledger::parse("Some words first\n\n# Goal\nDo it\n");
     assert_eq!(l.goal, "Do it");
     assert_eq!(l.extra, [Extra { name: String::new(), lines: vec!["Some words first".into()] }]);
-    assert!(l.to_markdown().starts_with("Some words first\n\n# Goal\nDo it\n"));
 }
 
 #[test]
@@ -214,25 +213,6 @@ fn heading_names_match_without_case_and_a_second_section_adds_to_the_first() {
     assert_eq!(l.goal, "First");
     assert_eq!(texts(&l.decisions), ["a", "b"]);
     assert_eq!(texts(&l.next), ["c"]);
-}
-
-#[test]
-fn every_fixture_writes_back_to_the_text_it_was_read_from() {
-    for name in ["start", "middle", "kinds"] {
-        let text = fixture(name);
-        assert_eq!(ledger(name).to_markdown(), format!("{}\n", text.trim_end()), "{name}");
-    }
-}
-
-#[test]
-fn writing_then_reading_gives_the_same_ledger_for_every_fixture() {
-    for name in ["start", "middle", "finished", "scheduled", "kinds", "messy"] {
-        let once = ledger(name);
-        let text = once.to_markdown();
-        let twice = Ledger::parse(&text);
-        assert_eq!(twice, once, "{name}");
-        assert_eq!(twice.to_markdown(), text, "{name}");
-    }
 }
 
 #[test]
@@ -324,21 +304,6 @@ fn needs_you_options_are_read_from_the_tail_with_the_recommended_one_starred() {
         assert_eq!(entries[0].why.as_deref(), why, "{line}");
         assert_eq!(entries[0].options, options, "{line}");
     }
-}
-
-#[test]
-fn options_are_written_back_as_the_line_they_were_read_from() {
-    let lines = [
-        "- Post the Slack follow-up -- options: Post it | Skip it*",
-        "- Pick a fix -- the retry loop is flaky -- options: A | B* | Leave it",
-        "- Whether to do the switch",
-    ];
-    let ledger = Ledger::parse(&format!("# Goal\ng\n\n## Needs you\n{}\n", lines.join("\n")));
-    let written = ledger.to_markdown();
-    for line in lines {
-        assert!(written.contains(&format!("{line}\n")), "{line}\n{written}");
-    }
-    assert_eq!(Ledger::parse(&written), ledger);
 }
 
 #[test]
@@ -644,13 +609,6 @@ fn a_ledger_quoted_in_a_fence_is_unwrapped_and_the_words_around_it_dropped() {
     }
 }
 
-#[test]
-fn empty_sections_are_not_written_and_the_goal_always_is() {
-    let l = Ledger::parse("# Goal\nx\n\n## Decisions\n\n## Scheduled\n\n## Checklist\n");
-    assert_eq!(l.to_markdown(), "# Goal\nx\n");
-    assert_eq!(Ledger::default().to_markdown(), "# Goal\n");
-}
-
 fn noise(seed: u64, lines: usize) -> String {
     const PARTS: [&str; 36] = [
         "# Goal",
@@ -710,13 +668,10 @@ fn noise(seed: u64, lines: usize) -> String {
 }
 
 #[test]
-fn any_text_parses_and_what_is_written_reads_back_the_same() {
+fn any_text_parses() {
     for seed in 1..=300 {
         let text = noise(seed, 1 + (seed as usize % 24));
         let once = Ledger::parse(&text);
-        let written = once.to_markdown();
-        let twice = Ledger::parse(&written);
-        assert_eq!(twice, once, "seed {seed}:\n{text}\n--- written:\n{written}");
         let _ = (
             once.summary(),
             once.counts(),
@@ -749,8 +704,7 @@ fn odd_bytes_never_panic() {
         "~~~\n# Goal\nx",
     ];
     for text in inputs {
-        let l = Ledger::parse(text);
-        let _ = l.to_markdown();
+        let _ = Ledger::parse(text);
     }
     let windows = Ledger::parse("# Goal\r\nwindows\r\n\r\n## Next\r\n- a\r\n");
     assert_eq!(windows.goal, "windows");
@@ -758,7 +712,7 @@ fn odd_bytes_never_panic() {
 }
 
 #[test]
-fn a_kind_line_in_status_reads_back_and_is_written_again() {
+fn a_kind_line_in_status_is_read() {
     let cases = [
         ("kind: read-only", Some(Kind::ReadOnly)),
         ("kind: Edit", Some(Kind::Edit)),
@@ -769,11 +723,9 @@ fn a_kind_line_in_status_reads_back_and_is_written_again() {
         let l = Ledger::parse(&format!("# Goal\nx\n\n## Status\nphase: 1\n{line}\n"));
         assert_eq!(l.status.kind, want, "{line}");
         assert_eq!(l.status.other.len(), usize::from(want.is_none()), "{line}");
-        assert_eq!(Ledger::parse(&l.to_markdown()), l, "{line}");
     }
     let plain = Ledger::parse("# Goal\nx\n\n## Status\nphase: 1\n");
     assert_eq!(plain.status.kind, None);
-    assert!(!plain.to_markdown().contains("kind"));
 }
 
 #[test]

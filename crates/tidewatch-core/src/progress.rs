@@ -1,11 +1,7 @@
-//! The progress ledger an agent keeps for its task: the model, a parser that never fails and the
-//! writer (pure).
-//!
-//! The format is markdown (`# Goal`, then `##` sections; see `progress_prompt.rs`). Whatever does
-//! not fit is kept: an unknown `##` section becomes an [`Extra`], an unknown line stays as text
-//! under its section.
+//! The progress ledger the screens read, and a markdown parser that never fails, used for fixtures
+//! and the `TIDEWATCH_DEV_PROGRESS` switch; the saved form is the typed report (pure).
 
-use std::fmt::{self, Write as _};
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -109,17 +105,6 @@ impl Mark {
             Self::Done => "done",
             Self::Skipped => "skipped",
             Self::Blocked => "blocked",
-        }
-    }
-
-    #[must_use]
-    pub fn as_char(self) -> char {
-        match self {
-            Self::Todo => ' ',
-            Self::Doing => '~',
-            Self::Done => 'x',
-            Self::Skipped => '-',
-            Self::Blocked => '!',
         }
     }
 }
@@ -615,102 +600,6 @@ impl Ledger {
         .collect();
         if parts.is_empty() { "saved".to_owned() } else { format!("saved: {}", parts.join(", ")) }
     }
-
-    /// The canonical text: parsing it gives the same ledger back.
-    #[must_use]
-    pub fn to_markdown(&self) -> String {
-        let mut out = String::new();
-        for extra in self.extra.iter().filter(|extra| extra.name.is_empty()) {
-            push_lines(&mut out, &extra.lines);
-        }
-        let _ = writeln!(out, "# Goal\n{}\n", self.goal);
-        self.write_status(&mut out);
-        self.write_checklist(&mut out);
-        for (name, entries) in [
-            ("Decisions", &self.decisions),
-            ("Verified", &self.verified),
-            ("Not verified", &self.not_verified),
-            ("Next", &self.next),
-            ("Needs you", &self.needs_you),
-        ] {
-            if !entries.is_empty() {
-                let _ = writeln!(out, "## {name}");
-                for entry in entries {
-                    let _ = writeln!(out, "- {}", entry_line(entry));
-                }
-                out.push('\n');
-            }
-        }
-        self.write_scheduled(&mut out);
-        for extra in self.extra.iter().filter(|extra| !extra.name.is_empty()) {
-            let _ = writeln!(out, "## {}", extra.name);
-            push_lines(&mut out, &extra.lines);
-        }
-        out.truncate(out.trim_end_matches('\n').len());
-        out.push('\n');
-        out
-    }
-
-    fn write_status(&self, out: &mut String) {
-        let status = &self.status;
-        let lines: Vec<String> = [
-            (!status.phase.is_empty()).then(|| format!("phase: {}", status.phase)),
-            status.state.map(|state| format!("state: {}", state.word())),
-            status.kind.map(|kind| format!("kind: {}", kind.word())),
-            (!status.note.is_empty()).then(|| format!("note: {}", status.note)),
-        ]
-        .into_iter()
-        .flatten()
-        .chain(status.other.iter().cloned())
-        .collect();
-        if !lines.is_empty() {
-            out.push_str("## Status\n");
-            push_lines(out, &lines);
-        }
-    }
-
-    fn write_checklist(&self, out: &mut String) {
-        if self.checklist.is_empty() {
-            return;
-        }
-        out.push_str("## Checklist\n");
-        for phase in &self.checklist {
-            if phase.number.is_some() || !phase.title.is_empty() {
-                let number = phase.number.map(|n| format!("{n}. ")).unwrap_or_default();
-                let _ = writeln!(out, "### {number}{}", phase.title);
-            }
-            for item in &phase.items {
-                let _ = writeln!(out, "{}", item_line(item));
-            }
-            for line in &phase.text {
-                let _ = writeln!(out, "{line}");
-            }
-        }
-        out.push('\n');
-    }
-
-    fn write_scheduled(&self, out: &mut String) {
-        if self.scheduled.is_empty() && self.scheduled_text.is_empty() {
-            return;
-        }
-        out.push_str("## Scheduled\n");
-        for entry in &self.scheduled {
-            let mut line = format!("- [{}] {}", entry.mark.as_char(), entry.when);
-            for part in
-                [Some(entry.what.as_str()).filter(|what| !what.is_empty()), entry.why.as_deref()]
-                    .into_iter()
-                    .flatten()
-            {
-                let _ = write!(line, " -- {part}");
-            }
-            let _ = writeln!(out, "{line}");
-            for step in &entry.steps {
-                let _ = writeln!(out, "  {}", item_line(step));
-            }
-        }
-        push_lines(out, &self.scheduled_text);
-        out.push('\n');
-    }
 }
 
 impl Status {
@@ -739,35 +628,6 @@ impl Status {
 #[must_use]
 pub fn checklist_phases(text: &str) -> Vec<Phase> {
     parse_checklist(&text.lines().collect::<Vec<_>>())
-}
-
-fn push_lines(out: &mut String, lines: &[String]) {
-    for line in lines {
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push('\n');
-}
-
-fn item_line(item: &Item) -> String {
-    format!("- [{}] {}", item.mark.as_char(), with_why(&item.text, item.why.as_deref()))
-}
-
-fn entry_line(entry: &Entry) -> String {
-    let line = with_why(&entry.text, entry.why.as_deref());
-    if entry.options.is_empty() {
-        return line;
-    }
-    let options: Vec<String> = entry
-        .options
-        .iter()
-        .map(|choice| format!("{}{}", choice.text, if choice.recommended { "*" } else { "" }))
-        .collect();
-    format!("{line} -- {OPTIONS_LABEL} {}", options.join(" | "))
-}
-
-fn with_why(text: &str, why: Option<&str>) -> String {
-    why.map_or_else(|| text.to_owned(), |why| format!("{text} -- {why}"))
 }
 
 /// Keeps what is inside the first fence that opens before any heading and closes at a fence line

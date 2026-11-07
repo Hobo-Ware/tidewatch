@@ -29,7 +29,7 @@ pub enum TabEvent {
         note_id: u64,
         text: String,
     },
-    /// The agent called `update_progress`; the ledger is already saved in the tab's `progress.md`.
+    /// The agent called `update_progress`; the ledger is already saved in the tab's `progress.json`.
     Progress {
         ledger: Box<Ledger>,
     },

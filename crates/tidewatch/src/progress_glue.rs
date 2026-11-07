@@ -219,7 +219,8 @@ mod tests {
     fn a_saved_ledger_is_read_when_the_tab_appears_and_its_items_reach_the_index_file() {
         let fx = fixture();
         std::fs::create_dir_all(fx.notes.parent().unwrap()).unwrap();
-        std::fs::write(fx.paths.progress_file(Path::new("/work/web"), "otter"), LEDGER).unwrap();
+        let file = fx.paths.progress_file(Path::new("/work/web"), "otter");
+        progress_store::save(&file, &Ledger::parse(LEDGER)).unwrap();
         let ctx = egui::Context::default();
         let mut host = Host::new(Some(&fx.paths), Dev::default());
         let tabs = [facts(&fx)];

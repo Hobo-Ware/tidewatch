@@ -9,6 +9,11 @@ thread_local! {
     static CLOCK_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+fn save_ledger(file: &std::path::Path, markdown: &str) {
+    tidewatch_core::progress_store::save(file, &tidewatch_core::progress::Ledger::parse(markdown))
+        .unwrap();
+}
+
 fn simulated_wall_ms() -> u64 {
     CLOCK_MS.with(std::cell::Cell::get)
 }
@@ -316,7 +321,7 @@ fn no_ledger_reminder_for_claude_a_saved_ledger_or_a_turn_with_no_tools() {
     let ledger = lab.paths.progress_file(&lab.repo, "work");
     let save = || {
         std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
-        std::fs::write(&ledger, "# Goal\nx\n").unwrap();
+        save_ledger(&ledger, "# Goal\nx\n\n## Status\nstate: done\n");
     };
     assert_eq!(lab.turn_with_tools(&mut clock, "codex", (-5.0, 2.0), save), vec![], "saved");
 
@@ -337,7 +342,7 @@ fn a_saved_ledger_that_still_says_working_is_asked_for_its_final_state() {
     let ledger = lab.paths.progress_file(&lab.repo, "work");
     let save = || {
         std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
-        std::fs::write(&ledger, "# Goal\nx\n\n## Status\nstate: working\n").unwrap();
+        save_ledger(&ledger, "# Goal\nx\n\n## Status\nstate: working\n");
     };
     let pastes = lab.turn_with_tools(&mut clock, "codex", (-5.0, 2.0), save);
     assert_eq!(pastes.len(), 1);

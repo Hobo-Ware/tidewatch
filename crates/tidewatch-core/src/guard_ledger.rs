@@ -33,7 +33,7 @@ pub struct Facts {
     pub stop_hook_active: bool,
     /// `None` when the transcript could not tell.
     pub used_tools: Option<bool>,
-    /// Unix milliseconds the tab's `progress.md` was last written; `None` when there is none.
+    /// Unix milliseconds the tab's `progress.json` was last written; `None` when there is none.
     pub ledger_written_ms: Option<u64>,
     /// The saved ledger's `state:` is `working`.
     pub ledger_working: bool,
@@ -292,15 +292,14 @@ mod tests {
     #[test]
     fn the_ledger_file_decides_whether_it_still_says_working() {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("progress.md");
+        let file = dir.path().join("progress.json");
         let cases = [
             ("# Goal\ng\n\n## Status\nstate: working\n", true),
             ("# Goal\ng\n\n## Status\nstate: waiting\n", false),
             ("# Goal\ng\n\n## Status\nstate: done\n", false),
-            ("# Goal\ng\n", false),
         ];
         for (text, want) in cases {
-            std::fs::write(&file, text).unwrap();
+            crate::progress_store::save(&file, &crate::progress::Ledger::parse(text)).unwrap();
             assert_eq!(ledger_says_working(&file), want, "{text:?}");
         }
         assert!(!ledger_says_working(&dir.path().join("none.md")));

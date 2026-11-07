@@ -1,11 +1,11 @@
 //! The window's side of the done check: the tabs' facts to the host each frame, a check started for
-//! each turn that ended with a claim, and the card's two buttons (Ask agent to fix goes through the
+//! each turn that ended with a report in the done state, and the card's two buttons (Ask agent to fix goes through the
 //! same paste-and-Enter queue as every other message, only while the agent is idle).
 
 use tidewatch_core::done_check::{PrFact, unverified_of};
 use tidewatch_core::done_proof::Verified;
 use tidewatch_core::kind::Kind;
-use tidewatch_core::progress::{Ledger, State, real};
+use tidewatch_core::progress::{Ledger, real};
 use tidewatch_core::sent::{Reason, because};
 
 use tidewatch_core::workflow_profile::Workflow;
@@ -49,11 +49,8 @@ impl Tidewatch {
                     && tab.pane.worktree.is_some()
                     && matches!(tab.pane.body, Body::Shell(_));
                 let ordinary = applies(ordinary, self.reported_kind(tab.id));
-                let ledger_done = self
-                    .progress
-                    .ledger(tab.id)
-                    .is_some_and(|known| known.ledger.status.state == Some(State::Done));
-                Some((tab.id, ordinary, claim(ledger_done, agent.run.end_block())))
+                let ledger = self.progress.ledger(tab.id).map(|known| &known.ledger);
+                Some((tab.id, ordinary, claim(ledger)))
             })
             .collect();
         let on_their_own: Vec<u64> = seen

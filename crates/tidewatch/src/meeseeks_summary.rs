@@ -69,8 +69,6 @@ pub(crate) struct Summary {
     pub(crate) said: Option<String>,
     pub(crate) pr: Option<PrLink>,
     pub(crate) branch: Option<BranchLine>,
-    pub(crate) done: Vec<String>,
-    pub(crate) next: Vec<String>,
     pub(crate) stages: Vec<StageRow>,
     pub(crate) decisions: Vec<NoteLine>,
     pub(crate) verified: Vec<NoteLine>,
@@ -211,8 +209,6 @@ pub(crate) fn summary(record: &Poofed, facts: Option<&Branch>, zone: &TimeZone) 
         said,
         pr,
         branch: branch_line(record, facts).filter(|_| !quiet),
-        done: record.done.clone(),
-        next: record.next.clone(),
         stages: record
             .stages
             .iter()
