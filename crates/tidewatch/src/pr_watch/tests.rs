@@ -78,7 +78,7 @@ fn polled(bodies: Vec<Body>, pending: bool, ended: bool) -> Polled {
 fn pasted(outs: &[Out]) -> Vec<&str> {
     outs.iter()
         .filter_map(|out| match out {
-            Out::Paste(text) => Some(text.as_str()),
+            Out::Paste(text) | Out::Ended(text) => Some(text.as_str()),
             _ => None,
         })
         .collect()

@@ -183,6 +183,17 @@ fn several_broken_rules_are_all_listed_in_one_answer() {
 }
 
 #[test]
+fn a_later_report_without_a_kind_keeps_the_saved_kind() {
+    let first = with(|v| v["kind"] = json!("read-only"));
+    let saved = ProgressReport::check(&args(&first), None).unwrap();
+    let later = ProgressReport::check(&args(&good()), Some(&saved)).unwrap();
+    assert_eq!(later.kind, Some(Kind::ReadOnly));
+    let promoted = with(|v| v["kind"] = json!("edit"));
+    let edit = ProgressReport::check(&args(&promoted), Some(&saved)).unwrap();
+    assert_eq!(edit.kind, Some(Kind::Edit));
+}
+
+#[test]
 fn a_report_needs_a_goal_or_a_title_the_first_time_only() {
     let first = problems(&with(|v| drop(v.as_object_mut().unwrap().remove("goal"))));
     assert!(first.iter().any(|problem| problem.contains("goal is required on the first report")));

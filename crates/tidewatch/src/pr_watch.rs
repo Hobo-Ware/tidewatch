@@ -106,6 +106,8 @@ pub(crate) enum Out {
         trigger: Trigger,
     },
     Paste(String),
+    /// The pull request ended: Tidewatch tells the agent so on its own.
+    Ended(String),
     Toast(String),
     Notify(Notice),
     Save,
@@ -610,7 +612,7 @@ impl Watch {
             },
         );
         self.hold_until = Some(now + HOLD_SECS);
-        vec![Out::Paste(text), Out::Save]
+        vec![Out::Ended(text), Out::Save]
     }
 
     fn idle(&self, now: f64) -> bool {
