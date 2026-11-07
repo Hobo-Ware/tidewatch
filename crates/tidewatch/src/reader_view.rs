@@ -1107,17 +1107,19 @@ fn transcript(
                                     ),
                                     _ if matches!(row.kind, Kind::Tidewatch(_)) => {
                                         if let Some(record) = rows.said_for(row.seq) {
-                                            let shown = tidewatch_view::Shown {
+                                            let fresh = reader_chat_view::is_fresh(
+                                                stamps[index],
+                                                scene.fresh_after_ms,
+                                            );
+                                            let click = reader_chat_view::told(
+                                                ui,
+                                                row,
                                                 record,
-                                                stamp: stamps[index],
-                                                zone: scene.zone,
-                                                open: tidewatch_open.contains(&record.id),
-                                            };
-                                            let Clicked { toggled, click } =
-                                                tidewatch_view::show(ui, &shown);
-                                            if toggled {
-                                                reader_turns::toggle(tidewatch_open, record.id);
-                                            }
+                                                stamps[index],
+                                                scene.zone,
+                                                (width, scene.pastes),
+                                                fresh,
+                                            );
                                             actions.extend(click.map(Action::Tidewatch));
                                         }
                                     }
@@ -1182,23 +1184,31 @@ fn transcript(
                             ui.add_space(INSET);
                             ui.vertical(|ui| {
                                 ui.set_width(width);
-                                let shown = tidewatch_view::Shown {
-                                    record,
-                                    stamp: Some(record.at_ms),
-                                    zone: scene.zone,
-                                    open: tidewatch_open.contains(&record.id),
+                                let row = Row {
+                                    seq: record.id,
+                                    kind: Kind::Tidewatch(record.reason),
+                                    text: record.text.clone(),
+                                    pictures: Vec::new(),
                                 };
-                                tidewatch_view::show(ui, &shown)
+                                let fresh = reader_chat_view::is_fresh(
+                                    Some(record.at_ms),
+                                    scene.fresh_after_ms,
+                                );
+                                reader_chat_view::told(
+                                    ui,
+                                    &row,
+                                    record,
+                                    Some(record.at_ms),
+                                    scene.zone,
+                                    (width, scene.pastes),
+                                    fresh,
+                                )
                             })
                         });
                         if let Some(id) = key {
                             pr_heights.record(id, drawn.response.rect.height());
                         }
-                        let Clicked { toggled, click } = drawn.inner.inner;
-                        if toggled {
-                            reader_turns::toggle(tidewatch_open, record.id);
-                        }
-                        actions.extend(click.map(Action::Tidewatch));
+                        actions.extend(drawn.inner.inner.map(Action::Tidewatch));
                     }
                 }
             }
@@ -3748,7 +3758,7 @@ mod tests {
     }
 
     #[test]
-    fn a_message_tidewatch_typed_is_its_own_speaker_and_never_a_you_bubble() {
+    fn a_message_tidewatch_typed_is_the_owners_bubble_with_a_caption_and_no_tidewatch_speaker() {
         use tidewatch_core::transcript::{Entry, Role};
         let prompt = "@codex commented on PR #7. Answer it.\n\n> <!-- codex-review-state:v1 -->\n> | a | b |\n> |---|---|\n> <details>";
         let mut rows = Rows::default();
@@ -3761,18 +3771,18 @@ mod tests {
             images: Vec::new(),
         });
         let found = drawn_texts(&rows, 900.0);
-        assert!(found.iter().any(|text| text == "Tidewatch"), "{found:?}");
-        assert!(found.iter().any(|text| text == "auto"), "{found:?}");
+        assert!(found.iter().any(|text| text.starts_with("You")), "{found:?}");
+        assert!(found.iter().all(|text| text != "Tidewatch"), "{found:?}");
+        assert!(found.iter().all(|text| text != "auto"), "{found:?}");
         assert!(found.iter().any(|text| text.starts_with("@codex commented")), "{found:?}");
         assert!(
             found
                 .iter()
-                .any(|text| text == "Because Auto fixes conflicts on this PR \u{b7} 1 of 10"),
+                .any(|text| text.starts_with("Sent for you \u{b7} auto \u{b7} Because Auto")),
             "{found:?}"
         );
         assert!(found.iter().any(|text| text == "Change workflow"), "{found:?}");
         assert!(found.iter().any(|text| text == "Turn off for conflicts"), "{found:?}");
-        assert!(found.iter().all(|text| !text.starts_with("You")), "{found:?}");
         assert!(found.iter().all(|text| !text.contains("codex-review-state")), "{found:?}");
     }
 
@@ -3821,23 +3831,6 @@ mod tests {
             "one live reminder is no run of two: {found:?}"
         );
         assert!(said("Tidewatch reminded the agent to update its report"), "{found:?}");
-    }
-
-    #[test]
-    fn a_long_tidewatch_message_offers_show_all() {
-        use tidewatch_core::transcript::{Entry, Role};
-        let long = "Fix the failing check. ".repeat(40);
-        let mut rows = Rows::default();
-        rows.tidewatch_said(vec![auto_fix_record(&long, 0)]);
-        rows.push(Entry {
-            role: Role::User,
-            text: long.clone(),
-            tool: None,
-            ts: Some(5_000),
-            images: Vec::new(),
-        });
-        let found = drawn_texts(&rows, 900.0);
-        assert!(found.iter().any(|text| text == "Show all"), "{found:?}");
     }
 
     #[test]
