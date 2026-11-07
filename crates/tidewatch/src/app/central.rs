@@ -5,9 +5,6 @@ use std::time::Duration;
 use egui::Frame;
 use tidewatch_core::prefs::Panels;
 
-use tidewatch_core::end_block::EndBlock;
-use tidewatch_core::status::AgentStatus;
-
 use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
@@ -371,19 +368,6 @@ impl Tidewatch {
         }
         if out.change {
             self.open_change_active(ui.ctx());
-        }
-    }
-
-    pub(super) fn waiting_end_block(&self) -> Option<EndBlock> {
-        let tab = &self.tabs.items()[self.tabs.active()];
-        let agent = tab.pane.agent.as_ref()?;
-        let waiting = matches!(agent.run.status(), AgentStatus::Done | AgentStatus::NeedsYou(_));
-        if !waiting {
-            return None;
-        }
-        match self.panel_view_of(tab.id) {
-            Some(view) => view.end_block,
-            None => agent.run.end_block().cloned(),
         }
     }
 }

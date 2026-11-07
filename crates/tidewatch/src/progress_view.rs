@@ -225,12 +225,11 @@ impl Input<'_> {
         self.ledger.map(|known| fresh(&known.ledger, self.stale))
     }
 
-    /// The questions the owner is asked: the report's, else the Needs you items of the last message.
+    /// The questions the owner is asked: the report's.
     fn asked(&self) -> Option<model::Asked> {
-        let fallback: &[String] = self.last_turn.as_ref().map_or(&[], |turn| &turn.needs);
         match self.ledger_shown() {
-            Some(ledger) => model::asked(&ledger, fallback),
-            None => model::asked(&Ledger::default(), fallback),
+            Some(ledger) => model::asked(&ledger, &[]),
+            None => model::asked(&Ledger::default(), &[]),
         }
     }
 
@@ -353,7 +352,7 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState, stack: bool) ->
         let report = Column { dim: old, ..column };
         report_blocks(ui, (input, ledger), (&mut gaps, &mut heading_shown), report, state);
     }
-    if let Some(turn) = input.last_turn.as_ref().filter(|turn| turn.check.is_some()) {
+    if let Some(turn) = input.last_turn.as_ref() {
         gaps.before(ui);
         let picked = last_turn_view::show_check(ui, width, turn, input.blocks.turn.as_deref());
         action = picked.or(action);

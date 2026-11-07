@@ -315,7 +315,6 @@ impl Tidewatch {
         let started = self.tabs.get_mut(tab).and_then(|t| {
             let agent = t.pane.agent.as_ref()?;
             let meeseeks = agent.meeseeks.as_ref()?;
-            let end = agent.run.end_block().cloned().unwrap_or_default();
             let worktree = t.pane.worktree.as_ref()?;
             let name = meeseeks.shown_name().unwrap_or_else(|| worktree.name().to_owned());
             let leaving = Poofed {
@@ -325,8 +324,6 @@ impl Tidewatch {
                 ended_ms: now_ms,
                 checks: meeseeks.check_lines(),
                 kind: meeseeks.kind,
-                done: end.done,
-                next: end.next,
                 ..Poofed::bare(
                     &name,
                     summary,

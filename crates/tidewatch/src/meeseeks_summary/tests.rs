@@ -31,8 +31,6 @@ fn full() -> Poofed {
             detail: "Opened PR #213".into(),
         },
     ];
-    record.done = vec!["Added `promo.test.ts`".into()];
-    record.next = vec!["Review it".into()];
     record.stages = vec![StageLine { name: "Build".into(), done: 3, total: 3, steps: Vec::new() }];
     record
 }
@@ -142,10 +140,8 @@ fn the_branch_line_says_what_git_found_and_never_guesses() {
 }
 
 #[test]
-fn the_last_turn_and_the_ledger_stages_come_through_as_saved() {
+fn the_ledger_stages_come_through_as_saved() {
     let summary = summary(&full(), None, &TimeZone::UTC);
-    assert_eq!(summary.done, ["Added `promo.test.ts`"]);
-    assert_eq!(summary.next, ["Review it"]);
     assert_eq!(
         summary.stages,
         [StageRow { name: "Build".into(), done: 3, total: 3, steps: Vec::new() }]

@@ -4,7 +4,6 @@ use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Sense, pos2, v
 use std::collections::HashSet;
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::done_check::{Kind, Line, Report, Status, Unverified};
-use tidewatch_core::end_block::EndBlock;
 
 use tidewatch_core::link_board::{
     Checks, Link, LinkBoard, LinkState, Status as LinkStatus, TitleFrom,
@@ -404,14 +403,8 @@ fn a_link_in_the_goal_a_row_a_note_and_the_question_opens_and_plain_text_does_no
     assert_eq!(opened.len(), 0);
 }
 
-fn turn(check: Option<Look>, can_ask: Result<(), &'static str>) -> LastTurn {
-    let own = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect();
-    let block = EndBlock {
-        done: own(&["Added `FilterBar` to the board", "Kept the filters in the URL"]),
-        needs_you: own(&["Should the filters apply to the archived column?"]),
-        next: own(&["Add keyboard shortcuts"]),
-    };
-    LastTurn::of(Some(&block), check, can_ask, today()).unwrap()
+fn turn(check: Look, can_ask: Result<(), &'static str>) -> LastTurn {
+    LastTurn::of(Some(check), can_ask, today()).unwrap()
 }
 
 fn today() -> Date {
@@ -466,52 +459,49 @@ fn tall(text: &str, width: f32, last_turn: LastTurn) -> Panel {
 
 #[test]
 fn the_panel_copies_nothing_of_the_chats_end_block_and_draws_the_done_check_as_rows() {
-    let panel = tall(SMALL, 420.0, turn(Some(blocked()), Ok(())));
+    let panel = tall(SMALL, 420.0, turn(blocked(), Ok(())));
     for text in
         ["Done check", "Blocked", "Pushed: 2 commits not pushed", "Ask agent to fix", "Check again"]
     {
         assert!(panel.drawn(text), "{text:?} not drawn in {:?}", panel.texts);
     }
-    for text in
-        ["Last turn", "Done", "Next", "Kept the filters in the URL", "Add keyboard shortcuts"]
-    {
+    for text in ["Last turn", "Done", "Next"] {
         assert!(!panel.drawn(text), "{text:?} is the chat's, drawn in {:?}", panel.texts);
     }
     assert!(!panel.drawn("Answer"), "the Reader's card is the one place to answer");
 }
 
 #[test]
-fn a_needs_you_item_of_the_last_message_is_the_waiting_on_you_line_when_the_report_has_none() {
-    let panel = tall(SMALL, 420.0, turn(None, Ok(())));
-    assert!(panel.drawn("Waiting on you"));
-    assert!(panel.drawn("Should the filters apply to the archived column?"));
-    assert!(panel.drawn("Reply in the chat"));
-    assert!(!panel.drawn("Answer in the question card"), "no card waits above the reply box");
+fn the_last_message_is_no_source_of_the_waiting_on_you_line() {
+    let panel = tall(SMALL, 420.0, turn(blocked(), Ok(())));
+    for text in ["Waiting on you", "Reply in the chat"] {
+        assert!(!panel.drawn(text), "{text:?} drawn in {:?}", panel.texts);
+    }
 }
 
 #[test]
 fn a_tab_that_runs_on_its_own_gets_no_ask_agent_to_fix_button() {
-    let own = LastTurn { owner_asks: false, ..turn(Some(blocked()), Ok(())) };
+    let own = LastTurn { owner_asks: false, ..turn(blocked(), Ok(())) };
     let panel = tall(SMALL, 420.0, own);
     assert!(!panel.drawn("Ask agent to fix"), "{:?}", panel.texts);
     assert!(panel.drawn("Check again"));
 }
 
 #[test]
-fn the_done_check_sits_under_the_steps_and_the_question_above_everything_but_the_goal() {
+fn the_done_check_sits_under_the_steps() {
     let text = format!("{SMALL}\n## Checklist\n### 2. Build\n- [~] Wire the list\n");
-    let panel = tall(&text, 420.0, turn(Some(blocked()), Ok(())));
+    let panel = tall(&text, 420.0, turn(blocked(), Ok(())));
     let top = |text: &str| panel.texts.iter().rfind(|(t, _)| t == text).unwrap().1.top();
-    assert!(top("x") < top("Waiting on you") && top("Waiting on you") < top("Working"));
+    assert!(top("x") < top("Working"));
     assert!(top("Working") < top("Wire the list") && top("Wire the list") < top("Done check"));
 }
 
 #[test]
-fn a_summary_that_asks_nothing_and_has_no_check_draws_nothing_of_the_last_turn() {
-    let own = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect();
-    let block =
-        EndBlock { done: own(&["Did it"]), needs_you: own(&["nothing"]), next: own(&["Ship"]) };
-    let panel = tall(SMALL, 420.0, LastTurn::of(Some(&block), None, Ok(()), today()).unwrap());
+fn a_tab_with_no_check_draws_nothing_of_the_last_turn() {
+    let mut panel = Panel::new(SMALL, 420.0);
+    panel.size = vec2(420.0, 2400.0);
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
     for text in ["Done", "Next", "Last turn", "Done check", "Waiting on you", "Answer"] {
         assert!(!panel.drawn(text), "{text:?} in {:?}", panel.texts);
     }
@@ -519,7 +509,7 @@ fn a_summary_that_asks_nothing_and_has_no_check_draws_nothing_of_the_last_turn()
 
 #[test]
 fn the_check_buttons_of_the_last_turn_send_the_same_asks_the_panel_always_did() {
-    let mut panel = tall(SMALL, 420.0, turn(Some(blocked()), Ok(())));
+    let mut panel = tall(SMALL, 420.0, turn(blocked(), Ok(())));
     let at = panel.center_of("Check again");
     assert_eq!(panel.click(at), Some(Action::DoneCheck(done_check_view::Action::CheckAgain)));
     let at = panel.center_of("Ask agent to fix");
@@ -528,14 +518,14 @@ fn the_check_buttons_of_the_last_turn_send_the_same_asks_the_panel_always_did() 
 
 #[test]
 fn ask_agent_to_fix_does_nothing_while_the_agent_is_busy() {
-    let mut panel = tall(SMALL, 420.0, turn(Some(blocked()), Err("The agent is working")));
+    let mut panel = tall(SMALL, 420.0, turn(blocked(), Err("The agent is working")));
     let at = panel.center_of("Ask agent to fix");
     assert_eq!(panel.click(at), None);
 }
 
 #[test]
 fn a_ledger_question_draws_no_card_and_no_answer_button_in_the_panel() {
-    let panel = tall(LONG, 420.0, turn(None, Ok(())));
+    let panel = tall(LONG, 420.0, turn(Look::Checking(None), Ok(())));
     for text in ["NEEDS YOU", "Something else", "Answer", "Not now"] {
         assert!(!panel.drawn(text), "{text:?} drawn in {:?}", panel.texts);
     }
@@ -545,27 +535,26 @@ fn a_ledger_question_draws_no_card_and_no_answer_button_in_the_panel() {
 fn a_tab_with_no_ledger_still_shows_its_done_check() {
     let mut panel = Panel::new(SMALL, 420.0);
     panel.ledger = None;
-    panel.last_turn = Some(turn(Some(Look::Checking(None)), Ok(())));
+    panel.last_turn = Some(turn(Look::Checking(None), Ok(())));
     panel.size = vec2(420.0, 1200.0);
     panel.frame(Vec::new());
     panel.frame(Vec::new());
     assert!(panel.drawn("Done check") && panel.drawn("Checking that the work landed..."));
-    assert!(panel.drawn("Waiting on you"), "the last message still asks");
-    assert!(!panel.drawn("Kept the filters in the URL") && !panel.drawn("Check again"));
+    assert!(!panel.drawn("Check again"));
 }
 
 #[test]
 fn showing_the_panel_clears_what_was_new_and_a_changed_check_or_question_makes_it_new_again() {
     let mut panel = Panel::new(SMALL, 420.0);
     assert_eq!(panel.state.seen, None);
-    let first = turn(Some(blocked()), Ok(()));
+    let first = turn(blocked(), Ok(()));
     let attention = first.attention();
     assert!(panel.state.unseen(attention));
     panel.last_turn = Some(first);
     panel.frame(Vec::new());
     let seen = panel.state.seen;
     assert!(seen.is_some() && !panel.state.unseen(seen));
-    panel.last_turn = Some(turn(None, Ok(())));
+    panel.last_turn = Some(turn(Look::Report(waiting_report(), STAMP), Ok(())));
     panel.frame(Vec::new());
     assert_ne!(panel.state.seen, seen, "another check is new");
     panel.last_turn = None;
@@ -597,10 +586,7 @@ fn no_last_turn_text_overlaps_or_leaves_the_card_at_any_width() {
         .into_iter()
         .flat_map(|w| looks.iter().map(move |look| (w, look.clone())))
     {
-        let long = "Pick a default owner filter: me or everyone, and say whether the archived column follows it or keeps its own filters";
-        let mut last = turn(Some(look), Ok(()));
-        last.needs.push(long.to_owned());
-        let panel = tall(SMALL, width, last);
+        let panel = tall(SMALL, width, turn(look, Ok(())));
         for (index, (a, a_rect)) in panel.texts.iter().enumerate() {
             assert!(a_rect.right() <= width + 0.5, "{a:?} runs past the card at {width}");
             for (b, b_rect) in &panel.texts[index + 1..] {
@@ -1036,7 +1022,7 @@ fn stamp_drawn(panel: &Panel) -> bool {
 #[test]
 fn a_waiting_check_is_one_blue_line_with_a_stamp_and_no_check_again() {
     let look = Look::Report(waiting_report(), STAMP);
-    let panel = tall(SMALL, 420.0, turn(Some(look), Ok(())));
+    let panel = tall(SMALL, 420.0, turn(look, Ok(())));
     assert!(panel.drawn("Waiting"), "{:?}", panel.texts);
     assert!(
         panel.drawn("Waiting until Wed 28 Oct: Live list across a day boundary"),
@@ -1050,7 +1036,7 @@ fn a_waiting_check_is_one_blue_line_with_a_stamp_and_no_check_again() {
 #[test]
 fn a_waiting_check_asks_to_be_checked_again_once_its_day_comes() {
     let look = Look::Report(waiting_report(), STAMP);
-    let due = LastTurn { today: Date::parse("2026-10-28").unwrap(), ..turn(Some(look), Ok(())) };
+    let due = LastTurn { today: Date::parse("2026-10-28").unwrap(), ..turn(look, Ok(())) };
     let panel = tall(SMALL, 420.0, due);
     assert!(panel.drawn("Not verified"), "{:?}", panel.texts);
     assert!(panel.drawn("Check again"));
@@ -1060,7 +1046,7 @@ fn a_waiting_check_asks_to_be_checked_again_once_its_day_comes() {
 #[test]
 fn a_check_that_runs_again_keeps_its_card_and_shows_a_button_that_does_nothing() {
     let look = Look::Checking(Some(blocked_report()));
-    let mut panel = tall(SMALL, 420.0, turn(Some(look), Ok(())));
+    let mut panel = tall(SMALL, 420.0, turn(look, Ok(())));
     assert!(panel.drawn("Pushed: 2 commits not pushed"), "{:?}", panel.texts);
     assert!(panel.drawn("Checking\u{2026}"), "{:?}", panel.texts);
     assert!(!panel.drawn("Check again") && !stamp_drawn(&panel));
@@ -1075,7 +1061,7 @@ fn an_answer_says_when_it_was_made_and_when_it_was_the_same() {
     let again = Checked { same: true, ..STAMP };
     for (checked, same) in [(STAMP, false), (again, true)] {
         let look = Look::Report(blocked_report(), checked);
-        let panel = tall(SMALL, 420.0, turn(Some(look), Ok(())));
+        let panel = tall(SMALL, 420.0, turn(look, Ok(())));
         assert!(stamp_drawn(&panel), "{:?}", panel.texts);
         let said = panel
             .texts
@@ -1315,7 +1301,6 @@ fn the_age_the_tag_and_the_count_never_overlap_or_leave_the_card() {
             ..aged("11h ago")
         };
         panel.jobs = vec![backfill_job()];
-        panel.last_turn = Some(turn(None, Ok(())));
         panel.size = vec2(width, 2600.0);
         panel.frame(Vec::new());
         assert_clean(&panel, width);
@@ -1352,7 +1337,7 @@ fn the_jobs_the_links_and_the_last_turn_each_carry_their_own_age() {
         }),
     ];
     panel.links = Some(five_links());
-    panel.last_turn = Some(turn(Some(blocked()), Ok(())));
+    panel.last_turn = Some(turn(blocked(), Ok(())));
     panel.blocks = Blocks {
         jobs: Some("1m ago".to_owned()),
         links: Some("5m ago".to_owned()),
@@ -1374,7 +1359,6 @@ fn a_block_with_no_age_draws_none() {
     let mut panel = Panel::new(LONG, 420.0);
     panel.size = vec2(420.0, 2600.0);
     panel.jobs = vec![backfill_job()];
-    panel.last_turn = Some(turn(None, Ok(())));
     panel.frame(Vec::new());
     assert!(!panel.drawn("Jobs"));
     assert!(
@@ -1488,7 +1472,7 @@ fn nothing_overlaps_or_runs_off_a_panel_from_200_to_360_wide_with_every_block_on
             }),
         ];
         panel.links = Some(with_archive());
-        panel.last_turn = Some(turn(Some(blocked()), Ok(())));
+        panel.last_turn = Some(turn(blocked(), Ok(())));
         panel.blocks = Blocks {
             out_of_date: Some(Why::NeedsYouNoQuestion),
             since: Some("3 answers since".to_owned()),

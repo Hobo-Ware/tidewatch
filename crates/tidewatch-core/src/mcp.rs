@@ -127,7 +127,7 @@ pub struct ToolCtx<'a> {
     pub notes_file: &'a Path,
     /// Serializes read-modify-write of `notes_file` between concurrent calls.
     pub notes_lock: &'a Mutex<()>,
-    /// The tab's `progress.md`, where `update_progress` saves the ledger.
+    /// The tab's `progress.json`, where `update_progress` saves the ledger.
     pub progress_file: &'a Path,
     pub ask: AskWait<'a>,
     /// The repo's workflow profile, read only when an agent asks for it.
@@ -535,7 +535,7 @@ fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::progress::{self, Ledger};
+    use crate::progress;
     use crate::progress_store;
     use kelp_core::review::{Anchor, Side};
     use std::cell::RefCell;
@@ -593,7 +593,7 @@ mod tests {
         }
 
         fn progress_file(&self) -> std::path::PathBuf {
-            self.dir.path().join("repo-abc123").join("tab").join("progress.md")
+            self.dir.path().join("repo-abc123").join("tab").join("progress.json")
         }
 
         fn post(&self, body: &str) -> McpReply {
@@ -927,7 +927,6 @@ mod tests {
         assert_eq!(text_of(&reply), "saved: phase 1 Build, 0/1 done");
         let stored = progress_store::load_report(&h.progress_file()).unwrap();
         assert_eq!(stored.state, progress::State::NeedsYou);
-        assert!(h.progress_file().with_file_name("progress.json").exists());
         let events = h.events.borrow();
         let [TabEvent::Progress { ledger }] = events.as_slice() else { panic!("{events:?}") };
         assert_eq!(**ledger, stored.to_ledger());
@@ -953,7 +952,6 @@ mod tests {
         );
         assert_eq!(text.lines().count(), 4, "{text}");
         assert!(!h.progress_file().exists());
-        assert!(!h.progress_file().with_file_name("progress.json").exists());
         assert_eq!(*h.events.borrow(), Vec::<TabEvent>::new());
     }
 
@@ -1144,17 +1142,12 @@ mod tests {
     }
 
     #[test]
-    fn get_progress_maps_a_markdown_only_file_from_an_older_version_to_the_typed_report() {
+    fn get_progress_ignores_a_markdown_file_from_an_older_version() {
         let h = Harness::new();
         std::fs::create_dir_all(h.progress_file().parent().unwrap()).unwrap();
         std::fs::write(h.progress_file(), LEDGER).unwrap();
         let reply = h.call("get_progress", &json!({}));
-        let back: Value = serde_json::from_str(text_of(&reply)).unwrap();
-        assert_eq!(
-            back["stages"].as_array().map(Vec::len),
-            Some(Ledger::parse(LEDGER).checklist.len())
-        );
-        assert!(back["now"].is_string());
+        assert!(text_of(&reply).starts_with("No report has been saved"), "{reply}");
     }
 
     #[test]
@@ -1218,7 +1211,7 @@ mod tests {
             role: TabRole::Agent,
             notes_file: &notes_file,
             notes_lock: &h.lock,
-            progress_file: Path::new("/none/progress.md"),
+            progress_file: Path::new("/none/progress.json"),
             ask: AskWait { away, ..test_wait(alive) },
             workflow: &Workflow::default,
             after_save: &Vec::new,
@@ -1334,7 +1327,7 @@ mod tests {
             role: TabRole::Agent,
             notes_file: &notes_file,
             notes_lock: &h.lock,
-            progress_file: Path::new("/none/progress.md"),
+            progress_file: Path::new("/none/progress.json"),
             ask: test_wait(&alive),
             workflow: &Workflow::default,
             after_save: &Vec::new,
@@ -1556,7 +1549,7 @@ mod tests {
                 role: TabRole::Agent,
                 notes_file: Path::new("/none"),
                 notes_lock: &h.lock,
-                progress_file: Path::new("/none/progress.md"),
+                progress_file: Path::new("/none/progress.json"),
                 ask: test_wait(&|| true),
                 workflow: &Workflow::default,
                 after_save: &Vec::new,
@@ -1600,7 +1593,7 @@ mod tests {
                         role: TabRole::Agent,
                         notes_file,
                         notes_lock: lock,
-                        progress_file: Path::new("/none/progress.md"),
+                        progress_file: Path::new("/none/progress.json"),
                         ask: test_wait(&alive),
                         workflow: &Workflow::default,
                         after_save: &Vec::new,

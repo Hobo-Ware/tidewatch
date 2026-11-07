@@ -9,7 +9,7 @@ const HASH_HEX_LEN: usize = 6;
 const NOTES_FILE: &str = "notes.json";
 const PR_CARDS_FILE: &str = "pr_cards.json";
 const DUE_ASKED_FILE: &str = "due-asked.json";
-const PROGRESS_FILE: &str = "progress.md";
+const PROGRESS_FILE: &str = "progress.json";
 const HOUSE_STYLE_FILE: &str = "house-style.md";
 const JOBS_FILE: &str = "jobs.json";
 const LINKS_FILE: &str = "links.json";
@@ -531,7 +531,7 @@ mod tests {
         let repo = Path::new("/work/web");
         let notes = paths.notes_file(repo, "brave-otter");
         assert_eq!(paths.progress_file(repo, "brave-otter").parent(), notes.parent());
-        assert!(paths.progress_file(repo, "brave-otter").ends_with("brave-otter/progress.md"));
+        assert!(paths.progress_file(repo, "brave-otter").ends_with("brave-otter/progress.json"));
         assert_eq!(paths.tab_house_style_file(repo, "brave-otter").parent(), notes.parent());
         assert!(
             paths

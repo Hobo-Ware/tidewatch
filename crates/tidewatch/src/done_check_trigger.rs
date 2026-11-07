@@ -1,24 +1,27 @@
 //! When the done check runs (pure): once per turn that ends with a done claim, never again for the
 //! same claim, and not for a tab that was already done when Tidewatch started watching it.
 
-use tidewatch_core::end_block::EndBlock;
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use tidewatch_core::kind::Kind;
+use tidewatch_core::progress::{Ledger, State};
 use tidewatch_core::status::AgentStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Claim(String);
+pub(crate) struct Claim(u64);
 
-/// What the agent says about being done. Its ledger state is `done`, or its last message ends with
-/// a Done / Needs you / Next block that lists something done and asks nothing of the user. A block
-/// that asks for the user is no claim, whatever the ledger says.
-pub(crate) fn claim(ledger_done: bool, block: Option<&EndBlock>) -> Option<Claim> {
-    if block.is_some_and(EndBlock::needs_input) {
-        return None;
-    }
-    let done: Vec<&str> = block
-        .map(|block| block.done.iter().map(|item| item.trim()).filter(|i| !i.is_empty()).collect())
-        .unwrap_or_default();
-    (ledger_done || !done.is_empty()).then(|| Claim(format!("{ledger_done}\n{}", done.join("\n"))))
+/// What the agent says about being done: only a report whose state is `done` claims it. The claim
+/// is a digest of the report's content (goal, state, stages and steps, decisions, verified and not
+/// verified), never of when it was saved, so a re-save of the same words is the same claim.
+pub(crate) fn claim(ledger: Option<&Ledger>) -> Option<Claim> {
+    let ledger = ledger.filter(|ledger| ledger.status.state == Some(State::Done))?;
+    let mut hasher = DefaultHasher::new();
+    format!(
+        "{:?}{:?}{:?}{:?}{:?}",
+        ledger.goal, ledger.checklist, ledger.decisions, ledger.verified, ledger.not_verified
+    )
+    .hash(&mut hasher);
+    Some(Claim(hasher.finish()))
 }
 
 pub(crate) fn applies(ordinary: bool, kind: Option<Kind>) -> bool {
@@ -58,41 +61,36 @@ mod tests {
     use super::*;
     use tidewatch_core::status::Reason;
 
-    fn block(done: &[&str], needs: &[&str]) -> EndBlock {
-        EndBlock {
-            done: done.iter().map(|s| (*s).to_owned()).collect(),
-            needs_you: needs.iter().map(|s| (*s).to_owned()).collect(),
-            next: Vec::new(),
-        }
+    fn report(state: &str, step: &str) -> Ledger {
+        Ledger::parse(&format!(
+            "# Goal\nShip\n\n## Status\nstate: {state}\n\n## Checklist\n### 1. Build\n- [x] {step}\n"
+        ))
     }
 
     #[test]
-    fn a_claim_is_a_done_ledger_or_a_done_section_that_asks_nothing() {
+    fn only_a_report_in_the_done_state_is_a_claim() {
         let cases = [
-            (false, None, false),
-            (true, None, true),
-            (false, Some(block(&["added the helper"], &["nothing"])), true),
-            (false, Some(block(&[], &["nothing"])), false),
-            (false, Some(block(&["  "], &["none"])), false),
-            (true, Some(block(&["added the helper"], &["which name?"])), false),
-            (false, Some(block(&["added the helper"], &["which name?"])), false),
-            (true, Some(block(&[], &[])), true),
+            (None, false),
+            (Some(report("done", "a")), true),
+            (Some(report("working", "a")), false),
+            (Some(report("waiting", "a")), false),
+            (Some(report("blocked", "a")), false),
+            (Some(report("needs_you", "a")), false),
         ];
-        for (ledger_done, block, want) in cases {
-            assert_eq!(
-                claim(ledger_done, block.as_ref()).is_some(),
-                want,
-                "{ledger_done} {block:?}"
-            );
+        for (ledger, want) in cases {
+            assert_eq!(claim(ledger.as_ref()).is_some(), want, "{ledger:?}");
         }
     }
 
     #[test]
-    fn different_words_or_ledger_state_make_a_different_claim() {
-        let one = claim(false, Some(&block(&["a"], &[])));
-        assert_eq!(one, claim(false, Some(&block(&["a"], &[]))));
-        assert_ne!(one, claim(false, Some(&block(&["b"], &[]))));
-        assert_ne!(one, claim(true, Some(&block(&["a"], &[]))));
+    fn the_same_content_is_one_claim_however_often_it_is_saved_and_a_changed_step_is_a_new_one() {
+        let one = claim(Some(&report("done", "a")));
+        let mut resaved = report("done", "a");
+        resaved.status.note = "saved again".to_owned();
+        let cases = [(report("done", "a"), true), (resaved, true), (report("done", "b"), false)];
+        for (ledger, same) in cases {
+            assert_eq!(claim(Some(&ledger)) == one, same, "{ledger:?}");
+        }
     }
 
     #[test]
@@ -110,7 +108,7 @@ mod tests {
     }
 
     fn some() -> Option<Claim> {
-        claim(true, None)
+        claim(Some(&report("done", "a")))
     }
 
     #[test]
@@ -136,7 +134,7 @@ mod tests {
         trigger.observe(&AgentStatus::Working, None);
         assert!(!trigger.observe(&AgentStatus::Done, some()));
         trigger.observe(&AgentStatus::Working, None);
-        assert!(trigger.observe(&AgentStatus::Done, claim(false, Some(&block(&["x"], &[])))));
+        assert!(trigger.observe(&AgentStatus::Done, claim(Some(&report("done", "b")))));
     }
 
     #[test]

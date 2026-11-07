@@ -445,7 +445,6 @@ fn fake_on_pr_poofed(mut record: Poofed) -> Poofed {
             Step::Tests | Step::Proof => {}
         }
     }
-    record.done = vec!["Folded the review fix into PR #213".to_owned()];
     record
 }
 
@@ -483,8 +482,6 @@ fn fake_read_only_poofed(mut record: Poofed) -> Poofed {
             detail: "Nothing changed".to_owned(),
         })
         .collect();
-    record.done = Vec::new();
-    record.next = Vec::new();
     record.stages = [("Understand", 5), ("Build", 0), ("PR", 0), ("Done", 1)]
         .map(|(name, total)| StageLine {
             name: name.to_owned(),
@@ -515,8 +512,6 @@ pub(crate) fn fake_poofed(day: Date, now_ms: i64) -> Vec<Poofed> {
             line(Step::Proof, "Worktree clean"),
             line(Step::HandOff, &format!("Opened PR #{number} against main")),
         ];
-        poofed.done = vec![format!("Finished `{name}` and opened PR #{number}")];
-        poofed.next = vec!["Review the pull request".to_owned()];
         let done = |text: &str, why: &str| StepLine {
             text: text.to_owned(),
             why: Some(why.to_owned()),

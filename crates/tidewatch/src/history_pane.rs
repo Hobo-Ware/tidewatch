@@ -471,9 +471,11 @@ mod tests {
     use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Shape};
     use tidewatch_core::progress::Ledger;
 
+    use crate::done_check_glue::{Checked, Look};
     use crate::last_turn::LastTurn;
     use crate::panel_blocks::Blocks;
     use crate::progress_state::TabLedger;
+    use tidewatch_core::done_check::{Kind, Line, Report, Status};
     use tidewatch_core::panel_view::Why;
 
     const LEDGER: &str = "# Goal\nShip it\n\n## Status\nstate: working\n\n## Checklist\n### 1. Build\n- [~] Write it\n\n## Needs you\n- Pick one\n";
@@ -621,14 +623,12 @@ mod tests {
         assert!(card.at("This branch").is_some());
     }
 
-    fn asking() -> LastTurn {
-        let block = tidewatch_core::end_block::EndBlock {
-            done: vec!["Did it".into()],
-            needs_you: vec!["Which base?".into()],
-            next: Vec::new(),
-        };
+    fn checked(detail: &str) -> LastTurn {
+        let line = Line { kind: Kind::Pushed, status: Status::Fail, detail: detail.to_owned() };
+        let report = Report { lines: vec![line], ..Report::default() };
         let today = tidewatch_core::civil_date::Date::parse("2026-10-27").unwrap();
-        LastTurn::of(Some(&block), None, Ok(()), today).unwrap()
+        LastTurn::of(Some(Look::Report(report, Checked { at: 0, same: false })), Ok(()), today)
+            .unwrap()
     }
 
     fn dot_pixels(card: &Card) -> usize {
@@ -653,10 +653,9 @@ mod tests {
     }
 
     #[test]
-    fn a_new_needs_you_item_puts_a_dot_on_progress_while_another_side_shows_and_showing_it_clears_it()
-     {
+    fn a_new_done_check_puts_a_dot_on_progress_while_another_side_shows_and_showing_it_clears_it() {
         let mut card = Card::new(true);
-        card.last_turn = Some(asking());
+        card.last_turn = Some(checked("2 commits not pushed"));
         card.state.chosen = Some(Side::History);
         card.frame(Vec::new());
         assert_eq!(dot_pixels(&card), 1);
@@ -668,16 +667,17 @@ mod tests {
         card.click(history);
         assert_eq!(card.state.shown, Some(Side::History));
         assert_eq!(dot_pixels(&card), 0, "what Progress showed is not new again");
-        card.last_turn = Some(LastTurn { needs: vec!["Another?".into()], ..asking() });
+        card.last_turn = Some(checked("3 commits not pushed"));
         card.frame(Vec::new());
-        assert_eq!(dot_pixels(&card), 1, "a different question is new");
+        assert_eq!(dot_pixels(&card), 1, "a different report is new");
     }
 
     #[test]
-    fn no_dot_without_a_needs_you_item_or_a_check() {
+    fn no_dot_without_a_done_check() {
         let mut card = Card::new(true);
         card.state.chosen = Some(Side::History);
-        card.last_turn = Some(LastTurn { needs: Vec::new(), ..asking() });
+        card.last_turn =
+            Some(LastTurn::of(Some(Look::Checking(None)), Ok(()), checked("x").today).unwrap());
         card.frame(Vec::new());
         assert_eq!(dot_pixels(&card), 0);
         card.last_turn = None;

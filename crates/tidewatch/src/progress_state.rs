@@ -52,7 +52,7 @@ impl Facts<'_> {
 /// What a frame's look at the tabs asks for.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Wants {
-    /// Tabs whose `progress.md` has not been read yet.
+    /// Tabs whose `progress.json` has not been read yet.
     pub(crate) load: Vec<(u64, PathBuf)>,
     /// Tabs that were open and are gone: their dated items stay in the index, marked closed.
     pub(crate) closed: Vec<(PathBuf, String)>,
@@ -259,7 +259,7 @@ mod tests {
     use super::*;
 
     const NOTES: &str = "/state/web-abc123/otter/notes.json";
-    const PROGRESS: &str = "/state/web-abc123/otter/progress.md";
+    const PROGRESS: &str = "/state/web-abc123/otter/progress.json";
 
     fn facts(id: u64, with_worktree: bool, session: Option<&'static str>) -> Facts<'static> {
         Facts {
