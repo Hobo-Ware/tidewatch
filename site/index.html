@@ -78,7 +78,7 @@
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#8fd16a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>
-      <h3>Reader view</h3><p>An agent tab reads as a chat on top of the live terminal: your messages as formatted text, each finished turn as its final answer with an N updates chip for its status updates, arrows to page between several replies in one turn, and links you can click. A question the agent asks sits above the reply box as numbered answers, and one key picks. One shortcut flips to the raw terminal.</p>
+      <h3>Reader view</h3><p>An agent tab reads as a chat on top of the live terminal: your messages as formatted text, each finished turn as its final answer with an N updates chip for its status updates, arrows to page between several replies in one turn, and links you can click. Every choice, from the question tool, a permission prompt or a choice typed in chat, is one card above the reply box: numbered answers, one key picks, and Let's chat about this when it needs talking through instead. One shortcut flips to the raw terminal.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
@@ -90,7 +90,7 @@
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-      <h3>Pull requests, asked not pushed</h3><p>When the work is ready, the card says how many commits wait and offers Ask Builder to open a PR, sent only when you click it. If the work already has an open pull request on any branch, the agent replies with its link and opens no other. Otherwise the agent pushes and opens the pull request itself, as a draft unless your repo says otherwise; Tidewatch never does. When it merges or closes, the agent hears it from Tidewatch, not from you. A YOLO agent or a Meeseeks needs no approval: it decides and proceeds, product and architecture choices included, and writes each decision in its progress report for you to change later. Only a step that loses data, spends money or cannot be undone reaches you.</p>
+      <h3>Pull requests, asked not pushed</h3><p>When the work is ready, the card says how many commits wait and offers Ask Builder to open a PR, sent only when you click it. If the work already has an open pull request on any branch, the agent replies with its link and opens no other. Otherwise the agent pushes and opens the pull request itself, as a draft unless your repo says otherwise; Tidewatch never does. The agent watches its own pull request, checks and reviews included; Tidewatch only tells it, as a plain fact, what it has not picked up after a few minutes. When it merges or closes, the agent hears it from Tidewatch, not from you. A YOLO agent or a Meeseeks needs no approval: it decides and proceeds, product and architecture choices included, and writes each decision in its progress report for you to change later. Only a step that loses data, spends money or cannot be undone reaches you.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#f472b6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/></svg>
@@ -118,7 +118,7 @@
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2"/></svg>
-      <h3>Away mode</h3><p>Switch Away on when you leave. Agents decide on their own, note each decision and why in their report, and keep working. The Mac stays awake too.</p>
+      <h3>Away mode</h3><p>Switch Away on when you leave. Agents decide on their own, note each decision and why in their report, and keep working. When they have to wait, they set their own wake-up; Tidewatch nudges only when an agent stopped with nothing set. The Mac stays awake too.</p>
     </div>
     <div class="card">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4a8 8 0 0 0-8 8v2M8.5 12.5a3.5 3.5 0 0 1 7 0v3.5M12 11v6.5a5 5 0 0 1-.3 1.8M16 11.5a4.5 4.5 0 0 1 .4 2.5"/></svg>
@@ -161,7 +161,7 @@
       <h3>One profile editor</h3><p>Agent, effort and permission level are one kind of choice, and a line under each says what the selected value does. Every effort and every level the agent supports is there.</p>
     </div>
   </div>
-  <p class="note">Also new: every message Tidewatch sends an agent shows in the Reader with the reason it was sent and a switch to turn that kind off.</p>
+  <p class="note">Also new: every message Tidewatch sends an agent shows in the Reader as your own bubble with a small Tidewatch badge, the reason it was sent and a switch to turn that kind off.</p>
 
   <div class="row" id="overview">
     <div class="text">
@@ -176,7 +176,7 @@
     <div class="text">
       <h3>Read the answer, answer the question.</h3>
       <p>The Reader turns the agent's session into text you can skim: your messages, the final answer of each turn, which tools it ran, and a question when it needs permission. Flip to the raw terminal any time.</p>
-      <ul><li>Allow or deny a permission question from a button (Claude Code today)</li><li>Reply to the agent from a box under the answer; a reply sent mid-turn is held until the turn ends</li><li>Pick an answer to the agent's question with a digit key</li><li>Each finished turn shows its final answer, with status updates folded under an N updates chip; several replies in one turn page with arrows</li><li>Your answers to its questions come back as a card, and background task notes as quiet rows</li></ul>
+      <ul><li>Allow or deny a permission question from a button (Claude Code today)</li><li>Reply to the agent from a box under the answer; a reply sent mid-turn is held until the turn ends</li><li>Pick an answer to the agent's question with a digit key, or press Let's chat about this to talk it through first</li><li>Each finished turn shows its final answer, with status updates folded under an N updates chip; several replies in one turn page with arrows</li><li>Your answers to its questions come back as a card, and background task notes as quiet rows</li></ul>
     </div>
     <div class="shot"><img src="shot-needs.png" width="2200" height="1375" loading="lazy" alt="An agent tab asking for permission to install a package, with Allow once, Deny and Switch to terminal outline buttons under the Reader, two earlier turns above it each with an update chip, and the agent's history card beside it"></div>
   </div>
