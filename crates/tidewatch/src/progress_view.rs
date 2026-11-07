@@ -190,6 +190,8 @@ pub(crate) enum Action {
 
 pub(crate) struct Input<'a> {
     pub(crate) ledger: Option<&'a TabLedger>,
+    /// The questions the agent has open with its question tool, read from the Reader's rows.
+    pub(crate) open: &'a [String],
     /// The agent works on after the ledger asked the owner something (`panel_rules.rs` in core).
     pub(crate) stale: bool,
     pub(crate) jobs: &'a [Card],
@@ -228,8 +230,8 @@ impl Input<'_> {
     /// The questions the owner is asked: the report's.
     fn asked(&self) -> Option<model::Asked> {
         match self.ledger_shown() {
-            Some(ledger) => model::asked(&ledger, &[]),
-            None => model::asked(&Ledger::default(), &[]),
+            Some(ledger) => model::asked(self.open, &ledger, &[]),
+            None => model::asked(self.open, &Ledger::default(), &[]),
         }
     }
 

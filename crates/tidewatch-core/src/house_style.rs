@@ -42,7 +42,7 @@ Tidewatch shows your work to the user. This repo's own rules (CLAUDE.md, AGENTS.
 const ASKING: &str = "\
 ## Asking the user
 
-Use your question tool, or `ask_user` if you have none. Tidewatch shows it as a card with buttons, so give two or three options and mark your top pick. Don't ask in plain chat.
+Use your question tool, or `ask_user` if you have none. Tidewatch shows it as a card with buttons, so give two or three options and mark your top pick. Don't ask in plain chat. When the user says \"Let's chat about this\", answer in plain text and do not ask with your question tool or needs_you again until they ask for options.
 ";
 
 const JOBS: &str = "\
@@ -600,6 +600,15 @@ mod tests {
         let text = compose("be brief", None);
         assert!(text.contains("Use your question tool, or `ask_user` if you have none."));
         assert!(text.contains("Don't ask in plain chat."));
+    }
+
+    #[test]
+    fn a_chat_request_tells_the_agent_to_stop_asking_until_options_are_wanted() {
+        let text = compose("be brief", None);
+        assert_eq!(text.matches("Let's chat about this").count(), 1);
+        assert!(text.contains(
+            "do not ask with your question tool or needs_you again until they ask for options"
+        ));
     }
 
     #[test]

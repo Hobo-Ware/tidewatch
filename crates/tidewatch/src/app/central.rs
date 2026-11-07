@@ -9,11 +9,12 @@ use super::Tidewatch;
 use super::frame::FrameIntent;
 use super::repos::RepoCommand;
 use super::terminal::TerminalGrid;
-use crate::answer_chips::Pick;
+use crate::choice::chat_message;
 use crate::coming_up::{Row as Scheduled, coming_up, with_extra};
 use crate::commands::Command;
 use crate::pane::FirstPrompt;
 use crate::progress_glue::today;
+use crate::question_compact::Click;
 use crate::reader::Shown;
 use crate::repo::Workspace;
 use crate::tab_view::TabView;
@@ -22,6 +23,7 @@ use crate::{
     agenda, agent_status_line, brand, delivery_view, layout, overview, overview_fake,
     overview_view, reader_glue, takeover_view, welcome_view,
 };
+use tidewatch_core::question::{Given, Reply};
 
 const EMPTY_PANELS_H: f32 = 200.0;
 
@@ -210,10 +212,15 @@ impl Tidewatch {
         }
         let mut jump = out.jump;
         match out.answer {
-            Some((tab, Pick::Answer(text))) => {
-                self.send_answer(tab, text, ctx, ctx.input(|i| i.time));
+            Some((tab, Click::Option(index))) => {
+                let given = Given { picked: vec![index], other: None };
+                self.answer_choice(tab, Reply::Answered(vec![given]), ctx, ctx.input(|i| i.time));
             }
-            Some((tab, Pick::Other)) => {
+            Some((tab, Click::Chat)) => {
+                let reply = Reply::Chat(chat_message(""));
+                self.answer_choice(tab, reply, ctx, ctx.input(|i| i.time));
+            }
+            Some((tab, Click::Open)) => {
                 self.open_reply_box_of(tab);
                 jump = Some(tab);
             }

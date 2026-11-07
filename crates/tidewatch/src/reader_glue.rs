@@ -17,8 +17,9 @@ use tidewatch_core::transcript::Source;
 
 use crate::agent_avatar::Face;
 use crate::agent_ready::Ready;
-use crate::ask_model::{self, Ask};
+use crate::ask_model::Ask;
 use crate::brand;
+use crate::choice::{self, Delivery, Route};
 use crate::commands::Command;
 use crate::dev_reader::DevReader;
 use crate::due::{Due, ask_blocked};
@@ -422,17 +423,17 @@ pub(crate) fn take_tidewatch_clicks(
     clicks
 }
 
-/// Takes the answers picked on the Needs you card out of the Reader's actions.
-pub(crate) fn take_picks(actions: &mut Vec<Action>) -> Vec<String> {
-    let mut picks = Vec::new();
+/// Takes what the owner did with the ledger's question on the card out of the Reader's actions.
+pub(crate) fn take_ledger_replies(actions: &mut Vec<Action>) -> Vec<Reply> {
+    let mut replies = Vec::new();
     actions.retain(|action| match action {
-        Action::Pick(text) => {
-            picks.push(text.clone());
+        Action::Ledger(reply) => {
+            replies.push(reply.clone());
             false
         }
         _ => true,
     });
-    picks
+    replies
 }
 
 /// Takes the clicks on the rows of the running agents list out of the Reader's actions: the ids
@@ -569,7 +570,7 @@ pub(crate) fn apply(
             | Action::Pr(_)
             | Action::Tidewatch(_)
             | Action::Due(_)
-            | Action::Pick(_)
+            | Action::Ledger(_)
             | Action::SubAgent(_)
             | Action::Reply(_)
             | Action::SendAgain { .. }
@@ -842,24 +843,6 @@ fn reply_steps(text: String, lead: f64) -> Vec<(f64, Step)> {
     vec![(lead, Step::Paste(text))]
 }
 
-/// The steps that give `given` to Claude's menu: its key presses, or when the menu cannot take them
-/// by keys, Esc and the answer as a message.
-fn claude_menu_steps(
-    questions: &[question::Question],
-    given: &[question::Given],
-) -> Vec<(f64, Step)> {
-    if let Some(keys) = reader_keys::claude_question_keys(questions, given) {
-        return keys
-            .into_iter()
-            .enumerate()
-            .map(|(index, keys)| (if index == 0 { 0.0 } else { KEY_GAP_S }, Step::Keys(keys)))
-            .collect();
-    }
-    let mut steps = vec![(0.0, Step::Keys(reader_keys::CLAUDE_MENU_ESCAPE.to_vec()))];
-    steps.extend(reply_steps(question::late_answer_text(questions, given), MENU_CLOSE_S));
-    steps
-}
-
 fn refresh_asking(agent: &mut AgentTab) {
     let next = agent.reader.rows.pending_question().and_then(|row| match &row.kind {
         Kind::Question(q) if matches!(q.origin, Origin::Tidewatch(_)) => {
@@ -894,23 +877,24 @@ fn go_with_picks<T: ShowsScreen>(pane: &mut Pane<T>, now: f64) -> Option<String>
 /// What became of a ready answer offered to the question the agent has open.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Opened {
-    /// No single question waits: the caller sends it as a plain reply.
+    /// No question of the agent's tool waits: the caller answers the ledger's.
     NotOpen,
     Answered,
     Refused(&'static str),
 }
 
-/// Gives `text`, a ready answer picked outside the Reader, to the one question the agent has open
-/// with its question tool: the option it names, else as typed.
-pub(crate) fn answer_open<T: ShowsScreen>(pane: &mut Pane<T>, text: &str, now: f64) -> Opened {
-    let Some(row) = pane.agent.as_ref().and_then(|agent| agent.reader.rows.pending_question())
+/// Gives `reply`, picked outside the Reader, to the one question the agent has open with its
+/// question tool.
+pub(crate) fn answer_open<T: ShowsScreen>(pane: &mut Pane<T>, reply: Reply, now: f64) -> Opened {
+    let Some(seq) = pane
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.reader.rows.pending_question())
+        .map(|row| row.seq)
     else {
         return Opened::NotOpen;
     };
-    let Kind::Question(asked) = &row.kind else { return Opened::NotOpen };
-    let Some(given) = ask_model::given_for(&asked.questions, text) else { return Opened::NotOpen };
-    let seq = row.seq;
-    match answer_question(pane, seq, Reply::Answered(given), now) {
+    match answer_question(pane, seq, reply, now) {
         Some(reason) => Opened::Refused(reason),
         None => Opened::Answered,
     }
@@ -963,6 +947,7 @@ fn answer_question_saying<T: ShowsScreen>(
 ) -> Option<&'static str> {
     let agent = pane.agent.as_ref()?;
     let asked = agent.reader.rows.question_of(seq).cloned()?;
+    let route = Route::of(&asked.origin);
     let gone =
         matches!(&pane.body, Body::Shell(term) if menu_look(term, &asked.questions) == Look::Gone);
     if matches!(asked.origin, Origin::Claude) && asked.asked != Asked::Pending {
@@ -972,34 +957,33 @@ fn answer_question_saying<T: ShowsScreen>(
         return Some(MENU_GONE);
     }
     let agent = pane.agent.as_mut()?;
-    let (steps, state) = match (&asked.origin, reply) {
-        (Origin::Tidewatch(held), Reply::Answered(given)) => {
-            let pairs = question::pairs(&asked.questions, &given);
-            let steps = if held.send(Reply::Answered(given.clone())) {
-                Vec::new()
-            } else {
-                reply_steps(question::late_answer_text(&asked.questions, &given), 0.0)
-            };
-            (steps, Asked::Answered(pairs))
-        }
-        (Origin::Tidewatch(held), Reply::Skipped) => {
-            let steps = if held.send(Reply::Skipped) {
-                Vec::new()
-            } else {
-                reply_steps(skip_text.to_owned(), 0.0)
-            };
-            (steps, Asked::Declined)
-        }
-        (Origin::Claude, Reply::Answered(given)) => {
-            let pairs = question::pairs(&asked.questions, &given);
-            let steps = claude_menu_steps(&asked.questions, &given);
-            (steps, Asked::Sent(pairs))
-        }
-        (Origin::Claude, Reply::Skipped) => {
+    let state = |answered: Vec<(String, String)>| match (&reply, route) {
+        (Reply::Skipped, _) => Asked::Declined,
+        (Reply::Chat(_), _) => Asked::Answered(choice::chat_pairs(&asked.questions)),
+        (Reply::Answered(_), Route::ClaudeMenu) => Asked::Sent(answered),
+        (Reply::Answered(_), Route::HeldCall | Route::Chat) => Asked::Answered(answered),
+    };
+    let answered = match &reply {
+        Reply::Answered(given) => question::pairs(&asked.questions, given),
+        Reply::Skipped | Reply::Chat(_) => Vec::new(),
+    };
+    let state = state(answered);
+    let steps = match choice::deliver(route, &asked.questions, reply, skip_text) {
+        Delivery::Keys(keys) => keys
+            .into_iter()
+            .enumerate()
+            .map(|(index, keys)| (if index == 0 { 0.0 } else { KEY_GAP_S }, Step::Keys(keys)))
+            .collect(),
+        Delivery::EscThen(text) => {
             let mut steps = vec![(0.0, Step::Keys(reader_keys::CLAUDE_MENU_ESCAPE.to_vec()))];
-            steps.extend(reply_steps(skip_text.to_owned(), MENU_CLOSE_S));
-            (steps, Asked::Declined)
+            steps.extend(reply_steps(text, MENU_CLOSE_S));
+            steps
         }
+        Delivery::Held { reply, fallback } => match &asked.origin {
+            Origin::Tidewatch(held) if held.send(reply) => Vec::new(),
+            Origin::Claude | Origin::Tidewatch(_) => reply_steps(fallback, 0.0),
+        },
+        Delivery::Typed(text) => reply_steps(text, 0.0),
     };
     agent.reader.rows.set_asked(seq, state);
     if matches!(asked.origin, Origin::Claude) {
@@ -1454,30 +1438,54 @@ mod tests {
     }
 
     #[test]
-    fn a_ready_answer_picked_elsewhere_goes_to_the_one_open_question_as_its_option_or_as_typed() {
-        for (text, want) in [
-            ("Run", Given { picked: vec![1], other: None }),
-            ("Elsewhere", Given { picked: Vec::new(), other: Some("Elsewhere".into()) }),
-        ] {
-            let mut pane = pane_without_questions();
-            let (seq, receiver) = ask_with_recommended(&mut pane);
-            assert_eq!(answer_open(&mut pane, text, 5.0), Opened::Answered);
-            assert_eq!(receiver.recv().unwrap(), Reply::Answered(vec![want]));
-            assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
-        }
+    fn a_choice_picked_outside_the_reader_goes_to_the_one_open_question() {
+        let run = Reply::Answered(vec![Given { picked: vec![1], other: None }]);
+        let mut pane = pane_without_questions();
+        let (seq, receiver) = ask_with_recommended(&mut pane);
+        assert_eq!(answer_open(&mut pane, run.clone(), 5.0), Opened::Answered);
+        assert_eq!(receiver.recv().unwrap(), run);
+        assert!(matches!(asked_of(&pane, seq), Asked::Answered(_)));
     }
 
     #[test]
-    fn a_ready_answer_is_left_to_the_plain_reply_when_no_single_question_is_open() {
+    fn a_choice_picked_outside_the_reader_is_left_to_the_ledger_when_no_question_is_open() {
         let mut none = pane_without_questions();
-        assert_eq!(answer_open(&mut none, "Run", 5.0), Opened::NotOpen);
-        let (mut several, seq) = pane(Origin::Tidewatch(AskReply::new(channel().0)));
-        assert_eq!(
-            answer_open(&mut several, "Run", 5.0),
-            Opened::NotOpen,
-            "two questions in one call"
-        );
-        assert!(matches!(asked_of(&several, seq), Asked::Pending));
+        let skip = Reply::Skipped;
+        assert_eq!(answer_open(&mut none, skip, 5.0), Opened::NotOpen);
+    }
+
+    #[test]
+    fn the_chat_button_ends_the_choice_along_each_route() {
+        let text = choice::chat_message("");
+        let (mut menu, seq) = pane(Origin::Claude);
+        assert_eq!(answer_question(&mut menu, seq, Reply::Chat(text.clone()), 100.0), None);
+        let typed_menu = typed(&mut menu);
+        assert_eq!(typed_menu[0], (0.0, Step::Keys(b"\x1b".to_vec())));
+        assert_eq!(typed_menu[1].1, Step::Paste(text.clone()));
+        assert_eq!(typed_menu.len(), 2);
+        assert!(matches!(asked_of(&menu, seq), Asked::Answered(_)));
+
+        let (sender, receiver) = channel();
+        let (mut held, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
+        assert_eq!(answer_question(&mut held, seq, Reply::Chat(text.clone()), 100.0), None);
+        assert_eq!(receiver.recv().unwrap(), Reply::Chat(text.clone()));
+        assert_eq!(typed(&mut held), Vec::new());
+        assert!(matches!(asked_of(&held, seq), Asked::Answered(_)));
+
+        let (sender, receiver) = channel();
+        drop(receiver);
+        let (mut dead, seq) = pane(Origin::Tidewatch(AskReply::new(sender)));
+        answer_question(&mut dead, seq, Reply::Chat(text.clone()), 100.0);
+        assert_eq!(steps_only(typed(&mut dead)), [Step::Paste(text)]);
+    }
+
+    #[test]
+    fn a_chat_is_refused_by_a_claude_menu_the_screen_shows_is_gone() {
+        let (mut pane, seq) = pane(Origin::Claude);
+        with_screen(&mut pane, &["> ", "Where? is what I asked"]);
+        let refused = answer_question(&mut pane, seq, Reply::Chat(choice::chat_message("")), 100.0);
+        assert_eq!(refused, Some(MENU_GONE));
+        assert_eq!(typed(&mut pane), Vec::new());
     }
 
     fn with_screen(pane: &mut Pane<Fake>, rows: &[&str]) {

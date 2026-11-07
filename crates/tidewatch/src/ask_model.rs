@@ -1,10 +1,15 @@
-//! Which of the ledger's waiting questions the Reader's Needs you card shows (pure).
+//! The ledger's waiting questions as the Reader's card shows them (pure): which one shows, and how
+//! it becomes a `Question` for the one card.
 
 use tidewatch_core::link_board::Link;
-use tidewatch_core::progress::Entry;
-use tidewatch_core::question::{Given, Question, Select, answer_text, needs_you_entries};
+use tidewatch_core::progress::{Choice, Entry};
+use tidewatch_core::question::{
+    Given, Question, QuestionOption, Reply, Select, answer_text, needs_you_entries,
+};
+use tidewatch_core::question_words;
 
-use crate::reader_rows::{Kind, Rows};
+use crate::choice;
+use crate::progress_model::{Ask as CardAsk, Look};
 
 /// The question on the card and what it needs to be drawn.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -15,30 +20,43 @@ pub(crate) struct Ask {
     pub(crate) total: usize,
     /// The links sent for this question.
     pub(crate) read: Vec<Link>,
-    /// Whether the digit keys may pick: false while a dialog holds the keyboard.
-    pub(crate) keys: bool,
 }
 
-/// The Needs you lines for every question the agent has open with its question tool, oldest first:
-/// Claude's own `AskUserQuestion` call read from its session file, or a held `ask_user` call.
-pub(crate) fn open_lines(rows: &Rows) -> Vec<Entry> {
-    rows.pending_questions()
-        .into_iter()
-        .flat_map(|row| match &row.kind {
-            Kind::Question(asked) => needs_you_entries(&asked.questions),
-            _ => Vec::new(),
-        })
-        .collect()
+const FALLBACK: [&str; 2] = ["Done", "Not now"];
+
+/// The agent's options for a question, or Done and Not now when it gave none.
+pub(crate) fn choices(options: &[Choice]) -> Vec<Choice> {
+    if options.is_empty() {
+        FALLBACK
+            .iter()
+            .map(|text| Choice { text: (*text).to_owned(), recommended: false })
+            .collect()
+    } else {
+        options.to_vec()
+    }
 }
 
-/// The option of a lone open question that `text` picks, or the typed answer when none matches.
-pub(crate) fn given_for(questions: &[Question], text: &str) -> Option<Vec<Given>> {
-    let [question] = questions else { return None };
-    let picked = question.options.iter().position(|option| option.shown() == text);
-    Some(vec![match picked {
-        Some(index) => Given { picked: vec![index], other: None },
-        None => Given { picked: Vec::new(), other: Some(text.to_owned()) },
-    }])
+/// The agent's why line as shown: its first letter in capitals, the rest as written.
+pub(crate) fn sentence(text: &str) -> String {
+    let mut chars = text.trim().chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
+/// A Needs you line as the single-choice question the one card draws.
+pub(crate) fn question_of(entry: &Entry) -> Question {
+    Question {
+        text: entry.text.trim().to_owned(),
+        header: None,
+        decision: None,
+        select: Select::Single,
+        options: choices(&entry.options)
+            .into_iter()
+            .map(|choice| QuestionOption {
+                top_pick: choice.recommended,
+                ..QuestionOption::new(choice.text)
+            })
+            .collect(),
+    }
 }
 
 /// The ledger's save time and how many of its questions were answered one by one.
@@ -53,6 +71,35 @@ pub(crate) fn shown(
 ) -> Option<usize> {
     let step = given.filter(|(at, _)| *at == saved).map_or(0, |(_, count)| count);
     (step < total && (!stale || step > 0)).then_some(step)
+}
+
+/// Puts the questions the agent has open with its question tool on an Overview card's `look`, read
+/// from the Reader's rows and not copied into the ledger: they count with the report's own (one the
+/// report repeats is counted once), and a lone one is the question the card's chips answer.
+pub(crate) fn add_tool_questions(look: &mut Look, tool: &[Question], own: &[&Entry]) {
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+    let [first, ..] = tool else { return };
+    let extra = own.iter().filter(|entry| !tool.iter().any(|q| same(&q.text, &entry.text))).count();
+    look.questions = tool.len() + extra;
+    look.ask = match (look.questions, extra) {
+        (1, 0) => {
+            needs_you_entries(std::slice::from_ref(first)).into_iter().next().map(|entry| CardAsk {
+                text: entry.text.trim().to_owned(),
+                why: entry.why.filter(|why| !why.trim().is_empty()),
+                options: entry.options,
+            })
+        }
+        _ => None,
+    };
+}
+
+/// What the owner's reply to the report's question types to the agent, and whether it closes every
+/// question at once (a skip or a chat does; an answer moves on to the next one).
+pub(crate) fn ledger_message(question: &Question, total: usize, reply: Reply) -> (String, bool) {
+    let closes = !matches!(reply, Reply::Answered(_));
+    let text =
+        choice::typed_message(std::slice::from_ref(question), reply, question_words::SKIP_REPLY);
+    if closes { (text, true) } else { (reply_text(&question.text, total, &text), false) }
 }
 
 /// What `given` becomes once question `step` is answered, or `None` after the last one.
@@ -78,7 +125,6 @@ pub(crate) fn reply_text(question: &str, total: usize, pick: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidewatch_core::question::{AskReply, QuestionOption};
 
     #[test]
     fn the_first_question_shows_until_the_ledger_goes_stale() {
@@ -120,90 +166,118 @@ mod tests {
         );
     }
 
-    fn claude_call(questions: Vec<Question>) -> tidewatch_core::transcript::Entry {
-        use tidewatch_core::transcript::{AskPart, Role, ToolCall, ToolPhase};
-        tidewatch_core::transcript::Entry {
-            role: Role::Tool,
-            text: String::new(),
-            tool: Some(ToolCall {
-                name: "AskUserQuestion".into(),
-                summary: String::new(),
-                id: Some("q1".into()),
-                phase: ToolPhase::Call,
-                ask: Some(AskPart::Asked(questions)),
-            }),
-            ts: None,
-            images: Vec::new(),
-        }
-    }
-
-    fn asked(text: &str, labels: &[&str]) -> Question {
-        Question {
-            text: text.into(),
-            header: None,
-            decision: None,
-            select: Select::Single,
-            options: labels.iter().map(|label| QuestionOption::new(*label)).collect(),
-        }
+    #[test]
+    fn a_needs_you_line_becomes_a_single_choice_question_with_the_agents_pick() {
+        let entry = Entry {
+            text: " Where? ".into(),
+            why: Some("it changes the cost".into()),
+            options: vec![
+                Choice { text: "Stage".into(), recommended: false },
+                Choice { text: "Run".into(), recommended: true },
+            ],
+        };
+        let question = question_of(&entry);
+        assert_eq!(question.text, "Where?");
+        assert_eq!(question.select, Select::Single);
+        let labels: Vec<&str> =
+            question.options.iter().map(|option| option.label.as_str()).collect();
+        assert_eq!(labels, ["Stage", "Run"]);
+        assert_eq!(question.picks(), [1]);
     }
 
     #[test]
-    fn a_claude_ask_user_question_call_fills_the_open_lines_with_question_options_and_pick() {
-        let mut rows = Rows::default();
-        assert_eq!(open_lines(&rows), Vec::<Entry>::new());
-        rows.push(claude_call(vec![asked("Where?", &["Stage", "Run (Recommended)"])]));
-        let lines = open_lines(&rows);
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].text, "Where?");
+    fn a_question_with_no_options_offers_done_and_not_now() {
+        let entry = Entry { text: "Ship it?".into(), why: None, options: Vec::new() };
+        let labels: Vec<String> =
+            question_of(&entry).options.into_iter().map(|o| o.label).collect();
+        assert_eq!(labels, ["Done", "Not now"]);
+    }
+
+    fn tool_question(text: &str) -> Question {
+        Question {
+            text: text.into(),
+            header: None,
+            decision: Some("it changes the cost".into()),
+            select: Select::Single,
+            options: vec![QuestionOption::new("Stage"), QuestionOption::new("Run (Recommended)")],
+        }
+    }
+
+    fn look_of(report: &str) -> Look {
+        crate::progress_model::look(&tidewatch_core::progress::Ledger::parse(report), false)
+    }
+
+    #[test]
+    fn a_lone_tool_question_is_the_overview_cards_ask_with_its_options_and_pick() {
+        let mut look = look_of("# Goal\nx\n");
+        add_tool_questions(&mut look, &[tool_question("Where?")], &[]);
+        assert_eq!(look.questions, 1);
+        let ask = look.ask.expect("a lone question can be answered from the card");
+        assert_eq!(
+            (ask.text.as_str(), ask.why.as_deref()),
+            ("Where?", Some("it changes the cost"))
+        );
         let options: Vec<(&str, bool)> =
-            lines[0].options.iter().map(|c| (c.text.as_str(), c.recommended)).collect();
+            ask.options.iter().map(|c| (c.text.as_str(), c.recommended)).collect();
         assert_eq!(options, [("Stage", false), ("Run", true)]);
     }
 
     #[test]
-    fn answering_the_question_empties_the_open_lines_again() {
-        use crate::reader_rows::Asked;
-        let mut rows = Rows::default();
-        rows.push(claude_call(vec![asked("Where?", &["Stage", "Run"])]));
-        assert_eq!(open_lines(&rows).len(), 1);
-        assert!(rows.set_asked(0, Asked::Sent(vec![("Where?".into(), "Run".into())])));
-        assert_eq!(open_lines(&rows), Vec::<Entry>::new());
+    fn tool_questions_count_with_the_reports_and_a_repeat_counts_once() {
+        let report = "# Goal\nx\n\n## Needs you\n- where?\n- Pick a name\n";
+        let mut look = look_of(report);
+        let own = tidewatch_core::progress::Ledger::parse(report).needs_you;
+        let own: Vec<&Entry> = own.iter().collect();
+        add_tool_questions(&mut look, &[tool_question("Where?")], &own);
+        assert_eq!(look.questions, 2);
+        assert!(look.ask.is_none(), "two questions wait, so a chip cannot say which it answers");
+        let mut same = look_of("# Goal\nx\n\n## Needs you\n- where?\n");
+        let lone = tidewatch_core::progress::Ledger::parse("# Goal\nx\n\n## Needs you\n- where?\n");
+        add_tool_questions(
+            &mut same,
+            &[tool_question("Where?")],
+            &lone.needs_you.iter().collect::<Vec<_>>(),
+        );
+        assert_eq!(same.questions, 1);
+        assert!(same.ask.is_some());
     }
 
     #[test]
-    fn a_held_ask_user_call_and_a_claude_menu_both_count_and_a_menu_behind_a_newer_row_does_not() {
-        let (sender, _keep) = std::sync::mpsc::channel();
-        let mut rows = Rows::default();
-        rows.push_ask(
-            vec![asked("One?", &["A", "B"]), asked("Two?", &["C", "D"])],
-            AskReply::new(sender),
-        );
-        let texts =
-            |rows: &Rows| open_lines(rows).into_iter().map(|line| line.text).collect::<Vec<_>>();
-        assert_eq!(texts(&rows), ["One?", "Two?"]);
-        rows.push(claude_call(vec![asked("Three?", &["E", "F"])]));
-        assert_eq!(texts(&rows), ["One?", "Two?", "Three?"]);
-        rows.push(tidewatch_core::transcript::Entry {
-            role: tidewatch_core::transcript::Role::Assistant,
-            text: "carrying on".into(),
-            tool: None,
-            ts: None,
-            images: Vec::new(),
+    fn no_tool_question_leaves_the_look_alone() {
+        let mut look = look_of("# Goal\nx\n\n## Needs you\n- Pick a name\n");
+        let before = look.clone();
+        add_tool_questions(&mut look, &[], &[]);
+        assert_eq!(look, before);
+    }
+
+    #[test]
+    fn the_message_an_answer_to_the_report_types_depends_on_the_reply_and_how_many_wait() {
+        let question = question_of(&Entry {
+            text: "Where?".into(),
+            why: None,
+            options: vec![
+                Choice { text: "Stage".into(), recommended: false },
+                Choice { text: "Run".into(), recommended: true },
+            ],
         });
-        assert_eq!(texts(&rows), ["One?", "Two?"]);
+        let run = || Reply::Answered(vec![Given { picked: vec![1], other: None }]);
+        let typed = Reply::Answered(vec![Given { picked: Vec::new(), other: Some("Both".into()) }]);
+        let chat = choice::chat_message("later");
+        let cases = [
+            ("a lone answer", 1, run(), ("Run".to_owned(), false)),
+            ("one of two", 2, run(), ("Q: Where?\nA: Run".to_owned(), false)),
+            ("a typed answer", 1, typed, ("Both".to_owned(), false)),
+            ("a skip", 3, Reply::Skipped, (question_words::SKIP_REPLY.to_owned(), true)),
+            ("a chat", 3, Reply::Chat(chat.clone()), (chat, true)),
+        ];
+        for (name, total, reply, want) in cases {
+            assert_eq!(ledger_message(&question, total, reply), want, "{name}");
+        }
     }
 
     #[test]
-    fn a_chip_picks_the_option_with_that_label_else_it_is_typed_and_only_a_lone_question_is_answered()
-     {
-        let lone = [asked("Where?", &["Stage", "Run (Recommended)"])];
-        assert_eq!(given_for(&lone, "Run"), Some(vec![Given { picked: vec![1], other: None }]));
-        assert_eq!(
-            given_for(&lone, "Somewhere else"),
-            Some(vec![Given { picked: Vec::new(), other: Some("Somewhere else".into()) }])
-        );
-        let two = [asked("One?", &["A", "B"]), asked("Two?", &["C", "D"])];
-        assert_eq!(given_for(&two, "A"), None);
-        assert_eq!(given_for(&[], "A"), None);
+    fn the_why_line_starts_with_a_capital() {
+        assert_eq!(sentence(" it changes the cost"), "It changes the cost");
+        assert_eq!(sentence(""), "");
     }
 }

@@ -15,7 +15,7 @@
 //!   once, as a click on a chip does; `notes` opens only the folded updates.
 //! - `TIDEWATCH_DEV_READER_SCROLL=<pixels>@<seconds>`: once, that long after startup, scroll the
 //!   transcript up from its bottom by that many pixels, as a wheel does (the jump pill shows).
-//! - `TIDEWATCH_DEV_PICK=<digit>[@<seconds>]`: press that digit once, that long after startup, to pick a ready answer.
+//! - `TIDEWATCH_DEV_PICK=<digit>[@<seconds>]`: press that digit once, that long after startup, to pick an option on the open question card.
 //! - `TIDEWATCH_DEV_HELD=<text>|<text>`: put those messages in the tab's line of held messages once,
 //!   and `TIDEWATCH_DEV_WORKING=1` shows the tab as working (a Stop button, and the line is not
 //!   typed out), for captures. `TIDEWATCH_DEV_NOT_SEEN=<text>` and `TIDEWATCH_DEV_QUEUED=<text>`
@@ -424,6 +424,7 @@ impl DevReader {
         match effect {
             Effect::Send(given) => Some(Action::Ask(seq, Reply::Answered(given))),
             Effect::Skip => Some(Action::Ask(seq, Reply::Skipped)),
+            Effect::Chat(text) => Some(Action::Ask(seq, Reply::Chat(text))),
             Effect::GoWithPicks if live.picks > 0 => Some(Action::GoWithPicks),
             Effect::Nothing | Effect::TypeOther | Effect::GoWithPicks => None,
         }

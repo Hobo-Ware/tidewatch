@@ -20,12 +20,11 @@ use tidewatch_core::transcript::Source;
 
 use crate::agent_avatar::Face;
 use crate::agent_ready::{self, Ready};
-use crate::answer_chips::Pick;
-use crate::ask_model::Ask;
-use crate::ask_view;
+use crate::ask_model::{self, Ask};
 use crate::at_files;
 use crate::brand;
 use crate::bubble_toolbar::BubbleAction;
+use crate::choice::Route;
 use crate::composer::{self, Draft, Outcome, Spec};
 use crate::due_view::{self, Facts as DueFacts};
 use crate::held_view;
@@ -36,8 +35,7 @@ use crate::pr_timeline::{self, Place};
 use crate::prompt_ghost::Ghost;
 use crate::question_bulk;
 use crate::question_card::{Card, Effect};
-use crate::question_view::{self, ChipClick, Live, PermissionClick};
-use crate::quick_reply::{self, Quick};
+use crate::question_view::{self, Live, PermissionClick};
 use crate::quiet_notes::{self, Entry};
 use crate::reader_chat_view::{self, Parent, Queue, Scene};
 use crate::reader_keys::{self, Answer};
@@ -106,8 +104,6 @@ pub(crate) struct ViewState {
     #[cfg(test)]
     settled_at: (f32, f32),
     live: Option<Live>,
-    quick: Option<(u64, Vec<Quick>)>,
-    quick_used: Option<u64>,
     expanded: HashSet<u64>,
     /// The reply each turn shows, as pages back from its newest; a turn not in it shows the newest.
     pages: HashMap<u64, usize>,
@@ -151,8 +147,6 @@ impl Default for ViewState {
             #[cfg(test)]
             settled_at: (0.0, 0.0),
             live: None,
-            quick: None,
-            quick_used: None,
             expanded: HashSet::new(),
             pages: HashMap::new(),
             tidewatch_open: HashSet::new(),
@@ -413,8 +407,8 @@ pub(crate) enum Action {
     GoWithPicks,
     /// A click on the Due today card.
     Due(due_view::Action),
-    /// A ready answer picked on the Needs you card.
-    Pick(String),
+    /// The owner answered, skipped or chose to chat about the ledger's question on the card.
+    Ledger(Reply),
     Resume,
     /// Stop the agent's turn.
     Stop,
@@ -524,18 +518,40 @@ fn live_row(rows: &Rows, turn: Turn) -> Option<&Row> {
     })
 }
 
+/// The key of the live card for the ledger's question: apart from every row's `seq` by its top bit.
+fn ledger_key(ask: &Ask) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    (ask.entry.text.trim(), ask.index, ask.total).hash(&mut hasher);
+    hasher.finish() | (1 << 63)
+}
+
 /// Keeps `state.live` on the question being shown: a new card for a new question, none when there
-/// is nothing to answer (the reply box then asks for the keyboard).
-fn sync_live(state: &mut ViewState, shown: Option<&Row>) {
-    let seq = shown.map(|row| row.seq);
+/// is nothing to answer (the reply box then asks for the keyboard). A row's question comes first;
+/// the ledger's waits behind it.
+fn sync_live(state: &mut ViewState, shown: Option<&Row>, ledger: Option<&Ask>) {
+    let seq = shown.map(|row| row.seq).or_else(|| ledger.map(ledger_key));
     if state.live.as_ref().map(|live| live.seq) == seq {
         return;
     }
     let had = state.live.is_some();
-    state.live = shown.and_then(|row| match &row.kind {
-        Kind::Question(q) => Some(Live::new(row.seq, Card::new(q.questions.clone()))),
-        _ => None,
-    });
+    state.live = match (shown, ledger) {
+        (Some(row), _) => match &row.kind {
+            Kind::Question(q) => Some(
+                Live::new(row.seq, Card::new(q.questions.clone())).routed(Route::of(&q.origin)),
+            ),
+            _ => None,
+        },
+        (None, Some(ask)) => Some(
+            Live::new(ledger_key(ask), Card::new(vec![ask_model::question_of(&ask.entry)]))
+                .routed(Route::Chat)
+                .asked_with(
+                    ask.read.clone(),
+                    ask.entry.why.as_deref().map(ask_model::sentence).filter(|why| !why.is_empty()),
+                ),
+        ),
+        (None, None) => None,
+    };
     if let Some(live) = state.live.as_mut() {
         live.recall = Recall::with_entries(state.recall.entries().to_vec());
     }
@@ -544,33 +560,18 @@ fn sync_live(state: &mut ViewState, shown: Option<&Row>) {
     }
 }
 
-/// The quick replies for the newest row when it is the agent's finished message.
-fn quick_for<'a>(rows: &Rows, state: &'a mut ViewState, facts: &Facts<'_>) -> &'a [Quick] {
-    let last = rows.iter().last();
-    let wanted = last.filter(|row| row.kind == Kind::Assistant).filter(|row| {
-        facts.turn == Turn::Finished && facts.prompt.is_none() && state.quick_used != Some(row.seq)
-    });
-    let Some(row) = wanted else {
-        state.quick = None;
-        return &[];
+/// What the Reader reports for what the owner did on the live card, along the card's route.
+fn action_for(live: &Live, effect: Effect) -> Option<Action> {
+    let ledger = live.route == Route::Chat;
+    let reply = match effect {
+        Effect::Nothing | Effect::TypeOther => return None,
+        Effect::Send(given) => Reply::Answered(given),
+        Effect::Skip => Reply::Skipped,
+        Effect::Chat(text) => Reply::Chat(text),
+        Effect::GoWithPicks if ledger => Reply::Answered(vec![live.card.question().pick_given()?]),
+        Effect::GoWithPicks => return Some(Action::GoWithPicks),
     };
-    if state.quick.as_ref().map(|(seq, _)| *seq) != Some(row.seq) {
-        state.quick = Some((row.seq, quick_reply::from_message(&row.text)));
-    }
-    state.quick.as_ref().map_or(&[][..], |(_, quick)| quick.as_slice())
-}
-
-/// The row whose place in the timeline draws row `newest`: the anchor of its turn when the turn
-/// draws it, so the quick replies follow the agent's message and not a note timed after it.
-fn chips_after(layout: &reader_turns::Layout, newest: usize) -> usize {
-    match layout.slots.get(newest) {
-        Some(Slot::Hidden) => layout
-            .groups
-            .iter()
-            .find(|group| group.texts.contains(&newest) || group.calls.contains(&newest))
-            .map_or(newest, |group| group.anchor),
-        _ => newest,
-    }
+    Some(if ledger { Action::Ledger(reply) } else { Action::Ask(live.seq, reply) })
 }
 
 /// The tool call waiting for permission as (tool, what it does), when the newest row is one.
@@ -616,7 +617,8 @@ pub(crate) fn show(
     }
     state.last_pass = Some(pass);
     let shown = live_row(rows, facts.turn);
-    sync_live(state, shown);
+    let ledger_ask = facts.ask.filter(|_| shown.is_none() && facts.prompt.is_none());
+    sync_live(state, shown, ledger_ask);
     let live_seq = state.live.as_ref().map(|live| live.seq);
     let composing = facts.ready.filter(|_| rows.len() == 0 && facts.prompt.is_none());
     let card_open = state.live.as_ref().is_some_and(|live| !live.is_folded());
@@ -633,23 +635,15 @@ pub(crate) fn show(
     let above = input.top() - reason_h;
     let dock_h = dock_height(facts, rows, state.live.as_ref());
     let strip = Rect::from_min_max(pos2(rect.left(), above - dock_h), pos2(rect.right(), above));
-    let asked = facts
-        .ask
-        .filter(|_| dock_h == 0.0)
-        .map(|ask| (ask, ask_view::lay_out(ui, rect.width(), ask)));
-    let ask_h =
-        asked.as_ref().map_or(0.0, |(_, laid)| laid.band(rect.height() - input_h - reason_h));
-    let ask_band =
-        Rect::from_min_max(pos2(rect.left(), strip.top() - ask_h), pos2(rect.right(), strip.top()));
     let review_h = facts.review.as_ref().map_or(0.0, |review| {
-        review_view::height(review.draft, rect.height() - input_h - reason_h - dock_h - ask_h)
+        review_view::height(review.draft, rect.height() - input_h - reason_h - dock_h)
     });
     let review_band = Rect::from_min_max(
-        pos2(rect.left(), ask_band.top() - review_h),
-        pos2(rect.right(), ask_band.top()),
+        pos2(rect.left(), strip.top() - review_h),
+        pos2(rect.right(), strip.top()),
     );
     let due_h = facts.due.map_or(0.0, |due| {
-        due_view::height(due.due, rect.height() - input_h - reason_h - dock_h - ask_h - review_h)
+        due_view::height(due.due, rect.height() - input_h - reason_h - dock_h - review_h)
     });
     let due_band = Rect::from_min_max(
         pos2(rect.left(), review_band.top() - due_h),
@@ -658,7 +652,7 @@ pub(crate) fn show(
     if state.held_edit.as_ref().is_some_and(|(id, _)| state.line.text_of(*id).is_none()) {
         state.held_edit = None;
     }
-    let free_h = rect.height() - input_h - reason_h - dock_h - ask_h - review_h - due_h;
+    let free_h = rect.height() - input_h - reason_h - dock_h - review_h - due_h;
     let held_h = held_view::height(ui, rect.width(), (state.line.len(), state.held_edit.is_some()))
         .min((free_h / 2.0).max(0.0));
     let held_band = Rect::from_min_max(
@@ -718,15 +712,6 @@ pub(crate) fn show(
         let asked = review_view::show(ui, review_band, &mut state.review, review);
         actions.extend(asked.into_iter().map(Action::Review));
     }
-    if let Some((ask, laid)) = asked.as_ref().filter(|_| ask_h > 0.0) {
-        let reply = if composing.is_some() { agent_ready::composer_id() } else { reply_id() };
-        let empty = state.reply.trim().is_empty();
-        match ask_view::show(ui, ask_band, laid, ask, (reply, empty)) {
-            Some(Pick::Answer(text)) => actions.push(Action::Pick(text)),
-            Some(Pick::Other) => state.focus_reply = true,
-            None => {}
-        }
-    }
     state.composing = composing.is_some();
     if let Some(ready) = composing {
         agent_ready::empty_state(ui, body, ready);
@@ -739,43 +724,29 @@ pub(crate) fn show(
         }
         return actions;
     }
-    let quick = quick_for(rows, state, facts).to_vec();
-    let chips = transcript(
+    transcript(
         ui,
         body,
         rows,
         state,
         (facts.tab, facts.root, facts.pr),
         facts.review.as_ref(),
-        (live_seq, &quick, facts.profile),
+        (live_seq, facts.profile),
         (facts.face, facts.turn == Turn::Running, facts.prompt == Some(Prompt::Permission)),
         None,
         &mut actions,
     );
-    match chips {
-        Some(ChipClick::Send(text)) => {
-            state.quick_used = rows.newest_seq();
-            actions.push(Action::Reply(text));
-            state.jump_to_latest();
-        }
-        Some(ChipClick::Reply) => state.focus_reply = true,
-        None => {}
-    }
     let mut reply_enabled = facts.prompt.is_none() && facts.reply_blocked.is_none();
     if let Some(live) = state.live.as_mut() {
-        let tidewatch = shown.is_some_and(|row| {
-            matches!(&row.kind, Kind::Question(q) if matches!(q.origin, Origin::Tidewatch(_)))
-        });
-        reply_enabled = tidewatch && facts.reply_blocked.is_none();
+        reply_enabled = live.route != Route::ClaudeMenu && facts.reply_blocked.is_none();
         let grab = card_open || state.reply.trim().is_empty();
-        live.picks = question_bulk::plan(rows).count();
+        live.picks = match live.route {
+            Route::Chat => usize::from(live.card.question().pick_given().is_some()),
+            Route::ClaudeMenu | Route::HeldCall => question_bulk::plan(rows).count(),
+        };
         let dock = Rect::from_min_max(rect.min, pos2(rect.right(), above));
-        match question_view::live_card(ui, dock, live, facts.profile, grab) {
-            Effect::Send(given) => actions.push(Action::Ask(live.seq, Reply::Answered(given))),
-            Effect::Skip => actions.push(Action::Ask(live.seq, Reply::Skipped)),
-            Effect::GoWithPicks => actions.push(Action::GoWithPicks),
-            Effect::Nothing | Effect::TypeOther => {}
-        }
+        let effect = question_view::live_card(ui, dock, live, facts.profile, grab);
+        actions.extend(action_for(live, effect));
     } else if let Some(prompt) = facts.prompt {
         actions.extend(prompt_strip(
             ui,
@@ -855,7 +826,7 @@ pub(crate) fn show_chat(
         state,
         (facts.key, None, None),
         None,
-        (None, &[], facts.agent),
+        (None, facts.agent),
         (Some(&face), facts.running, false),
         Some(facts.parent),
         &mut unsent,
@@ -890,12 +861,11 @@ fn transcript(
     state: &mut ViewState,
     (tab, root, pr): (u64, Option<&Path>, Option<PrData<'_>>),
     review: Option<&ReviewFacts<'_>>,
-    (live_seq, quick, profile): (Option<u64>, &[Quick], &str),
+    (live_seq, profile): (Option<u64>, &str),
     (face, running, waiting): (Option<&Face>, bool, bool),
     parent: Option<Parent<'_>>,
     actions: &mut Vec<Action>,
-) -> Option<ChipClick> {
-    let mut chip_click = None;
+) {
     if rows.len() == 0 {
         ui.painter().text(
             body.center(),
@@ -904,7 +874,7 @@ fn transcript(
             FontId::proportional(14.0),
             brand::MUTED,
         );
-        return None;
+        return;
     }
     let pointer = ui.input(|i| i.pointer.interact_pos());
     let scrolled_up =
@@ -953,7 +923,7 @@ fn transcript(
         fresh_after_ms,
         ..
     } = state;
-    let (_, _, layout) = turns.as_ref()?;
+    let Some((_, _, layout)) = turns.as_ref() else { return };
     let scene = Scene {
         root,
         pastes: pastes.as_deref(),
@@ -1010,20 +980,7 @@ fn transcript(
                 }
                 _ => None,
             };
-            let chips_at = list.len().checked_sub(1).map(|newest| chips_after(layout, newest));
-            let mut chips_due = false;
-            let mut chips_drawn = quick.is_empty();
-            let mut draw_chips = |ui: &mut egui::Ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(INSET);
-                    ui.vertical(|ui| chip_click = question_view::quick_chips(ui, quick));
-                });
-            };
             for entry in quiet_notes::fold(shown, quiet_of) {
-                if std::mem::take(&mut chips_due) {
-                    draw_chips(ui);
-                    chips_drawn = true;
-                }
                 let top = ui.next_widget_position().y;
                 let place = match entry {
                     Entry::Quiet(run) => {
@@ -1055,8 +1012,6 @@ fn transcript(
                     }
                     Entry::Place(place) => place,
                 };
-                chips_due =
-                    !chips_drawn && matches!(place, Place::Row(index) if Some(index) == chips_at);
                 let (key, height) = match place {
                     Place::Row(index) => match layout.slots[index] {
                         Slot::Group(n) => {
@@ -1212,10 +1167,6 @@ fn transcript(
                     }
                 }
             }
-            if chips_due {
-                draw_chips(ui);
-                chips_drawn = true;
-            }
             let time = ui.input(|i| i.time);
             for (n, queued) in rows.queued().enumerate() {
                 let stale = queued.not_seen(now_ms());
@@ -1262,9 +1213,6 @@ fn transcript(
                 });
                 actions.extend(tail.inner.inner.map(Action::Pr));
             }
-            if !chips_drawn {
-                draw_chips(ui);
-            }
             ui.add_space(12.0);
             if scroll_down {
                 ui.scroll_to_cursor_animation(Some(Align::BOTTOM), ScrollAnimation::none());
@@ -1295,7 +1243,6 @@ fn transcript(
         state.stick_pending = true;
         ui.ctx().request_repaint();
     }
-    chip_click
 }
 
 fn draw_row(
@@ -2568,89 +2515,272 @@ mod tests {
         assert!(state.live.is_none());
     }
 
-    #[test]
-    fn a_finished_message_that_ends_with_a_yes_or_no_question_gets_quick_replies_once() {
+    struct CardRun {
+        ctx: egui::Context,
+        state: ViewState,
+        texts: Vec<(String, Rect)>,
+        actions: Vec<Action>,
+    }
+
+    impl CardRun {
+        fn new() -> Self {
+            Self {
+                ctx: crate::fonts::test_context(),
+                state: ViewState::default(),
+                texts: Vec::new(),
+                actions: Vec::new(),
+            }
+        }
+
+        fn frame(&mut self, rows: &Rows, facts: &Facts<'_>, events: Vec<Event>) {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 800.0))),
+                events,
+                focused: true,
+                ..RawInput::default()
+            };
+            let state = &mut self.state;
+            let mut asked = Vec::new();
+            let output = self.ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                asked = show(ui, rect, rows, state, facts);
+            });
+            self.actions.extend(asked);
+            self.texts.clear();
+            for clipped in &output.shapes {
+                crate::test_support::painted_text_rects_nonblank(&clipped.shape, &mut self.texts);
+            }
+        }
+
+        fn settle(&mut self, rows: &Rows, facts: &Facts<'_>) {
+            for _ in 0..4 {
+                self.frame(rows, facts, vec![]);
+            }
+        }
+
+        fn has(&self, text: &str) -> bool {
+            self.texts.iter().any(|(shown, _)| shown.contains(text))
+        }
+
+        fn click(&mut self, rows: &Rows, facts: &Facts<'_>, text: &str) {
+            let Some((_, found)) = self.texts.iter().find(|(shown, _)| shown == text) else {
+                panic!("{text:?} is not drawn: {:?}", self.texts);
+            };
+            let at = found.center();
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(rows, facts, vec![Event::PointerMoved(at)]);
+            self.frame(rows, facts, vec![button(true)]);
+            self.frame(rows, facts, vec![button(false)]);
+        }
+    }
+
+    fn said_rows() -> Rows {
         use tidewatch_core::transcript::{Entry, Role};
         let mut rows = Rows::default();
         rows.push(Entry {
             role: Role::Assistant,
-            text: "Tests pass. Should I also update the README?".into(),
+            text: "Done with the first part.".into(),
             tool: None,
             ts: None,
             images: Vec::new(),
         });
-        let mut state = ViewState::default();
-        draw(&rows, &mut state, &facts(None, Turn::Finished));
-        let labels: Vec<&str> =
-            state.quick.as_ref().unwrap().1.iter().map(|q| q.label.as_str()).collect();
-        assert_eq!(labels, ["Yes", "No"]);
-        let mut working = ViewState::default();
-        draw(&rows, &mut working, &facts(None, Turn::Running));
-        assert!(working.quick.is_none(), "no chips while the agent works");
-        state.quick_used = rows.newest_seq();
-        draw(&rows, &mut state, &facts(None, Turn::Finished));
-        assert!(state.quick.is_none(), "a used chip row does not come back");
+        rows
+    }
+
+    fn report_question() -> Ask {
+        use tidewatch_core::progress::{Choice, Entry};
+        Ask {
+            entry: Entry {
+                text: "Post the follow-up?".into(),
+                why: Some("the owner wanted it out today".into()),
+                options: vec![
+                    Choice { text: "Post it".into(), recommended: true },
+                    Choice { text: "Draft only".into(), recommended: false },
+                ],
+            },
+            index: 0,
+            total: 1,
+            read: Vec::new(),
+        }
+    }
+
+    use tidewatch_core::question::Given;
+
+    const CHAT: &str = "Let's chat about this";
+
+    #[test]
+    fn the_reports_question_is_drawn_as_the_one_card_and_never_as_a_second_kind() {
+        let (rows, ask) = (said_rows(), report_question());
+        let facts = Facts { ask: Some(&ask), ..facts(None, Turn::Finished) };
+        let mut card = CardRun::new();
+        card.settle(&rows, &facts);
+        let live = card.state.live.as_ref().expect("the report's question gets the one card");
+        assert_eq!(live.route, Route::Chat);
+        assert!(live.is_folded());
+        assert!(card.has("Builder asks:"), "{:?}", card.texts);
+        assert!(!card.has("NEEDS YOU"), "no second card kind: {:?}", card.texts);
+        card.state.live.as_mut().expect("the card").open();
+        card.settle(&rows, &facts);
+        for want in ["Post it", "Draft only", "Something else", CHAT] {
+            assert!(card.has(want), "{want:?} in {:?}", card.texts);
+        }
+        assert!(card.has("The owner wanted it out today"), "the why line is the card's detail");
+        assert!(!card.has("NEEDS YOU"));
     }
 
     #[test]
-    fn quick_replies_sit_under_the_agents_question_above_a_tidewatch_note_timed_after_it() {
-        use tidewatch_core::sent::{Reason, Record};
-        use tidewatch_core::transcript::{Entry, Role, ToolCall};
+    fn chatting_about_the_reports_question_asks_the_app_to_close_it_with_the_chat_message() {
+        let (rows, ask) = (said_rows(), report_question());
+        let facts = Facts { ask: Some(&ask), ..facts(None, Turn::Finished) };
+        let mut card = CardRun::new();
+        card.settle(&rows, &facts);
+        card.state.live.as_mut().expect("the card").open();
+        card.settle(&rows, &facts);
+        card.click(&rows, &facts, CHAT);
+        assert_eq!(
+            card.actions,
+            [Action::Ledger(Reply::Chat(crate::choice::CHAT_TEXT.to_owned()))]
+        );
+    }
+
+    #[test]
+    fn picking_an_option_of_the_reports_question_goes_to_the_ledger_route_not_a_menu() {
+        let (rows, ask) = (said_rows(), report_question());
+        let facts = Facts { ask: Some(&ask), ..facts(None, Turn::Finished) };
+        let mut card = CardRun::new();
+        card.settle(&rows, &facts);
+        card.state.live.as_mut().expect("the card").open();
+        card.settle(&rows, &facts);
+        card.click(&rows, &facts, "Draft only");
+        card.click(&rows, &facts, "Send answer");
+        let given = Given { picked: vec![1], other: None };
+        assert_eq!(card.actions, [Action::Ledger(Reply::Answered(vec![given]))]);
+    }
+
+    #[test]
+    fn a_claude_question_is_the_same_card_and_chatting_closes_its_menu_row() {
+        use tidewatch_core::transcript::ToolPhase;
         let mut rows = Rows::default();
-        let entry = |role, text: &str, tool: Option<ToolCall>, ts| Entry {
-            role,
-            text: text.into(),
-            tool,
-            ts: Some(ts),
+        rows.push(question_entry(ToolPhase::Call));
+        let ask = report_question();
+        let facts = Facts { ask: Some(&ask), ..facts(Some(Prompt::Question), Turn::Running) };
+        let mut card = CardRun::new();
+        card.settle(&rows, &facts);
+        let live = card.state.live.as_ref().expect("the menu's card");
+        assert_eq!((live.seq, live.route), (0, Route::ClaudeMenu), "a row wins over the report");
+        card.state.live.as_mut().expect("the card").open();
+        card.settle(&rows, &facts);
+        assert!(card.has("Where?") && !card.has("Post the follow-up?"), "{:?}", card.texts);
+        card.click(&rows, &facts, CHAT);
+        assert_eq!(
+            card.actions,
+            [Action::Ask(0, Reply::Chat(crate::choice::CHAT_TEXT.to_owned()))]
+        );
+    }
+
+    #[test]
+    fn a_held_ask_user_call_chats_through_its_row_too() {
+        use tidewatch_core::question::{AskReply, Question, QuestionOption, Select};
+        let mut rows = Rows::default();
+        let (sender, _keep) = std::sync::mpsc::channel();
+        rows.push_ask(
+            vec![Question {
+                text: "Which base?".into(),
+                header: None,
+                decision: None,
+                select: Select::Single,
+                options: vec![QuestionOption::new("main"), QuestionOption::new("dev")],
+            }],
+            AskReply::new(sender),
+        );
+        let facts = facts(None, Turn::Finished);
+        let mut card = CardRun::new();
+        card.settle(&rows, &facts);
+        assert_eq!(card.state.live.as_ref().map(|live| live.route), Some(Route::HeldCall));
+        card.state.live.as_mut().expect("the card").open();
+        card.settle(&rows, &facts);
+        card.click(&rows, &facts, CHAT);
+        assert_eq!(
+            card.actions,
+            [Action::Ask(0, Reply::Chat(crate::choice::CHAT_TEXT.to_owned()))]
+        );
+    }
+
+    #[test]
+    fn a_permission_prompt_has_the_card_look_with_allow_and_deny_and_no_chat_button() {
+        use tidewatch_core::transcript::{Entry, Role, ToolCall, ToolPhase};
+        let mut rows = Rows::default();
+        rows.push(Entry {
+            role: Role::Tool,
+            text: String::new(),
+            tool: Some(ToolCall {
+                name: "Bash".into(),
+                summary: "cargo test".into(),
+                id: Some("b1".into()),
+                phase: ToolPhase::Call,
+                ask: None,
+            }),
+            ts: None,
             images: Vec::new(),
-        };
-        rows.push(entry(Role::User, "Fix the crash", None, 1_000));
-        rows.push(entry(Role::Assistant, "Looking.", None, 2_000));
-        rows.push(entry(Role::Assistant, "Fixed. Should I also update the README?", None, 3_000));
-        let note = Record {
-            at_ms: 4_000,
-            ..Record::new(Reason::Avatar, "the tab has a goal", "Also call set_avatar.", None)
-        };
-        rows.tidewatch_said(vec![note]);
-        let ctx = crate::fonts::test_context();
-        let mut state = ViewState::default();
-        let mut texts = Vec::new();
-        for _ in 0..4 {
-            let raw = RawInput {
-                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 700.0))),
-                focused: true,
-                ..RawInput::default()
-            };
-            let output = ctx.run_ui(raw, |ui| {
-                let rect = ui.max_rect();
-                let _ = show(ui, rect, &rows, &mut state, &facts(None, Turn::Finished));
-            });
-            texts.clear();
-            for shape in &output.shapes {
-                crate::test_support::painted_text_rects_nonblank(&shape.shape, &mut texts);
-            }
-        }
-        let find = |text: &str| {
-            texts.iter().find(|(drawn, _)| drawn.contains(text)).map(|(_, rect)| *rect)
-        };
-        let question = find("update the README?").expect("the question is drawn");
-        let yes = find("Yes").expect("the chips are drawn");
-        let told = find("Tidewatch asked for an avatar").expect("the note is drawn");
-        assert!(question.bottom() <= yes.top(), "{question:?} {yes:?}");
-        assert!(yes.bottom() <= told.top(), "the chips come before the note: {yes:?} {told:?}");
+        });
+        let ask = report_question();
+        let facts = Facts { ask: Some(&ask), ..facts(Some(Prompt::Permission), Turn::Running) };
+        let mut card = CardRun::new();
+        card.settle(&rows, &facts);
+        assert!(card.state.live.is_none(), "a prompt is not a choice");
+        assert!(card.has("Needs your OK") && card.has("Allow once") && card.has("Deny"));
+        assert!(!card.has(CHAT) && !card.has("Post the follow-up?"), "{:?}", card.texts);
     }
 
     #[test]
-    fn the_chips_follow_the_turn_that_draws_the_newest_row() {
-        use tidewatch_core::transcript::{Entry, Role};
-        let mut rows = Rows::default();
-        for (role, text) in [(Role::User, "Go"), (Role::Assistant, "a"), (Role::Assistant, "b?")] {
-            rows.push(Entry { role, text: text.into(), tool: None, ts: None, images: Vec::new() });
+    fn a_report_question_waits_while_a_prompt_shows_and_comes_back_after() {
+        let (rows, ask) = (said_rows(), report_question());
+        let mut card = CardRun::new();
+        let prompt = Facts { ask: Some(&ask), ..facts(Some(Prompt::Question), Turn::Running) };
+        card.settle(&rows, &prompt);
+        assert!(card.state.live.is_none());
+        let clear = Facts { ask: Some(&ask), ..facts(None, Turn::Finished) };
+        card.settle(&rows, &clear);
+        assert!(card.state.live.is_some());
+    }
+
+    #[test]
+    fn what_the_owner_did_on_the_card_goes_to_its_route() {
+        let given = vec![Given { picked: vec![0], other: None }];
+        let question = ask_model::question_of(&report_question().entry);
+        let row_live = Live::new(4, Card::new(vec![question.clone()]));
+        let ledger_live = Live::new(1 << 63, Card::new(vec![question])).routed(Route::Chat);
+        let cases = [
+            (
+                &row_live,
+                Effect::Send(given.clone()),
+                Some(Action::Ask(4, Reply::Answered(given.clone()))),
+            ),
+            (&row_live, Effect::Skip, Some(Action::Ask(4, Reply::Skipped))),
+            (&row_live, Effect::Chat("c".into()), Some(Action::Ask(4, Reply::Chat("c".into())))),
+            (&row_live, Effect::GoWithPicks, Some(Action::GoWithPicks)),
+            (&row_live, Effect::Nothing, None),
+            (
+                &ledger_live,
+                Effect::Send(given.clone()),
+                Some(Action::Ledger(Reply::Answered(given.clone()))),
+            ),
+            (&ledger_live, Effect::Skip, Some(Action::Ledger(Reply::Skipped))),
+            (
+                &ledger_live,
+                Effect::GoWithPicks,
+                Some(Action::Ledger(Reply::Answered(given.clone()))),
+            ),
+            (&ledger_live, Effect::Chat("c".into()), Some(Action::Ledger(Reply::Chat("c".into())))),
+        ];
+        for (live, effect, want) in cases {
+            assert_eq!(action_for(live, effect.clone()), want, "{:?} {effect:?}", live.route);
         }
-        let layout = reader_turns::layout(&rows);
-        assert_eq!(layout.slots, [Slot::Plain, Slot::Group(0), Slot::Hidden]);
-        assert_eq!(chips_after(&layout, 2), 1, "a hidden row is drawn at its turn's anchor");
-        assert_eq!(chips_after(&layout, 0), 0, "a plain row is drawn at its own place");
     }
 
     struct Frames {

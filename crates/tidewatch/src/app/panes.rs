@@ -164,6 +164,8 @@ impl Tidewatch {
         let marks = self.panel.marks(active_id, now_ms);
         let checks = self.panel.checks(active_id);
         let side = self.side_layout();
+        let open: Vec<String> =
+            self.open_tool_questions(active_id).into_iter().map(|question| question.text).collect();
         let view = self.views.get_mut(&active_id);
         let agent = self.tabs.items()[self.tabs.active()].pane.agent.as_ref();
         let status = agent.map(|agent| agent.run.status().clone());
@@ -191,6 +193,7 @@ impl Tidewatch {
             let known = self.progress.ledger(active_id);
             let links = self.link_live.board(active_id);
             if known.is_none()
+                && open.is_empty()
                 && cards.is_empty()
                 && meeseeks_card.is_none()
                 && last_turn.is_none()
@@ -200,6 +203,7 @@ impl Tidewatch {
             }
             let input = progress_view::Input {
                 ledger: known,
+                open: &open,
                 stale,
                 jobs: &cards,
                 now_ms,

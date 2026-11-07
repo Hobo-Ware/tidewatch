@@ -174,6 +174,8 @@ pub struct Given {
 pub enum Reply {
     Answered(Vec<Given>),
     Skipped,
+    /// The user closed the choice to talk it through: this message is the whole answer.
+    Chat(String),
 }
 
 /// The answer of one question as one line: the picked labels, then the typed text.
