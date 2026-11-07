@@ -8,7 +8,7 @@ use crate::link_board::Link;
 use crate::progress::Ledger;
 use crate::question::{AskReply, Question};
 use crate::services_mcp::ServiceCall;
-use crate::status::HookEvent;
+use crate::status::{HookEvent, Scheduled};
 
 /// Asks the UI for a redraw from a background thread. The app passes `ctx.request_repaint`.
 pub type Repaint = Box<dyn Fn() + Send + Sync>;
@@ -47,6 +47,8 @@ pub enum TabEvent {
     },
     /// A background Bash call started or ended (see `background::from_hook`).
     Background(Signal),
+    /// The agent arranged to be woken up later (see `status::scheduled_from_hook`).
+    Scheduled(Scheduled),
     MeeseeksDone {
         summary: String,
     },

@@ -41,7 +41,7 @@ use crate::paths::{
     sent_file_beside,
 };
 use crate::sent::{self, Reason, Record, because};
-use crate::status::parse_hook;
+use crate::status::{parse_hook, scheduled_from_hook};
 use crate::workflow_detect;
 use crate::{name_ask, progress_store, prompt_answer};
 
@@ -558,6 +558,9 @@ fn hook_route(shared: &Shared, entry: &Entry, agent: &str, request: &Request) ->
     };
     if let Some(signal) = background::from_hook(agent, &payload) {
         shared.emit(entry, TabEvent::Background(signal));
+    }
+    if let Some(scheduled) = scheduled_from_hook(agent, &payload) {
+        shared.emit(entry, TabEvent::Scheduled(scheduled));
     }
     if let Some(event) = parse_hook(agent, &payload) {
         shared.emit(entry, TabEvent::Hook(event));

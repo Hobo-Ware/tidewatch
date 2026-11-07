@@ -174,8 +174,8 @@ struct Lane {
     hold_until: Option<f64>,
     queue: VecDeque<Send>,
     auto_sends: u32,
-    /// How many keep-going messages went in a row while the owner was away.
-    going: u32,
+    /// How many times the owner has written to this agent.
+    spoke: u32,
     no_box_since: Option<f64>,
     typed_since: Option<f64>,
 }
@@ -358,26 +358,13 @@ impl Outbox {
     }
 
     pub(crate) fn user_spoke(&mut self, tab: u64) {
-        if let Some(lane) = self.lanes.get_mut(&tab) {
-            lane.auto_sends = 0;
-            lane.going = 0;
-        }
+        let lane = self.lane(tab);
+        lane.auto_sends = 0;
+        lane.spoke = lane.spoke.wrapping_add(1);
     }
 
-    pub(crate) fn going(&self, tab: u64) -> u32 {
-        self.lanes.get(&tab).map_or(0, |lane| lane.going)
-    }
-
-    pub(crate) fn set_going(&mut self, tab: u64, going: u32) {
-        if going > 0 || self.lanes.contains_key(&tab) {
-            self.lane(tab).going = going;
-        }
-    }
-
-    pub(crate) fn reset_going(&mut self) {
-        for lane in self.lanes.values_mut() {
-            lane.going = 0;
-        }
+    pub(crate) fn spoke(&self, tab: u64) -> u32 {
+        self.lanes.get(&tab).map_or(0, |lane| lane.spoke)
     }
 
     pub(crate) fn paused(&self, tab: u64) -> bool {
@@ -520,16 +507,13 @@ mod tests {
     }
 
     #[test]
-    fn the_keep_going_count_is_kept_per_tab_and_the_owner_speaking_or_a_reset_clears_it() {
+    fn the_owner_speaking_is_counted_per_tab() {
         let mut outbox = Outbox::default();
-        assert_eq!(outbox.going(TAB), 0);
-        outbox.set_going(TAB, 2);
-        outbox.set_going(TAB + 1, 1);
-        assert_eq!((outbox.going(TAB), outbox.going(TAB + 1)), (2, 1));
+        assert_eq!(outbox.spoke(TAB), 0);
         outbox.user_spoke(TAB);
-        assert_eq!((outbox.going(TAB), outbox.going(TAB + 1)), (0, 1));
-        outbox.reset_going();
-        assert_eq!(outbox.going(TAB + 1), 0);
+        outbox.user_spoke(TAB);
+        outbox.user_spoke(TAB + 1);
+        assert_eq!((outbox.spoke(TAB), outbox.spoke(TAB + 1)), (2, 1));
     }
 
     #[test]

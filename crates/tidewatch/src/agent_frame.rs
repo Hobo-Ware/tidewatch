@@ -12,7 +12,7 @@ use tidewatch_core::job::Report;
 use tidewatch_core::link_board::Link;
 use tidewatch_core::progress::Ledger;
 use tidewatch_core::services_mcp::ServiceCall;
-use tidewatch_core::status::HookKind;
+use tidewatch_core::status::{HookKind, Scheduled};
 use tidewatch_core::transcript::Source;
 
 use crate::agent_run::{Change, Finding, Settle, TermSnapshot};
@@ -82,6 +82,11 @@ pub(crate) enum Follow {
         tab: u64,
         signal: Signal,
     },
+    /// The agent arranged to be woken up later.
+    Scheduled {
+        tab: u64,
+        what: Scheduled,
+    },
     MeeseeksDone {
         tab: u64,
         summary: String,
@@ -130,6 +135,7 @@ pub(crate) fn route<T>(tabs: &mut Tabs<Pane<T>>, message: TabMessage, now: f64) 
         TabEvent::Background(signal) => {
             Some(Follow::Background { tab: message.tab_id, signal: signal.clone() })
         }
+        TabEvent::Scheduled(what) => Some(Follow::Scheduled { tab: message.tab_id, what: *what }),
         TabEvent::Avatar { avatar } => {
             Some(Follow::Avatar { tab: message.tab_id, avatar: Box::new(avatar.clone()) })
         }

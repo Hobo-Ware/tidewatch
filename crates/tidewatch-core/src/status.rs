@@ -228,6 +228,42 @@ fn parse_copilot_event(object: &serde_json::Map<String, Value>) -> Option<HookEv
     Some(event)
 }
 
+/// How an agent arranged to be woken up later, read from the hook of the tool call that did it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scheduled {
+    /// A one-shot cron job or wake-up.
+    Once,
+    /// A cron job that fires again and again until it is deleted.
+    Recurring,
+    /// A Monitor, or a Bash or Agent call in the background, that notifies the agent when it ends.
+    Background,
+    /// The agent deleted a cron job.
+    Cancelled,
+}
+
+/// The wake-up a Claude `PreToolUse` hook sets up (tool names and input checked on Claude Code
+/// 2.1.319): `CronCreate` takes `recurring`, true when left out; `ScheduleWakeup` is one-shot.
+#[must_use]
+pub fn scheduled_from_hook(agent: &str, payload: &Value) -> Option<Scheduled> {
+    if agent != "claude" || payload.get("hook_event_name")?.as_str()? != "PreToolUse" {
+        return None;
+    }
+    let input = payload.get("tool_input").unwrap_or(&Value::Null);
+    let in_background = input.get("run_in_background").and_then(Value::as_bool) == Some(true);
+    match payload.get("tool_name")?.as_str()? {
+        "CronCreate" => Some(if input.get("recurring").and_then(Value::as_bool) == Some(false) {
+            Scheduled::Once
+        } else {
+            Scheduled::Recurring
+        }),
+        "ScheduleWakeup" => Some(Scheduled::Once),
+        "CronDelete" => Some(Scheduled::Cancelled),
+        "Monitor" => Some(Scheduled::Background),
+        "Bash" | "Agent" | "Task" if in_background => Some(Scheduled::Background),
+        _ => None,
+    }
+}
+
 /// A shell call is keyed by its command alone: Codex's prompt carries a description its `PostToolUse` lacks.
 fn tool_key(object: &serde_json::Map<String, Value>) -> Option<String> {
     let tool = text(object.get("tool_name"))?;
@@ -1586,6 +1622,65 @@ mod tests {
 
     fn claude_hook(payload: &Value) -> HookEvent {
         parse_hook("claude", payload).unwrap()
+    }
+
+    #[test]
+    fn a_claude_tool_call_that_schedules_a_wake_up_says_which_kind() {
+        let pre = |tool: &str, input: Value| json!({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": input});
+        let cases = [
+            (
+                "one-shot cron",
+                pre("CronCreate", json!({"cron": "0 8 * * *", "recurring": false})),
+                Some(Scheduled::Once),
+            ),
+            (
+                "recurring cron",
+                pre("CronCreate", json!({"cron": "*/5 * * * *", "recurring": true})),
+                Some(Scheduled::Recurring),
+            ),
+            (
+                "cron left to default",
+                pre("CronCreate", json!({"cron": "*/5 * * * *"})),
+                Some(Scheduled::Recurring),
+            ),
+            ("wake-up", pre("ScheduleWakeup", json!({"delaySeconds": 600})), Some(Scheduled::Once)),
+            ("cron delete", pre("CronDelete", json!({"id": "x"})), Some(Scheduled::Cancelled)),
+            (
+                "monitor",
+                pre("Monitor", json!({"command": "tail -f log"})),
+                Some(Scheduled::Background),
+            ),
+            (
+                "background bash",
+                pre("Bash", json!({"command": "cargo test", "run_in_background": true})),
+                Some(Scheduled::Background),
+            ),
+            (
+                "background agent",
+                pre("Agent", json!({"prompt": "x", "run_in_background": true})),
+                Some(Scheduled::Background),
+            ),
+            ("foreground bash", pre("Bash", json!({"command": "ls"})), None),
+            (
+                "bash not in background",
+                pre("Bash", json!({"command": "ls", "run_in_background": false})),
+                None,
+            ),
+            ("another tool", pre("Read", json!({"file_path": "x"})), None),
+            (
+                "after the call",
+                json!({"hook_event_name": "PostToolUse", "tool_name": "CronCreate", "tool_input": {}}),
+                None,
+            ),
+            ("no tool", json!({"hook_event_name": "PreToolUse"}), None),
+        ];
+        for (what, payload, want) in cases {
+            assert_eq!(scheduled_from_hook("claude", &payload), want, "{what}");
+        }
+        let cron = pre("CronCreate", json!({"recurring": false}));
+        for agent in ["codex", "gemini", "copilot"] {
+            assert_eq!(scheduled_from_hook(agent, &cron), None, "{agent}");
+        }
     }
 
     fn permission_for_bash() -> Vec<HookEvent> {

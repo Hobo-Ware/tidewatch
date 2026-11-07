@@ -114,6 +114,7 @@ impl Tidewatch {
                 self.job_live.background(tab, signal, wall_ms() as i64);
                 ctx.request_repaint();
             }
+            Follow::Scheduled { tab, what } => self.away_watch.scheduled(tab, what),
             Follow::Services { tab, call } => self.serve_services(tab, call, ctx),
             Follow::Job { tab, report } => {
                 self.job_live.report(tab, *report, wall_ms() as i64);

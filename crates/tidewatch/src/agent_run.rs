@@ -375,6 +375,7 @@ impl AgentRun {
             | TabEvent::Links { .. }
             | TabEvent::Job { .. }
             | TabEvent::Background(_)
+            | TabEvent::Scheduled(_)
             | TabEvent::Avatar { .. }
             | TabEvent::MeeseeksDone { .. }
             | TabEvent::TabName { .. }
