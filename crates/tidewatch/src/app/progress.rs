@@ -5,6 +5,7 @@ use tidewatch_core::background;
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::job::{Agent, JobBoard};
 use tidewatch_core::progress::Ledger;
+use tidewatch_core::question::{Given, Question, Reply};
 
 use jiff::tz::TimeZone;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use super::settings::open_in_editor;
 use super::{Tidewatch, wall_ms};
 use crate::agent_avatar;
 use crate::ask_model::{self, Ask};
+use crate::choice;
 use crate::coming_up::coming_up;
 use crate::due::{
     Due, Key, ask_blocked, ask_text, due_items, next_to_start, secs_to_midnight, tell_all,
@@ -28,7 +30,7 @@ use crate::overview_checklist::Source;
 use crate::pane::{AgentTab, Body};
 use crate::panel_blocks::{Blocks, Kept, contradicted};
 use crate::progress_glue::today;
-use crate::progress_model::{ItemRow, ask_of, look, look_as, questions, stage_rows};
+use crate::progress_model::{ItemRow, look, look_as, questions, stage_rows};
 use crate::progress_state::Facts;
 use crate::reader_glue::Opened;
 use crate::status_view::state_of;
@@ -77,18 +79,6 @@ impl Tidewatch {
             })
             .collect();
         self.progress.tick(&facts, ctx);
-        let now_ms = wall_ms() as i64;
-        let open: Vec<(u64, Vec<tidewatch_core::progress::Entry>)> = self
-            .tabs
-            .items()
-            .iter()
-            .filter_map(|tab| {
-                Some((tab.id, ask_model::open_lines(&tab.pane.agent.as_ref()?.reader.rows)))
-            })
-            .collect();
-        for (tab, lines) in open {
-            self.progress.open_questions(tab, lines, now_ms);
-        }
         for tab in self.tabs.items_mut() {
             if let Some(agent) = tab.pane.agent.as_mut() {
                 let goal = self.progress.ledger(tab.id).map(|known| known.ledger.goal.as_str());
@@ -448,7 +438,7 @@ impl Tidewatch {
             if answers.is_empty() {
                 continue;
             }
-            let Some(known) = self.progress.sent(id) else { continue };
+            let Some(known) = self.progress.ledger(id) else { continue };
             let kind = known.ledger.status.kind.unwrap_or_default();
             let steps = stage_rows(&known.ledger, kind);
             let rows: Vec<ItemRow<'_>> =
@@ -475,7 +465,7 @@ impl Tidewatch {
             .map(|tab| tab.id)
             .collect();
         for id in ids {
-            let ledger = self.progress.sent(id);
+            let ledger = self.progress.ledger(id);
             let reported = self.panel.reported(id, now_ms, || {
                 ledger.map(|known| (known.updated_ms, ReportDigest::of(&known.ledger)))
             });
@@ -488,6 +478,7 @@ impl Tidewatch {
     pub(super) fn add_looks(&self, overview: &mut Overview) {
         let now_ms = wall_ms() as i64;
         let zone = TimeZone::system();
+        let blank = Ledger::default();
         let places = overview.places.iter_mut().flat_map(|place| place.rows.iter_mut());
         for row in overview.needs.iter_mut().chain(places) {
             let stale = self.ledger_stale(row.tab_id);
@@ -495,9 +486,17 @@ impl Tidewatch {
                 let blocks = Blocks::of(&view, now_ms, &zone, Kept::default());
                 Stamp { age: blocks.card_age().map(str::to_owned), out_of_date: blocks.out_of_date }
             });
-            row.look = self.progress.ledger(row.tab_id).map(|known| match state_of(row.tone) {
-                Some(state) => look_as(&known.ledger, stale, state),
-                None => look(&known.ledger, stale),
+            let tool = self.open_tool_questions(row.tab_id);
+            let known = self.progress.ledger(row.tab_id);
+            let report = known.map(|known| &known.ledger);
+            row.look = report.or_else(|| (!tool.is_empty()).then_some(&blank)).map(|ledger| {
+                let mut found = match state_of(row.tone) {
+                    Some(state) => look_as(ledger, stale, state),
+                    None => look(ledger, stale),
+                };
+                let own = if stale { Vec::new() } else { questions(ledger) };
+                ask_model::add_tool_questions(&mut found, &tool, &own);
+                found
             });
             row.avatar = self.avatar_live.get(row.tab_id).cloned();
             row.agents_running = self.subagent_live.running(row.tab_id);
@@ -538,54 +537,67 @@ impl Tidewatch {
         }
     }
 
-    /// A ready answer chip: the exact text goes to the agent as the reply box would send it, unless
-    /// the reply box is shut. The ledger's question clears until the agent saves a new ledger.
-    pub(super) fn send_answer(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) {
-        let asked =
-            self.progress.ledger(tab).and_then(|known| ask_of(&known.ledger)).map(|ask| ask.text);
-        let open = self
-            .tabs
-            .get_mut(tab)
-            .map_or(Opened::NotOpen, |found| reader_glue::answer_open(&mut found.pane, &text, now));
+    /// The questions the tab's agent has open with its question tool, read from the Reader's rows.
+    pub(super) fn open_tool_questions(&self, tab: u64) -> Vec<Question> {
+        self.tabs.agent(tab).map_or_else(Vec::new, |agent| {
+            agent
+                .reader
+                .rows
+                .pending_questions()
+                .into_iter()
+                .filter_map(|row| match &row.kind {
+                    crate::reader_rows::Kind::Question(asked) => Some(asked.questions.clone()),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        })
+    }
+
+    /// What the owner did with the one open choice of tab `tab`, from the Overview's card: the
+    /// question the agent's tool holds if it has one, else the report's. Answers it along its route.
+    pub(super) fn answer_choice(&mut self, tab: u64, reply: Reply, ctx: &egui::Context, now: f64) {
+        let tool = self.open_tool_questions(tab);
+        let said = tool.first().map(|question| (question.text.clone(), spoken(&reply, question)));
+        let open = self.tabs.get_mut(tab).map_or(Opened::NotOpen, |found| {
+            reader_glue::answer_open(&mut found.pane, reply.clone(), now)
+        });
         match open {
             Opened::Refused(reason) => self.show_toast(reason.to_owned(), ctx),
             Opened::Answered => {
-                self.note_answer(tab, asked.as_deref(), &text);
+                if let Some((question, answer)) = said {
+                    self.note_answer(tab, Some(&question), &answer);
+                }
                 self.mark_answered(tab);
                 ctx.request_repaint();
             }
-            Opened::NotOpen => {
-                let chip = text.clone();
-                if self.send_ready_answer(tab, text, ctx, now) {
-                    self.note_answer(tab, asked.as_deref(), &chip);
-                    self.mark_answered(tab);
-                }
-            }
+            Opened::NotOpen => self.answer_ledger(tab, reply, ctx, now),
         }
     }
 
-    /// An answer picked on the Reader's Needs you card: the card moves on to the next question.
-    pub(super) fn answer_ask(&mut self, tab: u64, text: String, ctx: &egui::Context, now: f64) {
-        let Some(known) = self.progress.ledger(tab) else {
-            self.send_answer(tab, text, ctx, now);
-            return;
-        };
+    /// What the owner did with the report's question on the card: the answer, the agent's pick or
+    /// the chat message is typed to the agent as a reply. An answer moves the card to the next
+    /// question; a skip or a chat closes them all, and the report reads as answered until the agent
+    /// saves again.
+    pub(super) fn answer_ledger(&mut self, tab: u64, reply: Reply, ctx: &egui::Context, now: f64) {
+        let Some(known) = self.progress.ledger(tab) else { return };
         let asked = questions(&known.ledger);
         let (saved, total) = (known.updated_ms, asked.len());
         let step =
             ask_model::shown(total, false, self.ask_given.get(&tab).copied(), saved).unwrap_or(0);
-        let question = asked.get(step).map_or("", |entry| entry.text.as_str()).to_owned();
-        let chip = text.clone();
-        let text = ask_model::reply_text(&question, total, &text);
+        let Some(entry) = asked.get(step) else { return };
+        let question = ask_model::question_of(entry);
+        let said = spoken(&reply, &question);
+        let (text, closes) = ask_model::ledger_message(&question, total, reply);
         if !self.send_ready_answer(tab, text, ctx, now) {
             return;
         }
-        self.note_answer(tab, Some(&question), &chip);
-        match ask_model::after_answer(total, step, saved) {
-            Some(given) => {
-                self.ask_given.insert(tab, given);
-            }
-            None => self.mark_answered(tab),
+        self.note_answer(tab, Some(&question.text), &said);
+        if let Some(given) = ask_model::after_answer(total, step, saved).filter(|_| !closes) {
+            self.ask_given.insert(tab, given);
+        } else {
+            self.ask_given.insert(tab, (saved, total));
+            self.mark_answered(tab);
         }
     }
 
@@ -618,7 +630,7 @@ impl Tidewatch {
     }
 
     /// The question the Reader's card shows for tab `tab`, if any.
-    pub(super) fn ask_of(&self, tab: u64, keys: bool) -> Option<Ask> {
+    pub(super) fn ask_of(&self, tab: u64) -> Option<Ask> {
         let known = self.progress.ledger(tab)?;
         let asked = questions(&known.ledger);
         let given = self.ask_given.get(&tab).copied();
@@ -627,7 +639,7 @@ impl Tidewatch {
         let read = self.link_live.board(tab).map_or_else(Vec::new, |board| {
             link_model::read_first(board, &entry.text).into_iter().cloned().collect()
         });
-        Some(Ask { entry, index: step, total: asked.len(), read, keys })
+        Some(Ask { entry, index: step, total: asked.len(), read })
     }
 
     pub(super) fn progress_arrived(&mut self, tab: u64, ledger: Ledger, ctx: &egui::Context) {
@@ -660,5 +672,17 @@ impl Tidewatch {
             );
         }
         ctx.request_repaint();
+    }
+}
+
+/// The answer as the panel log records it: the picked or typed text, or the chat label.
+fn spoken(reply: &Reply, question: &Question) -> String {
+    match reply {
+        Reply::Answered(given) => given
+            .first()
+            .map(|given: &Given| tidewatch_core::question::answer_line(question, given))
+            .unwrap_or_default(),
+        Reply::Skipped => "Skipped".to_owned(),
+        Reply::Chat(_) => choice::CHAT_LABEL.to_owned(),
     }
 }

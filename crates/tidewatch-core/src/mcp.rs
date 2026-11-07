@@ -433,6 +433,7 @@ fn ask_user(
         match receiver.recv_timeout(wait.poll) {
             Ok(Reply::Answered(given)) => break question::answer_text(&questions, &given),
             Ok(Reply::Skipped) => break question_words::SKIPPED.to_owned(),
+            Ok(Reply::Chat(text)) => break text,
             Err(RecvTimeoutError::Disconnected) => break question::CLOSED_TEXT.to_owned(),
             Err(RecvTimeoutError::Timeout) => {
                 if (wait.away)() {
@@ -1260,6 +1261,15 @@ mod tests {
         });
         assert_eq!(reply["result"]["isError"], false);
         assert_eq!(result_text(&reply), question_words::SKIPPED);
+    }
+
+    #[test]
+    fn ask_user_returns_the_chat_message_as_the_answer() {
+        let (reply, _) = ask_with(&questions_args(), &|| true, |held| {
+            assert!(held.send(Reply::Chat("Let's chat about this first.".into())));
+        });
+        assert_eq!(reply["result"]["isError"], false);
+        assert_eq!(result_text(&reply), "Let's chat about this first.");
     }
 
     #[test]

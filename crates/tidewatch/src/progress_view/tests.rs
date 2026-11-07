@@ -103,6 +103,7 @@ impl Panel {
             }
             let input = Input {
                 ledger,
+                open: &[],
                 stale,
                 jobs,
                 now_ms: 240_000,

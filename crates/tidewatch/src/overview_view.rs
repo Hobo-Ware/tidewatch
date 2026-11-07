@@ -11,7 +11,6 @@ use stdusk_egui::colors;
 
 use crate::agenda::Day;
 use crate::agent_avatar::{self, Face};
-use crate::answer_chips::{self, Pick};
 use crate::app::strip::{ICON_BOX, ICON_GLYPH};
 use crate::brand;
 use crate::commands::Command;
@@ -25,6 +24,7 @@ use crate::panel_blocks;
 use crate::progress_model::Ask;
 use crate::progress_ring;
 use crate::progress_view::flow;
+use crate::question_compact::{self, Click};
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{
@@ -169,7 +169,7 @@ pub(crate) struct Out {
     /// The row of Poofed today that was clicked.
     pub(crate) poofed: Option<usize>,
     /// The tab whose Needs you card had a ready answer chosen, and the choice.
-    pub(crate) answer: Option<(u64, Pick)>,
+    pub(crate) answer: Option<(u64, Click)>,
 }
 
 /// Draws the Overview in `area` and returns what the user clicked. `below` draws last in the rail.
@@ -604,7 +604,7 @@ pub(crate) fn ghost(ui: &mut Ui, at: Pos2, label: &str) -> bool {
 struct GridOut {
     jump: Option<u64>,
     toggled: bool,
-    answer: Option<(u64, Pick)>,
+    answer: Option<(u64, Click)>,
 }
 
 fn grid_section(
@@ -698,7 +698,7 @@ pub(crate) fn repo_label(painter: &Painter, left: f32, mid: f32, name: &str, max
 #[derive(Default)]
 struct CardOut {
     clicked: bool,
-    answer: Option<Pick>,
+    answer: Option<Click>,
 }
 
 fn with_summary(summary: Option<&str>, tip: String) -> String {
@@ -714,8 +714,7 @@ fn ask_of(row: &Row) -> Option<&Ask> {
 
 /// The answer chips of a Needs you card, laid out to the room beside its face.
 struct AskLayout {
-    chips: Vec<answer_chips::Chip>,
-    row: answer_chips::Row,
+    row: question_compact::Compact,
     room: f32,
     has_why: bool,
 }
@@ -723,9 +722,8 @@ struct AskLayout {
 impl AskLayout {
     fn new(painter: &Painter, ask: &Ask, card_w: f32) -> Self {
         let room = (card_w - CARD_PAD * 2.0 - RING - FACE_GAP).max(40.0);
-        let chips = answer_chips::chips(&ask.options);
-        let row = answer_chips::Row::new(painter, &chips, room);
-        Self { chips, row, room, has_why: ask.why.is_some() }
+        let row = question_compact::Compact::new(painter, &ask.options, room);
+        Self { row, room, has_why: ask.why.is_some() }
     }
 }
 
@@ -928,7 +926,7 @@ fn card(
     match lane {
         Lane::Needs => {
             if let (Some(ask), Some(layout)) = (ask, &plan.ask) {
-                out.answer = ask_chips(ui, &painter, (rect, &resp), (ask, layout), action_top);
+                out.answer = ask_chips(ui, &painter, rect, (ask, layout), action_top);
             } else {
                 let button = Rect::from_min_size(
                     pos2(
@@ -957,7 +955,7 @@ fn card(
     let tip = if let Some(ask) = ask {
         ask.why.as_deref().map_or_else(
             || ask.text.clone(),
-            |why| format!("{}\n{}", ask.text, answer_chips::sentence(why)),
+            |why| format!("{}\n{}", ask.text, crate::ask_model::sentence(why)),
         )
     } else {
         let status = match row.stamp.age.as_deref() {
@@ -972,19 +970,19 @@ fn card(
     };
     let card_clicked =
         resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked();
-    out.clicked |= card_clicked || out.answer == Some(Pick::Other);
+    out.clicked |= card_clicked || out.answer == Some(Click::Open);
     out
 }
 
 fn ask_chips(
     ui: &mut Ui,
     painter: &Painter,
-    (rect, resp): (Rect, &egui::Response),
+    rect: Rect,
     (ask, layout): (&Ask, &AskLayout),
     action_top: f32,
-) -> Option<Pick> {
+) -> Option<Click> {
     let text_x = rect.left() + CARD_PAD + RING + FACE_GAP;
-    let why = ask.why.as_deref().map(answer_chips::sentence);
+    let why = ask.why.as_deref().map(crate::ask_model::sentence);
     for (index, line) in why.iter().enumerate() {
         let galley = ellipsized(
             painter,
@@ -997,10 +995,7 @@ fn ask_chips(
         painter.galley(at, galley, brand::MUTED);
     }
     let origin = pos2(text_x, action_top);
-    let clicked = layout.row.show(ui, resp.id, origin, &layout.chips);
-    let card = answer_chips::Card { id: resp.id, rect, terminal_hidden: true };
-    let picked = clicked.or_else(|| answer_chips::key_pick(ui, &card, &layout.chips))?;
-    answer_chips::pick_of(&layout.chips, picked)
+    layout.row.show(ui, origin)
 }
 
 fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (String, Color32) {
@@ -1688,16 +1683,6 @@ mod tests {
         asking
     }
 
-    fn key(number: egui::Key) -> Event {
-        Event::Key {
-            key: number,
-            physical_key: Some(number),
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        }
-    }
-
     fn box_around(boxes: &[Rect], text: &Rect) -> Rect {
         boxes
             .iter()
@@ -2024,7 +2009,7 @@ mod tests {
     }
 
     #[test]
-    fn answer_chips_are_compact_and_sit_in_one_row_under_the_title_column() {
+    fn answer_buttons_are_compact_and_start_under_the_title_column() {
         let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
         let (found, boxes) = screen.drawn();
         let title = rect_of(&found, "asker");
@@ -2043,7 +2028,14 @@ mod tests {
     fn a_needs_you_question_draws_the_question_the_why_and_its_chips_in_place_of_answer() {
         let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
         let texts = screen.texts();
-        for want in ["Post it", "Skip it", "Draft only", "Ask Sam", "Something else", "1", "4"] {
+        for want in [
+            "Post it",
+            "Skip it",
+            "Draft only",
+            "Ask Sam",
+            "Let's chat about this",
+            "Something else",
+        ] {
             assert!(has(&texts, want), "{want:?} in {texts:?}");
         }
         assert!(texts.iter().any(|text| text.contains("Post the Slack follow-up")), "{texts:?}");
@@ -2061,10 +2053,18 @@ mod tests {
     }
 
     #[test]
-    fn clicking_an_option_answers_that_tab_with_its_exact_text_and_does_not_open_it() {
+    fn clicking_an_option_answers_that_tab_with_its_place_and_does_not_open_it() {
         let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
         let out = screen.click("Skip it");
-        assert_eq!(out.answer, Some((7, Pick::Answer("Skip it".to_owned()))));
+        assert_eq!(out.answer, Some((7, Click::Option(1))));
+        assert_eq!(out.jump, None);
+    }
+
+    #[test]
+    fn the_chat_button_chats_about_that_tab_and_does_not_open_it() {
+        let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
+        let out = screen.click("Let's chat about this");
+        assert_eq!(out.answer, Some((7, Click::Chat)));
         assert_eq!(out.jump, None);
     }
 
@@ -2072,33 +2072,7 @@ mod tests {
     fn something_else_opens_the_tab_and_asks_for_its_reply_box() {
         let mut screen = Screen::new(overview(vec![asking(7, ASKING)]));
         let out = screen.click("Something else");
-        assert_eq!((out.answer, out.jump), (Some((7, Pick::Other)), Some(7)));
-    }
-
-    #[test]
-    fn a_digit_answers_the_card_under_the_pointer_and_only_that_one() {
-        let mut screen = Screen::new(overview(vec![asking(7, ASKING), asking(8, ASKING_PLAIN)]));
-        screen.frame(vec![]);
-        let found = screen.frame(vec![]).1;
-        let rects: Vec<Rect> = found
-            .iter()
-            .filter(|(text, _)| text == "Something else")
-            .map(|(_, rect)| *rect)
-            .collect();
-        assert_eq!(rects.len(), 2);
-        let (first, second) = (rects[0].center(), rects[1].center());
-        let mut hits = Vec::new();
-        for over in [first, second] {
-            screen.frame(vec![Event::PointerMoved(over)]);
-            hits.push(screen.frame(vec![key(egui::Key::Num2)]).0.answer);
-        }
-        let want = |tab: u64, text: &str| Some((tab, Pick::Answer(text.to_owned())));
-        let mut expected = vec![want(7, "Skip it"), want(8, "Not now")];
-        expected.sort_by_key(|hit| hit.as_ref().map(|(tab, _)| *tab));
-        hits.sort_by_key(|hit| hit.as_ref().map(|(tab, _)| *tab));
-        assert_eq!(hits, expected);
-        screen.frame(vec![Event::PointerMoved(pos2(1.0, 890.0))]);
-        assert_eq!(screen.frame(vec![key(egui::Key::Num1)]).0.answer, None, "pointer over no card");
+        assert_eq!((out.answer, out.jump), (Some((7, Click::Open)), Some(7)));
     }
 
     #[test]

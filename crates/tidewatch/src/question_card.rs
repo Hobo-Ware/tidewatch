@@ -36,6 +36,8 @@ pub(crate) enum Effect {
     TypeOther,
     /// Answer every waiting question with the agent's picks.
     GoWithPicks,
+    /// Close the choice and talk it through: this message, with the typed note after the text.
+    Chat(String),
 }
 
 /// The keys the card reads while it has the keyboard.
@@ -189,6 +191,13 @@ impl Card {
                 })
                 .collect(),
         )
+    }
+
+    /// "Let's chat about this": the chat message with the note typed into "Something else", if any.
+    pub(crate) fn chat(&self) -> Effect {
+        let slot = &self.slots[self.step];
+        let note = if slot.other == Other::On { slot.typed.as_str() } else { "" };
+        Effect::Chat(crate::choice::chat_message(note))
     }
 
     pub(crate) fn key(&mut self, key: CardKey) -> Effect {
@@ -424,6 +433,18 @@ mod tests {
         assert_eq!(card.send(), Effect::Send(vec![Given { picked: vec![1], other: None }]));
         card.choose(Row::Option(0));
         assert_eq!(card.send(), Effect::Send(vec![Given { picked: vec![0], other: None }]));
+    }
+
+    #[test]
+    fn chatting_sends_the_chat_message_and_adds_the_typed_note_only_while_something_else_is_on() {
+        use crate::choice::{CHAT_TEXT, chat_message};
+        let mut card = card();
+        assert_eq!(card.chat(), Effect::Chat(CHAT_TEXT.to_owned()));
+        card.choose(Row::Other);
+        card.typed_mut().push_str(" the diff first ");
+        assert_eq!(card.chat(), Effect::Chat(chat_message("the diff first")));
+        card.choose(Row::Option(0));
+        assert_eq!(card.chat(), Effect::Chat(CHAT_TEXT.to_owned()), "the kept note is not sent");
     }
 
     #[test]

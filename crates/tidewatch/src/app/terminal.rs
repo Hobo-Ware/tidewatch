@@ -251,7 +251,7 @@ impl Tidewatch {
                     profile.as_deref().unwrap_or_default(),
                     wall_ms() as i64,
                 );
-                let ask = self.ask_of(active_id, keys_free);
+                let ask = self.ask_of(active_id);
                 let due = self.due_of(active_id);
                 let first = due.first().map(|item| (item, due.len() - 1));
                 let avatar = self.avatar_live.get(active_id).cloned();
@@ -272,7 +272,7 @@ impl Tidewatch {
                 let agent_reads = reader_glue::take_agent_reads(&mut asked);
                 let clicks = reader_glue::take_pr_clicks(&mut asked);
                 let due_clicks = reader_glue::take_due_clicks(&mut asked);
-                let picks = reader_glue::take_picks(&mut asked);
+                let ledger_replies = reader_glue::take_ledger_replies(&mut asked);
                 let rows_clicked = reader_glue::take_tidewatch_clicks(&mut asked);
                 let (reviews, asked): (Vec<_>, Vec<_>) =
                     asked.into_iter().partition(|action| matches!(action, Action::Review(_)));
@@ -301,8 +301,8 @@ impl Tidewatch {
                 self.apply_pr_actions(active_id, clicks, ctx, now);
                 self.apply_tidewatch_clicks(active_id, rows_clicked, ctx, now);
                 self.apply_due_clicks(active_id, due_clicks, ctx, now);
-                for text in picks {
-                    self.answer_ask(active_id, text, ctx, now);
+                for reply in ledger_replies {
+                    self.answer_ledger(active_id, reply, ctx, now);
                 }
                 for id in agent_reads {
                     self.open_subagent_chat(active_id, &id, ctx);

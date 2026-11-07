@@ -1,7 +1,7 @@
-//! Draws what the Reader shows for questions: the live card (radio rows, checkbox tiles, a
-//! "Something else" field, Next, Back, Send answers, Skip), the compact summary after the answer,
-//! the quick-reply chips under an agent's last message, and the permission card, which has the
-//! same look. The state is `question_card`; this file reads keys and clicks and reports an effect.
+//! Draws what the Reader shows for choices: the one live card (radio rows, checkbox tiles, a
+//! "Something else" field, Next, Back, Send answers, Let the agent pick, Let's chat about this), the
+//! compact summary after the answer, and the permission card, which shares the card's frame and
+//! header. The state is `question_card`; this file reads keys and clicks and reports an effect.
 
 use std::sync::Arc;
 
@@ -10,12 +10,13 @@ use egui::{
     Align, Color32, CornerRadius, Frame, Galley, Id, Key, Layout, Margin, Modifiers, Painter, Pos2,
     Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
+use tidewatch_core::link_board::Link;
 use tidewatch_core::question::{Question, QuestionOption, Select};
 
 use crate::brand;
+use crate::choice::{CHAT_LABEL, Route};
 use crate::composer::{self, Draft, Mode, Spec};
 use crate::question_card::{Card, CardKey, Effect, MAX_KEYED, Row};
-use crate::quick_reply::Quick;
 use crate::reader_keys::Answer;
 use crate::reader_rows::{Asked, QuestionRow, ToolKind};
 use crate::reader_turns;
@@ -67,6 +68,12 @@ enum Fold {
 pub(crate) struct Live {
     pub(crate) seq: u64,
     pub(crate) card: Card,
+    /// How the answer gets to the agent.
+    pub(crate) route: Route,
+    /// The links sent for the question, drawn as `Read first` lines.
+    pub(crate) read: Vec<Link>,
+    /// Why the agent asks, a muted line under the question.
+    pub(crate) why: Option<String>,
     /// How many waiting questions of the tab the agent's picks answer, set before each draw.
     pub(crate) picks: usize,
     /// The sent messages the Something else box walks with Up and Down, apart from the reply box's.
@@ -88,6 +95,9 @@ impl Live {
         Self {
             seq,
             card,
+            route: Route::ClaudeMenu,
+            read: Vec::new(),
+            why: None,
             picks: 0,
             recall: Recall::default(),
             fold: Fold::Folded,
@@ -100,6 +110,14 @@ impl Live {
             #[cfg(test)]
             fold_at: std::cell::Cell::default(),
         }
+    }
+
+    pub(crate) fn routed(self, route: Route) -> Self {
+        Self { route, ..self }
+    }
+
+    pub(crate) fn asked_with(self, read: Vec<Link>, why: Option<String>) -> Self {
+        Self { read, why, ..self }
     }
 
     /// How much room the card took last frame, with the gap above the reply box.
@@ -523,30 +541,35 @@ fn draw_multi(ui: &mut Ui, live: &Live) -> Option<Row> {
 
 /// The big line of the card and the smaller one under it: the agent's decision sentence over its
 /// question, or the question alone.
-fn headlines(question: &Question) -> (String, Option<String>) {
+fn headlines(question: &Question, why: Option<&str>) -> (String, Option<String>) {
     match &question.decision {
         Some(decision) if *decision != question.text => {
             (decision.clone(), Some(question.text.clone()))
         }
         Some(decision) => (decision.clone(), None),
-        None => (question.text.clone(), None),
+        None => (question.text.clone(), why.map(str::to_owned)),
     }
 }
 
-fn header_row(ui: &mut Ui, live: &Live, profile: &str) {
+/// The first line of every card, question or permission: the orange dot and its label. Returns the
+/// line and where the label ends.
+fn card_header(ui: &mut Ui, label: &str, ink: Color32) -> (Rect, f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
     let painter = ui.painter();
     paint_dot(painter, pos2(rect.left() + DOT / 2.0, rect.center().y), brand::ORANGE);
+    let galley = painter.layout_no_wrap(label.to_owned(), body(12.0), ink);
+    let left = rect.left() + DOT + 8.0;
+    painter.galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley.clone(), ink);
+    (rect, left + galley.size().x)
+}
+
+fn header_row(ui: &mut Ui, live: &Live, profile: &str) {
     let text = match &live.card.question().header {
         Some(topic) => format!("{profile} asks \u{b7} {topic}"),
         None => format!("{profile} asks"),
     };
-    let galley = painter.layout_no_wrap(text, body(12.0), brand::MUTED);
-    painter.galley(
-        pos2(rect.left() + DOT + 8.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        brand::MUTED,
-    );
+    let (rect, _) = card_header(ui, &text, brand::MUTED);
+    let painter = ui.painter();
     let count = live.card.count();
     let multi = live.card.question().select == Select::Multi;
     let text = match (count, multi) {
@@ -605,8 +628,8 @@ fn hint_job(live: &Live) -> LayoutJob {
 
 fn footer(ui: &mut Ui, live: &mut Live, profile: &str) -> Effect {
     let mut effect = Effect::Nothing;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
         let last = live.card.is_last();
         let (label, ready) = if last {
             (
@@ -637,10 +660,20 @@ fn footer(ui: &mut Ui, live: &mut Live, profile: &str) -> Effect {
         {
             effect = if live.picks > 0 { Effect::GoWithPicks } else { Effect::Skip };
         }
+        if quiet_button(ui, CHAT_LABEL, true, Size::Compact)
+            .on_hover_text("Close this choice and talk it through in the chat")
+            .clicked()
+        {
+            effect = live.card.chat();
+        }
         let galley = ui.painter().layout_job(hint_job(live));
-        ui.add_space((ui.available_width() - galley.size().x).max(0.0));
-        let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
-        ui.painter().galley(rect.min, galley, brand::FAINT);
+        let left = ui.max_rect().right() - ui.cursor().min.x;
+        let spare = left - galley.size().x - 2.0 * ui.spacing().item_spacing.x;
+        if spare >= 0.0 {
+            ui.add_space(spare);
+            let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+            ui.painter().galley(rect.min, galley, brand::FAINT);
+        }
     });
     effect
 }
@@ -683,13 +716,22 @@ pub(crate) fn live_card(
         ui.set_width(width - 2.0 * f32::from(CARD_PAD_X));
         header_row(ui, live, profile);
         ui.add_space(BLOCK_GAP);
-        let (headline, detail) = headlines(live.card.question());
+        let (headline, detail) = headlines(live.card.question(), live.why.as_deref());
         ui.label(
             egui::RichText::new(headline).font(crate::screen_kit::heading(16.0)).color(brand::TEXT),
         );
         if let Some(detail) = detail {
             ui.add_space(2.0);
             ui.label(egui::RichText::new(detail).font(body(13.0)).color(brand::MUTED));
+        }
+        if !live.read.is_empty() {
+            ui.add_space(8.0);
+            let (rect, _) = ui.allocate_exact_size(
+                vec2(ui.available_width(), crate::link_view::read_first_height(live.read.len())),
+                Sense::hover(),
+            );
+            let links: Vec<&Link> = live.read.iter().collect();
+            crate::link_view::paint_read_first(ui, rect.min, rect.width(), &links);
         }
         ui.add_space(BLOCK_GAP);
         egui::ScrollArea::vertical()
@@ -809,7 +851,7 @@ fn folded_line(ui: &mut Ui, dock: Rect, live: &mut Live, profile: &str, reply_em
         live.rects.borrow_mut().push(region);
     }
     let line = ui.interact(region, id, Sense::click());
-    let (headline, detail) = headlines(live.card.question());
+    let (headline, detail) = headlines(live.card.question(), live.why.as_deref());
     let mut tip = headline.clone();
     if let Some(detail) = detail {
         tip = format!("{tip}\n{detail}");
@@ -1003,67 +1045,6 @@ pub(crate) fn summary(ui: &mut Ui, row: &QuestionRow, profile: &str, time: Optio
     });
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ChipClick {
-    Send(String),
-    Reply,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ChipLook {
-    Yes,
-    Plain,
-    Write,
-}
-
-fn chip(ui: &mut Ui, label: &str, look: ChipLook) -> Response {
-    let (ink, line) = match look {
-        ChipLook::Yes => (brand::TEAL_TEXT, brand::TEAL),
-        ChipLook::Plain => (brand::STEP_TEXT, brand::FIELD_LINE),
-        ChipLook::Write => (brand::MUTED, brand::FIELD_LINE),
-    };
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(Size::Compact.font()), ink);
-    let size = vec2(galley.size().x + 2.0 * Size::Compact.pad(), Size::Compact.height());
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let radius = CornerRadius::same(Size::Compact.radius());
-    if response.hovered() {
-        ui.painter().rect_filled(rect, radius, line.gamma_multiply(0.12));
-    }
-    if look == ChipLook::Write {
-        ui.painter().extend(Shape::dashed_line(
-            &rounded_path(rect.shrink(0.5), f32::from(Size::Compact.radius())),
-            Stroke::new(1.0, line),
-            5.0,
-            4.0,
-        ));
-    } else {
-        ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
-    }
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, ink);
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-/// The chips under the agent's last message: the quick replies, then "Write a reply".
-pub(crate) fn quick_chips(ui: &mut Ui, quick: &[Quick]) -> Option<ChipClick> {
-    let mut clicked = None;
-    ui.add_space(6.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
-        for (index, reply) in quick.iter().enumerate() {
-            let first =
-                index == 0 || reply.label.chars().next().is_some_and(|c| c.is_ascii_digit());
-            let look = if first { ChipLook::Yes } else { ChipLook::Plain };
-            if chip(ui, &reply.label, look).clicked() {
-                clicked = Some(ChipClick::Send(reply.send.clone()));
-            }
-        }
-        if chip(ui, "Write a reply", ChipLook::Write).clicked() {
-            clicked = Some(ChipClick::Reply);
-        }
-    });
-    clicked
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PermissionClick {
     Answer(Answer),
@@ -1086,22 +1067,16 @@ pub(crate) fn permission_card(
     child.spacing_mut().item_spacing.y = SECTION_GAP;
     card_frame(18, 20).show(&mut child, |ui| {
         ui.set_width(card.width() - 2.0 * f32::from(CARD_PAD_X) - 2.0);
-        let (head, _) =
-            ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
+        let (head, label_right) = card_header(ui, "Needs your OK", brand::ORANGE);
         let painter = ui.painter();
-        paint_dot(painter, pos2(head.left() + DOT / 2.0, head.center().y), brand::ORANGE);
-        let label = painter.layout_no_wrap("Needs your OK".to_owned(), body(12.0), brand::ORANGE);
-        let mut x = head.left() + DOT + 8.0;
-        painter.galley(
-            pos2(x, head.center().y - label.size().y / 2.0),
-            label.clone(),
-            brand::ORANGE,
-        );
-        x += label.size().x + 6.0;
         if let Some((name, _)) = tool {
             let words = format!("\u{b7} {}", reader_turns::permission_words(ToolKind::of(name)));
             let galley = painter.layout_no_wrap(words, body(12.0), brand::FAINT);
-            painter.galley(pos2(x, head.center().y - galley.size().y / 2.0), galley, brand::FAINT);
+            painter.galley(
+                pos2(label_right + 6.0, head.center().y - galley.size().y / 2.0),
+                galley,
+                brand::FAINT,
+            );
         }
         if let Some(time) = time {
             let galley = painter.layout_no_wrap(time.to_owned(), body(12.0), brand::FAINT);
@@ -1533,14 +1508,14 @@ mod tests {
             select: Select::Single,
             options: vec![option("a"), option("b")],
         };
-        assert_eq!(headlines(&q), ("Which storage?".to_owned(), None));
+        assert_eq!(headlines(&q, None), ("Which storage?".to_owned(), None));
         q.decision = Some("Pick where the count lives.".into());
         assert_eq!(
-            headlines(&q),
+            headlines(&q, None),
             ("Pick where the count lives.".to_owned(), Some("Which storage?".to_owned()))
         );
         q.decision = Some("Which storage?".into());
-        assert_eq!(headlines(&q), ("Which storage?".to_owned(), None));
+        assert_eq!(headlines(&q, None), ("Which storage?".to_owned(), None));
     }
 
     #[test]

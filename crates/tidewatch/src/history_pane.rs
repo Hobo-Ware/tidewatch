@@ -534,6 +534,7 @@ mod tests {
             let output = self.ctx.run_ui(raw, |ui| {
                 let progress = with_ledger.then_some(progress_view::Input {
                     ledger: Some(ledger),
+                    open: &[],
                     stale,
                     jobs: &[],
                     now_ms: 0,

@@ -365,16 +365,20 @@ impl Asked {
     }
 }
 
-/// The Waiting on you line: the first question of the report (the question tool's own are laid
-/// over it), else the first of `fallback`, the Needs you items of the last message.
-pub(crate) fn asked(ledger: &Ledger, fallback: &[String]) -> Option<Asked> {
-    let reported = questions(ledger);
+/// The Waiting on you line: the first question the agent has open with its question tool, then the
+/// report's, else the first of `fallback`, the Needs you items of the last message.
+pub(crate) fn asked(open: &[String], ledger: &Ledger, fallback: &[String]) -> Option<Asked> {
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+    let own = questions(ledger).into_iter().map(|entry| entry.text.trim());
+    let reported: Vec<&str> = open
+        .iter()
+        .map(|text| text.trim())
+        .chain(own.filter(|text| !open.iter().any(|ours| same(ours, text))))
+        .collect();
     match reported.split_first() {
-        Some((first, rest)) => Some(Asked {
-            text: first.text.trim().to_owned(),
-            more: rest.len(),
-            answer_at: AnswerAt::Card,
-        }),
+        Some((first, rest)) => {
+            Some(Asked { text: (*first).to_owned(), more: rest.len(), answer_at: AnswerAt::Card })
+        }
         None => fallback.split_first().map(|(first, rest)| Asked {
             text: first.trim().to_owned(),
             more: rest.len(),
@@ -1005,7 +1009,7 @@ mod tests {
     #[test]
     fn the_question_is_the_reports_first_one_with_the_rest_counted_else_the_last_messages() {
         let two = ledger("# Goal\nx\n\n## Needs you\n- Pick a base -- why\n- Pick a name\n");
-        let from_report = asked(&two, &["from chat".into()]).unwrap();
+        let from_report = asked(&[], &two, &["from chat".into()]).unwrap();
         assert_eq!(
             from_report,
             Asked { text: "Pick a base".into(), more: 1, answer_at: AnswerAt::Card }
@@ -1013,13 +1017,30 @@ mod tests {
         assert_eq!(from_report.hint(), "Answer in the question card \u{b7} 1 more question");
         let none = ledger("# Goal\nx\n\n## Needs you\n- Nothing\n");
         let chat = ["Which base?".to_owned(), "And the name?".to_owned()];
-        let from_chat = asked(&none, &chat).unwrap();
+        let from_chat = asked(&[], &none, &chat).unwrap();
         assert_eq!(
             from_chat,
             Asked { text: "Which base?".into(), more: 1, answer_at: AnswerAt::Chat }
         );
         assert_eq!(from_chat.hint(), "Reply in the chat \u{b7} 1 more question");
-        assert_eq!(asked(&none, &[]), None);
+        assert_eq!(asked(&[], &none, &[]), None);
+    }
+
+    #[test]
+    fn a_question_open_with_the_question_tool_leads_and_the_reports_same_question_is_not_counted_twice()
+     {
+        let report = ledger("# Goal\nx\n\n## Needs you\n- where should it live?\n- Pick a name\n");
+        let open = ["Where should it live?".to_owned()];
+        let found = asked(&open, &report, &[]).unwrap();
+        assert_eq!(
+            found,
+            Asked { text: "Where should it live?".into(), more: 1, answer_at: AnswerAt::Card }
+        );
+        let alone = asked(&open, &ledger("# Goal\nx\n"), &["from chat".into()]).unwrap();
+        assert_eq!(
+            (alone.text.as_str(), alone.more, alone.answer_at),
+            ("Where should it live?", 0, AnswerAt::Card)
+        );
     }
 
     #[test]
