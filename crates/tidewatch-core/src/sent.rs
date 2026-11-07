@@ -482,6 +482,31 @@ mod tests {
     }
 
     #[test]
+    fn every_sender_is_listed_in_the_agent_channels_rule() {
+        let rule = include_str!("../../../.agents/rules/agent-channels.md");
+        let reasons = [
+            Reason::AutoFix,
+            Reason::PullRequest,
+            Reason::MeeseeksCheck,
+            Reason::DueToday,
+            Reason::LedgerGuard,
+            Reason::CommentGuard,
+            Reason::DoneCheck,
+            Reason::Avatar,
+            Reason::Workflow,
+            Reason::Resume,
+            Reason::StuckJob,
+            Reason::BackgroundJob,
+            Reason::Away,
+            Reason::KeepGoing,
+        ];
+        for reason in reasons {
+            let line = format!("- `{}`:", reason.tag());
+            assert!(rule.contains(&line), "{line} missing from agent-channels.md");
+        }
+    }
+
+    #[test]
     fn what_the_reader_shows_never_uses_the_internal_word_ledger() {
         let tags = [
             Reason::AutoFix,

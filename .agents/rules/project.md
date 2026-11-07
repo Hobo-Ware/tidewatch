@@ -124,4 +124,6 @@ seeded `session.toml`. The og image is a 1200x630 page rendered in headless Chro
 - [ ] Read `LEDGER.md` + the current phase in `PLAN.md`; follow `workflow.md`.
 - [ ] Tests, clippy and fmt pass.
 - [ ] UI change verified with a screenshot.
+- [ ] No second path: a new card, status source, agent-text parse or sender extends its row in
+      `agent-channels.md`, or removes the old one in the same PR.
 - [ ] `LEDGER.md` updated; `docs/layout.md` still true.
