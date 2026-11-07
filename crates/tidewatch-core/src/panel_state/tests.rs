@@ -61,7 +61,6 @@ fn digest(state: &str, needs: &str) -> ReportDigest {
 fn assert_accessors_match_view(state: &PanelState, now: i64, name: &str) {
     let view = state.view(now);
     assert_eq!(state.standing_at(now), (view.reported, view.report), "{name}");
-    assert_eq!(state.end_block(), view.end_block.as_ref(), "{name}");
 }
 
 const NO_QUESTION: &str = "- Nothing";
@@ -347,23 +346,6 @@ fn an_exited_process_ends_the_turn_and_decides_done_or_failed() {
         assert_eq!(view.tone, tone, "{code:?}");
         assert!(!view.turn.running);
     }
-}
-
-#[test]
-fn the_hook_message_of_a_finished_turn_becomes_the_end_block_and_the_next_turn_clears_it() {
-    let message =
-        "Wrapped up.\n\n**Done**\n- the fix\n\n**Needs you**\n- nothing\n\n**Next**\n- merge";
-    let mut tape = Tape::new();
-    tape.started();
-    tape.hook(HookKind::TurnStarted, 1_000);
-    tape.hook_saying(HookKind::TurnDone, Some(message), 2_000);
-    assert_accessors_match_view(&tape.state, 2_100, "end block");
-    let block = tape.state.view(2_100).end_block.expect("a complete block parses");
-    assert_eq!(block.done, ["the fix"]);
-    assert_eq!(block.next, ["merge"]);
-    tape.hook(HookKind::TurnStarted, 3_000);
-    assert_accessors_match_view(&tape.state, 3_100, "block cleared");
-    assert_eq!(tape.state.view(3_100).end_block, None);
 }
 
 #[test]

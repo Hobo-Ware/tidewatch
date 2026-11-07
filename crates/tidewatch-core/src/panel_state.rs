@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::end_block::{self, EndBlock};
 use crate::job::{self, JobBoard};
 use crate::link_board::LinkBoard;
 use crate::panel_event::{AskKind, Event, Fact, GitFacts, PrFacts, PrWord, Source, StepBy};
@@ -84,7 +83,6 @@ pub struct PanelState {
     turn: Turn,
     said: Option<String>,
     last_message: Option<String>,
-    end_block: Option<EndBlock>,
     asking: Option<Asking>,
     report: Option<ReportSeen>,
     answered_after_save: bool,
@@ -118,7 +116,6 @@ impl PanelState {
             turn: Turn::default(),
             said: None,
             last_message: None,
-            end_block: None,
             asking: None,
             report: None,
             answered_after_save: false,
@@ -243,7 +240,6 @@ impl PanelState {
                 self.exited_ms = None;
                 self.said = None;
                 self.last_message = None;
-                self.end_block = None;
             }
             Fact::Restart => self.tracker.hooks_lost(),
             Fact::Hook(hook) => self.fold_hook(hook, t),
@@ -359,7 +355,6 @@ impl PanelState {
     fn begin_turn(&mut self, t: i64) {
         self.turn.running = true;
         self.turn.started_ms = Some(t);
-        self.end_block = None;
         self.last_message = None;
         self.said = None;
         self.asking = None;
@@ -388,7 +383,6 @@ impl PanelState {
 
     fn keep_message(&mut self, message: &str) {
         self.last_message = Some(message.to_owned());
-        self.end_block = end_block::parse(message);
     }
 
     fn open_ask(&mut self, kind: AskKind, summary: &str, t: i64) {
@@ -560,11 +554,6 @@ impl PanelState {
         self.standing(&status, asked, now)
     }
 
-    #[must_use]
-    pub fn end_block(&self) -> Option<&EndBlock> {
-        self.end_block.as_ref()
-    }
-
     /// What the panel shows at `now_ms`. A `now_ms` before the last event folded reads as that event.
     #[must_use]
     pub fn view(&self, now_ms: i64) -> PanelView {
@@ -579,7 +568,6 @@ impl PanelState {
             answers: u32::try_from(self.answered.len()).unwrap_or(u32::MAX),
             turn: self.turn,
             asking: self.asking.clone(),
-            end_block: self.end_block.clone(),
             revs: self.revs,
             shown_seq: self.shown_seq,
             status,

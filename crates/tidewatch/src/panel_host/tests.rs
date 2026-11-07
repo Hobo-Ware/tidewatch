@@ -109,11 +109,6 @@ fn a_turn_whose_stop_hook_was_lost_settles_when_the_transcript_shows_it_ended() 
     poll(&mut tabs, 5.0);
 
     assert_eq!(tone(&tabs), Tone::Done);
-    let agent = tabs.get_mut(id).unwrap().pane.agent.as_ref().unwrap();
-    assert_eq!(
-        agent.run.end_block().map(|block| block.done.clone()),
-        Some(vec!["the helper".to_owned()])
-    );
     assert_eq!(host.view(id, 5_000).map(|view| view.tone), Some(Tone::Done));
 }
 

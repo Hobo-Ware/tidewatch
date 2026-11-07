@@ -230,8 +230,8 @@ impl Input<'_> {
     /// The questions the owner is asked: the report's.
     fn asked(&self) -> Option<model::Asked> {
         match self.ledger_shown() {
-            Some(ledger) => model::asked(self.open, &ledger, &[]),
-            None => model::asked(self.open, &Ledger::default(), &[]),
+            Some(ledger) => model::asked(self.open, &ledger),
+            None => model::asked(self.open, &Ledger::default()),
         }
     }
 

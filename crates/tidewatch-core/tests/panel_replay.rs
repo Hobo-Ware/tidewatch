@@ -6,7 +6,6 @@
 use std::path::Path;
 
 use serde_json::Value;
-use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::job;
 use tidewatch_core::link_board::{Link, LinkState, Status, TitleFrom};
 use tidewatch_core::panel_event::{
@@ -206,7 +205,7 @@ fn every_recorded_session_ends_done_and_replays_exactly_from_disk() {
 }
 
 #[test]
-fn the_claude_stop_message_becomes_the_end_block_the_card_reads() {
+fn a_claude_session_folds_to_a_finished_turn() {
     let hooks = hooks_of("claude", CLAUDE_HOOKS);
     let kinds: Vec<&HookKind> = hooks.iter().map(|hook| &hook.kind).collect();
     assert!(matches!(kinds[0], HookKind::SessionStart));
@@ -219,12 +218,7 @@ fn the_claude_stop_message_becomes_the_end_block_the_card_reads() {
     assert!(matches!(kinds[7], HookKind::SessionEnd));
     let facts = transcript_facts(transcript::Source::Claude, CLAUDE_TRANSCRIPT);
     let tape = fold_session(session_of(&hooks, &facts, 10_000, 60_000));
-    let want = EndBlock {
-        done: vec!["made the file".into()],
-        needs_you: vec!["nothing".into()],
-        next: vec!["merge the branch".into()],
-    };
-    assert_eq!(tape.state.view(100_000).end_block, Some(want));
+    assert!(!tape.state.view(100_000).turn.running);
 }
 
 #[test]

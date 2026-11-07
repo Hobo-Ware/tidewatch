@@ -119,7 +119,6 @@ fn row(id: u64, spec: &Spec) -> Row {
         status: spec.status.clone(),
         tone: Tone::of(&spec.status),
         detail: Some(spec.line.to_owned()),
-        end_block: None,
         elapsed: spec.mins * 60.0,
         pr: None,
         done_check: None,

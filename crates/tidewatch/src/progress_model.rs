@@ -339,24 +339,12 @@ pub(crate) fn waiting_for(ledger: &Ledger, tone: Tone) -> Option<String> {
 pub(crate) struct Asked {
     pub(crate) text: String,
     pub(crate) more: usize,
-    pub(crate) answer_at: AnswerAt,
-}
-
-/// Where the owner answers: a report's question has a card above the Reader's reply box, a Needs
-/// you line of the last message has none.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum AnswerAt {
-    Card,
-    Chat,
 }
 
 impl Asked {
     /// The line under the question: where to answer, and how many more wait.
     pub(crate) fn hint(&self) -> String {
-        let place = match self.answer_at {
-            AnswerAt::Card => "Answer in the question card",
-            AnswerAt::Chat => "Reply in the chat",
-        };
+        let place = "Answer in the question card";
         match self.more {
             0 => place.to_owned(),
             1 => format!("{place} \u{b7} 1 more question"),
@@ -366,8 +354,8 @@ impl Asked {
 }
 
 /// The Waiting on you line: the first question the agent has open with its question tool, then the
-/// report's, else the first of `fallback`, the Needs you items of the last message.
-pub(crate) fn asked(open: &[String], ledger: &Ledger, fallback: &[String]) -> Option<Asked> {
+/// report's.
+pub(crate) fn asked(open: &[String], ledger: &Ledger) -> Option<Asked> {
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     let own = questions(ledger).into_iter().map(|entry| entry.text.trim());
     let reported: Vec<&str> = open
@@ -375,16 +363,9 @@ pub(crate) fn asked(open: &[String], ledger: &Ledger, fallback: &[String]) -> Op
         .map(|text| text.trim())
         .chain(own.filter(|text| !open.iter().any(|ours| same(ours, text))))
         .collect();
-    match reported.split_first() {
-        Some((first, rest)) => {
-            Some(Asked { text: (*first).to_owned(), more: rest.len(), answer_at: AnswerAt::Card })
-        }
-        None => fallback.split_first().map(|(first, rest)| Asked {
-            text: first.trim().to_owned(),
-            more: rest.len(),
-            answer_at: AnswerAt::Chat,
-        }),
-    }
+    reported
+        .split_first()
+        .map(|(first, rest)| Asked { text: (*first).to_owned(), more: rest.len() })
 }
 
 /// One item of the report's Coming up list.
@@ -1007,23 +988,12 @@ mod tests {
     }
 
     #[test]
-    fn the_question_is_the_reports_first_one_with_the_rest_counted_else_the_last_messages() {
+    fn the_question_is_the_reports_first_one_with_the_rest_counted() {
         let two = ledger("# Goal\nx\n\n## Needs you\n- Pick a base -- why\n- Pick a name\n");
-        let from_report = asked(&[], &two, &["from chat".into()]).unwrap();
-        assert_eq!(
-            from_report,
-            Asked { text: "Pick a base".into(), more: 1, answer_at: AnswerAt::Card }
-        );
+        let from_report = asked(&[], &two).unwrap();
+        assert_eq!(from_report, Asked { text: "Pick a base".into(), more: 1 });
         assert_eq!(from_report.hint(), "Answer in the question card \u{b7} 1 more question");
-        let none = ledger("# Goal\nx\n\n## Needs you\n- Nothing\n");
-        let chat = ["Which base?".to_owned(), "And the name?".to_owned()];
-        let from_chat = asked(&[], &none, &chat).unwrap();
-        assert_eq!(
-            from_chat,
-            Asked { text: "Which base?".into(), more: 1, answer_at: AnswerAt::Chat }
-        );
-        assert_eq!(from_chat.hint(), "Reply in the chat \u{b7} 1 more question");
-        assert_eq!(asked(&[], &none, &[]), None);
+        assert_eq!(asked(&[], &ledger("# Goal\nx\n\n## Needs you\n- Nothing\n")), None);
     }
 
     #[test]
@@ -1031,16 +1001,10 @@ mod tests {
      {
         let report = ledger("# Goal\nx\n\n## Needs you\n- where should it live?\n- Pick a name\n");
         let open = ["Where should it live?".to_owned()];
-        let found = asked(&open, &report, &[]).unwrap();
-        assert_eq!(
-            found,
-            Asked { text: "Where should it live?".into(), more: 1, answer_at: AnswerAt::Card }
-        );
-        let alone = asked(&open, &ledger("# Goal\nx\n"), &["from chat".into()]).unwrap();
-        assert_eq!(
-            (alone.text.as_str(), alone.more, alone.answer_at),
-            ("Where should it live?", 0, AnswerAt::Card)
-        );
+        let found = asked(&open, &report).unwrap();
+        assert_eq!(found, Asked { text: "Where should it live?".into(), more: 1 });
+        let alone = asked(&open, &ledger("# Goal\nx\n")).unwrap();
+        assert_eq!((alone.text.as_str(), alone.more), ("Where should it live?", 0));
     }
 
     #[test]
