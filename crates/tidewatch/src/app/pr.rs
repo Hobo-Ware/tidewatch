@@ -109,6 +109,19 @@ impl Tidewatch {
                         self.show_toast(reason, ctx);
                     }
                 }
+                Out::Ended(text) => {
+                    let send = Send::auto(&text, Reason::PullRequest, because::PR_ENDED);
+                    if let Offer::Refuse(reason) = flow_glue::send_or_queue(
+                        &mut self.tabs,
+                        &mut self.flow,
+                        tab,
+                        send,
+                        ctx,
+                        now,
+                    ) {
+                        self.show_toast(reason, ctx);
+                    }
+                }
                 Out::Toast(text) => self.show_toast(text, ctx),
                 Out::Notify(notice) => {
                     let (focused, minimized) =

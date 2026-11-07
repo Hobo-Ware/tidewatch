@@ -924,7 +924,7 @@ impl ProgressReport {
         Self::check_with_links(args, saved).map(|checked| checked.report)
     }
 
-    /// Every rule an `update_progress` call breaks, as one fix per sentence; `saved` lends the goal and title a report leaves out.
+    /// Every rule an `update_progress` call breaks, as one fix per sentence; `saved` lends the goal, title and kind a report leaves out.
     pub fn check_with_links(
         args: &Map<String, Value>,
         saved: Option<&Self>,
@@ -964,6 +964,7 @@ impl ProgressReport {
             }
             kind
         });
+        let kind = kind.or_else(|| saved.and_then(|saved| saved.kind));
         let names: Vec<String> =
             raw.stages.iter().flatten().filter_map(|stage| filled(stage.name.clone())).collect();
         let stages = check_stages(raw.stages, &mut problems);

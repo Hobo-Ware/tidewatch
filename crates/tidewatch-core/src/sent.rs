@@ -38,10 +38,11 @@ pub mod because {
     pub const AWAY_ON: &str = "you turned Away on";
     pub const AWAY_OFF: &str = "you turned Away off";
     pub const KEEP_GOING: &str = "the user is away and the progress report has open steps";
+    pub const PR_ENDED: &str = "the pull request was merged or closed";
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 22] = [
+    pub const ALL: [&str; 23] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
@@ -64,6 +65,7 @@ pub mod because {
         AWAY_ON,
         AWAY_OFF,
         KEEP_GOING,
+        PR_ENDED,
     ];
 }
 
