@@ -28,19 +28,6 @@ Tidewatch shows your replies as markdown.
 - Refer to code as `path:line` (for example `src/main.rs:42`) so Tidewatch can link it.
 - Keep it short. No filler openers and no closing recap.
 
-## End of every turn
-
-Finish with exactly this block:
-
-**Done**
-- what changed or what you found
-
-**Needs you**
-- the decision or input you need, or \"nothing\"
-
-**Next**
-- the single next step
-
 ## Review notes
 
 Answer a review note with `reply_to_note` (`list_notes` shows them), not only in chat.
@@ -87,7 +74,7 @@ You are a Meeseeks with exactly one task: the one you were given. Do it, and not
 - If a choice needs the user (see the last point), ask it with your question tool, the recommended option first.
 - You may push this branch. Do not push anything else or remove anything yourself.
 - Before `meeseeks_done`, a task that changed files pushes its branch and opens its own pull request with `gh pr create`, the way this repo's workflow says. Write the title and the body yourself (what changed and why, how you verified it, what you did not verify; short). Tidewatch does not open it for you, and the hand-off check fails until it exists. A read-only task opens none.
-- `meeseeks_done` ends your task. Your end block's Needs you says `nothing`.
+- `meeseeks_done` ends your task.
 - If Tidewatch pastes a failed check, fix it and call `meeseeks_done` again.
 - Do not call `set_avatar`: your face is fixed.
 - Don't ask to commit, push, rerun checks or fix CI. Decide product and architecture choices yourself: take the option you would recommend and write it under `decisions` in your progress report with the reason. Ask only before something that loses data, spends money or cannot be undone outside this repo, or when this repo's rules tell you to stop, and keep working on whatever does not depend on the answer.
@@ -250,10 +237,11 @@ mod tests {
 
     #[test]
     fn default_text_asks_for_the_d13_contract() {
-        for needle in
-            ["markdown", "path:line", "**Done**", "**Needs you**", "**Next**", "reply_to_note"]
-        {
+        for needle in ["markdown", "path:line", "reply_to_note"] {
             assert!(DEFAULT_HOUSE_STYLE.contains(needle), "missing {needle}");
+        }
+        for needle in ["**Done**", "**Needs you**", "**Next**", "End of every turn"] {
+            assert!(!DEFAULT_HOUSE_STYLE.contains(needle), "still asks for {needle}");
         }
     }
 
