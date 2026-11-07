@@ -190,19 +190,12 @@ impl Tidewatch {
             .map(|(id, _)| *id)
             .filter(|id| self.job_live.board(*id).is_some_and(JobBoard::has_running))
             .collect();
-        let mut wake = self.job_live.tick(&facts, &agents, ctx, now_ms);
+        let wake = self.job_live.tick(&facts, &agents, ctx, now_ms);
         let ended =
             running.iter().any(|id| !self.job_live.board(*id).is_some_and(JobBoard::has_running));
         if ended {
             self.parking.look_again();
             ctx.request_repaint();
-        }
-        for tab in self.tabs.items() {
-            let (Body::Shell(term), Some(_)) = (&tab.pane.body, &tab.pane.agent) else { continue };
-            let later = self.job_live.scan(tab.id, term.output_gen(), now_ms, || {
-                job_glue::screen_rows(&term.grid_snapshot())
-            });
-            wake = wake.into_iter().chain(later).min();
         }
         if let Some(at) = wake {
             let wait = u64::try_from((at - now_ms).max(0)).unwrap_or(0);

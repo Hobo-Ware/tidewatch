@@ -405,19 +405,6 @@ fn a_job_with_a_total_is_not_timed() {
 }
 
 #[test]
-fn a_terminal_line_only_updates_a_job_that_is_already_there() {
-    let mut board = JobBoard::default();
-    assert!(!board.report_known(&with("orders", 5.0, 10.0), 0));
-    assert!(board.is_empty());
-    board.report(&with("orders", 1.0, 10.0), 0);
-    assert!(board.report_known(&with("Orders", 5.0, 10.0), MIN));
-    assert_eq!(job(&board).done, 5.0);
-    board.report(&Report { state: Some(JobState::Done), ..Report::named("orders") }, 2 * MIN);
-    assert!(!board.report_known(&with("orders", 1.0, 10.0), 3 * MIN));
-    assert_eq!(job(&board).state, JobState::Done);
-}
-
-#[test]
 fn reaching_the_total_finishes_a_job_whatever_state_the_line_named() {
     let cases = [
         ("no state", None, 100.0, JobState::Done),

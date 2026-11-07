@@ -1,4 +1,4 @@
-//! A long job of one tab: what a script, the agent or the terminal reported about it, and what
+//! A long job of one tab: what a script or the agent reported about it, and what
 //! follows (rate, ETA, stalled). Reports from every source merge by job name. Pure.
 
 use crate::text::squash;
@@ -372,16 +372,6 @@ impl JobBoard {
             || after.state != before.state
             || after.eta_hint != before.eta_hint;
         moved || before.updated_ms == after.started_ms && before.samples.is_empty()
-    }
-
-    /// Takes a reading for a job the board already runs. A reading with no such job (a line
-    /// scraped from the terminal) never starts one, and never restarts a finished one.
-    pub fn report_known(&mut self, report: &Report, now_ms: i64) -> bool {
-        let Some(cleaned) = report.cleaned() else { return false };
-        let key = cleaned.name.to_lowercase();
-        let known =
-            self.jobs.iter().any(|job| job.name.to_lowercase() == key && !job.state.is_finished());
-        known && self.report(&cleaned, now_ms)
     }
 
     fn add(&mut self, name: String, now_ms: i64) -> usize {

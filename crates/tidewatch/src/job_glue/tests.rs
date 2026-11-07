@@ -242,41 +242,6 @@ fn a_tab_that_closed_takes_its_board_with_it() {
 }
 
 #[test]
-fn the_terminal_scan_reads_only_lines_it_has_not_seen_and_waits_between_looks() {
-    let fx = Fx::new();
-    let mut host = Host::new(false, false);
-    fx.until_loaded(&mut host, 1, NOW);
-    let known = Report { done: Some(1.0), total: Some(10.0), ..Report::named("orders") };
-    host.report(1, known, NOW);
-    let screen = |lines: &[&str]| lines.iter().map(|line| (*line).to_owned()).collect::<Vec<_>>();
-    let first = screen(&["noise", "orders [###-------] 30% 3/10", "more noise"]);
-    assert_eq!(host.scan(1, 1, NOW + 5_000, || first.clone()), None);
-    assert_eq!(host.board(1).unwrap().jobs[0].done, 3.0);
-    assert_eq!(host.scan(1, 1, NOW + 6_000, || panic!("no new output")), None);
-    assert_eq!(host.scan(1, 2, NOW + 5_500, || panic!("too soon")), Some(NOW + 6_000));
-    let again = screen(&["orders [###-------] 30% 3/10", "orders [#####-----] 50% 5/10"]);
-    assert_eq!(host.scan(1, 2, NOW + 6_000, || again.clone()), None);
-    let job = &host.board(1).unwrap().jobs[0];
-    assert_eq!((job.done, job.samples.len()), (5.0, 3));
-}
-
-#[test]
-fn a_line_from_the_terminal_never_starts_a_job() {
-    let fx = Fx::new();
-    let mut host = Host::new(false, false);
-    fx.until_loaded(&mut host, 1, NOW);
-    let screen = vec!["orders [###-------] 30% 3/10".to_owned(), "[2/5] building".to_owned()];
-    assert_eq!(host.scan(1, 1, NOW + 5_000, || screen.clone()), None);
-    assert!(host.board(1).is_none());
-}
-
-#[test]
-fn the_terminal_scan_ignores_a_tab_it_does_not_know() {
-    let mut host = Host::new(false, false);
-    assert_eq!(host.scan(4, 1, NOW, || panic!("unknown tab")), None);
-}
-
-#[test]
 fn the_fake_board_has_the_jobs_of_the_mockup() {
     let board = fake_board(NOW);
     let by_name = |name: &str| board.jobs.iter().find(|job| job.name == name).unwrap();
@@ -417,22 +382,19 @@ fn a_launch_wakes_the_frame_when_it_turns_quiet() {
 }
 
 #[test]
-fn every_reading_from_the_agent_the_file_and_the_terminal_is_told_once_and_a_line_that_starts_nothing_is_not()
- {
+fn every_reading_from_the_agent_and_the_file_is_told_once() {
     let fx = Fx::new();
     let mut host = Host::new(false, false);
     fx.until_loaded(&mut host, 1, NOW);
     host.report(1, reading("orders", 1.0, 10.0), NOW);
     fx.append("{\"name\":\"orders\",\"done\":2,\"total\":10}\n");
     fx.tick(&mut host, &[1], NOW + 2_000);
-    let screen = vec!["orders [###-------] 30% 3/10".to_owned(), "[2/5] building".to_owned()];
-    host.scan(1, 1, NOW + 5_000, || screen.clone());
     let told: Vec<(u64, f64)> = host
         .take_told()
         .into_iter()
         .map(|(tab, report)| (tab, report.done.unwrap_or(0.0)))
         .collect();
-    assert_eq!(told, [(1, 1.0), (1, 2.0), (1, 3.0)]);
+    assert_eq!(told, [(1, 1.0), (1, 2.0)]);
     assert_eq!(host.take_told().len(), 0);
 }
 

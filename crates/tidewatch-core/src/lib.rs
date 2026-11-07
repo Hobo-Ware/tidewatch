@@ -61,7 +61,6 @@ pub mod house_style;
 pub mod image_paste;
 pub mod instance;
 pub mod job;
-pub mod job_bar;
 pub mod job_feed;
 pub mod job_mcp;
 pub mod job_store;
