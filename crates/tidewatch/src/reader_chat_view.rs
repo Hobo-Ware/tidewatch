@@ -17,6 +17,7 @@ use egui::{
 };
 use jiff::tz::TimeZone;
 use tidewatch_core::question;
+use tidewatch_core::sent::Record;
 use tidewatch_core::user_markup::{self, TaskResult};
 
 use crate::agent_avatar::{Face, paint_face};
@@ -37,6 +38,7 @@ use crate::reader_turns::{self, Body, Call, Group, Section};
 use crate::reader_view::{ellipsized, output_preview, split_label};
 use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{body, mono};
+use crate::tidewatch_view::{self, Click};
 use crate::token_view;
 use crate::tokens;
 
@@ -214,7 +216,42 @@ pub(crate) fn user(
     fresh: bool,
     parent: Option<Parent<'_>>,
 ) -> Option<BubbleAction> {
-    user_bubble(ui, row, Meta::Stamp(at_ms, zone), (width, pastes), (fresh, parent))
+    let voice = parent.map_or(Voice::Owner, Voice::Parent);
+    user_bubble(ui, row, Meta::Stamp(at_ms, zone), (width, pastes), (fresh, voice))
+}
+
+/// Tidewatch speaks as the owner: the owner's bubble plus a badge and a reason line.
+pub(crate) fn told(
+    ui: &mut Ui,
+    row: &Row,
+    record: &Record,
+    at_ms: Option<i64>,
+    zone: &TimeZone,
+    (width, pastes): (f32, Option<&Path>),
+    fresh: bool,
+) -> Option<Click> {
+    let voice = Voice::Told(record);
+    user_bubble(ui, row, Meta::Stamp(at_ms, zone), (width, pastes), (fresh, voice));
+    tidewatch_view::actions(ui, width - AVATAR - AVATAR_GAP, record)
+}
+
+#[derive(Clone, Copy)]
+enum Voice<'a> {
+    Owner,
+    Parent(Parent<'a>),
+    Told(&'a Record),
+}
+
+fn sent_caption(record: &Record) -> String {
+    format!("Sent for you \u{b7} {} \u{b7} {}", record.reason.tag(), record.footer())
+}
+
+fn caption(ui: &mut Ui, record: &Record, max_w: f32) {
+    let (rect, response) = ui.allocate_exact_size(vec2(max_w, META_H), Sense::hover());
+    let galley = ellipsized(ui.painter(), &sent_caption(record), body(12.0), brand::MUTED, max_w);
+    let x = rect.right() - galley.size().x;
+    ui.painter().galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::MUTED);
+    response.on_hover_text(record.footer());
 }
 
 /// Where a message the transcript does not have yet stands.
@@ -239,7 +276,7 @@ pub(crate) fn queued(
         Queue::Waiting(time) => Meta::Queued(time),
         Queue::NotSeen => Meta::NotSeen,
     };
-    user_bubble(ui, &row, meta_line, (width, None), (false, None))
+    user_bubble(ui, &row, meta_line, (width, None), (false, Voice::Owner))
 }
 
 #[derive(Clone, Copy)]
@@ -282,7 +319,7 @@ fn user_bubble(
     row: &Row,
     meta_line: Meta<'_>,
     (width, pastes): (f32, Option<&Path>),
-    (fresh, parent): (bool, Option<Parent<'_>>),
+    (fresh, voice): (bool, Voice<'_>),
 ) -> Option<BubbleAction> {
     ui.add_space(OUTER);
     let max_w = user_width(width);
@@ -302,7 +339,7 @@ fn user_bubble(
         Meta::Stamp(..) => 1.0,
         Meta::Queued(_) | Meta::NotSeen => QUEUED_OPACITY,
     };
-    let actionable = parent.is_none() && question::parse_answers(&row.text).is_none();
+    let actionable = matches!(voice, Voice::Owner) && question::parse_answers(&row.text).is_none();
     let mut asked = None;
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         let right = ui.max_rect().right();
@@ -312,7 +349,10 @@ fn user_bubble(
                 ui.spacing_mut().item_spacing.y = 4.0;
                 match meta_line {
                     Meta::Stamp(at_ms, zone) => {
-                        let who = parent.map_or("You", |parent| parent.name);
+                        let who = match voice {
+                            Voice::Parent(parent) => parent.name,
+                            Voice::Owner | Voice::Told(_) => "You",
+                        };
                         meta(ui, &stamped(who, at_ms, zone), Align::Max);
                     }
                     Meta::Queued(time) => queued_meta(ui, time),
@@ -391,6 +431,9 @@ fn user_bubble(
                             }
                         });
                     });
+                if let Voice::Told(record) = voice {
+                    caption(ui, record, max_w);
+                }
                 let whole = Rect::from_min_max(meta_rect.min, bubble.response.rect.max);
                 let kind = match meta_line {
                     Meta::Stamp(..) => Some(bubble_toolbar::Kind::Sent),
@@ -412,11 +455,18 @@ fn user_bubble(
         let mut painter = ui.painter().clone();
         painter.set_opacity(dim);
         let face_rect = user_face_rect(right, column.inner.bottom());
-        match parent {
-            Some(parent) => {
+        match voice {
+            Voice::Parent(parent) => {
                 paint_face(ui.ctx(), &painter, face_rect, parent.face);
             }
-            None => me_face::paint(ui.ctx(), &painter, face_rect),
+            Voice::Owner => me_face::paint(ui.ctx(), &painter, face_rect),
+            Voice::Told(record) => {
+                me_face::paint(ui.ctx(), &painter, face_rect);
+                tidewatch_view::paint_badge(&painter, face_rect);
+                let id = ui.id().with(("told-badge", row.seq));
+                ui.interact(tidewatch_view::badge_rect(face_rect), id, Sense::hover())
+                    .on_hover_text(record.footer());
+            }
         }
     });
     let room = if actionable && !matches!(meta_line, Meta::Queued(_)) {
@@ -1806,5 +1856,140 @@ mod tests {
             assert!(placed.toolbar.right() <= width, "{placed:?} past the edge at {width}");
             assert!(label.is_some_and(|label| !label.intersects(placed.toolbar)), "{label:?}");
         }
+    }
+
+    struct Told {
+        texts: Vec<(String, Rect)>,
+        shapes: Vec<Shape>,
+        bubble: Rect,
+        face: Rect,
+    }
+
+    fn draw_told(record: Option<&Record>) -> Told {
+        let ctx = crate::fonts::test_context();
+        crate::me_face::set(&ctx, crate::me_face::Me::Letter("V".to_owned()));
+        let row = Row {
+            seq: 7,
+            kind: Kind::User,
+            text: "Keep going, I will be back in an hour.".to_owned(),
+            pictures: Vec::new(),
+        };
+        let zone = TimeZone::UTC;
+        let mut told = Told {
+            texts: Vec::new(),
+            shapes: Vec::new(),
+            bubble: Rect::NOTHING,
+            face: Rect::NOTHING,
+        };
+        for _ in 0..2 {
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 300.0))),
+                focused: true,
+                ..egui::RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                ui.set_width(600.0);
+                let at = Some(1_700_000_000_000);
+                match record {
+                    Some(record) => {
+                        super::told(ui, &row, record, at, &zone, (600.0, None), false);
+                    }
+                    None => {
+                        user(ui, &row, at, &zone, (600.0, None), false, None);
+                    }
+                }
+            });
+            told.texts.clear();
+            told.shapes.clear();
+            for clipped in &out.shapes {
+                crate::test_support::painted_text_rects_nonblank(&clipped.shape, &mut told.texts);
+                flat(&clipped.shape, &mut told.shapes);
+            }
+        }
+        told.bubble = told
+            .shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Rect(rect) if rect.corner_radius == USER_RADIUS => Some(rect.rect),
+                _ => None,
+            })
+            .expect("the bubble is drawn");
+        told.face = told
+            .shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Circle(circle) if circle.stroke.width == 1.0 && circle.radius < 16.0 => {
+                    Some(Rect::from_center_size(circle.center, vec2(AVATAR, AVATAR)))
+                }
+                _ => None,
+            })
+            .expect("the face ring is drawn");
+        told
+    }
+
+    fn badge_rings(told: &Told) -> Vec<Pos2> {
+        told.shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                Shape::Circle(circle) if circle.fill == brand::GROUND => Some(circle.center),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn away_record() -> Record {
+        use tidewatch_core::sent::{Reason, because};
+        Record::new(Reason::Away, because::AWAY_ON, "Keep going, I will be back in an hour.", None)
+    }
+
+    #[test]
+    fn a_message_tidewatch_sent_is_signed_with_the_owners_name_and_says_why_in_one_muted_line() {
+        let record = away_record();
+        let told = draw_told(Some(&record));
+        let starts = |prefix: &str| told.texts.iter().any(|(text, _)| text.starts_with(prefix));
+        assert!(starts("You"), "{:?}", told.texts);
+        assert!(!starts("Tidewatch"), "{:?}", told.texts);
+        let (caption, rect) = told
+            .texts
+            .iter()
+            .find(|(text, _)| text.starts_with("Sent for you"))
+            .unwrap_or_else(|| panic!("the caption in {:?}", told.texts));
+        assert!(caption.contains("away") && caption.contains("Because"), "{caption}");
+        assert!(rect.top() >= told.bubble.bottom(), "the caption sits under the bubble");
+        assert!((rect.right() - told.bubble.right()).abs() <= 0.5);
+    }
+
+    #[test]
+    fn the_badge_sits_on_the_lower_right_of_the_owners_face() {
+        let told = draw_told(Some(&away_record()));
+        let rings = badge_rings(&told);
+        assert_eq!(rings.len(), 1, "{rings:?}");
+        let disc = tidewatch_view::badge_rect(told.face);
+        assert_eq!(rings[0], disc.center());
+        assert!(disc.center().x > told.face.center().x && disc.center().y > told.face.center().y);
+        assert!((told.face.bottom() - told.bubble.bottom()).abs() <= 0.5, "same level as a bubble");
+    }
+
+    #[test]
+    fn a_message_the_owner_typed_has_no_badge_and_no_caption() {
+        let told = draw_told(None);
+        assert_eq!(badge_rings(&told), Vec::<Pos2>::new());
+        assert!(told.texts.iter().all(|(text, _)| !text.starts_with("Sent for you")));
+        assert!(told.texts.iter().any(|(text, _)| text.starts_with("You")));
+    }
+
+    #[test]
+    fn a_long_reason_is_cut_to_one_line_inside_the_bubble_width() {
+        use tidewatch_core::sent::Reason;
+        let record = Record::new(Reason::Away, &"because ".repeat(60), "Keep going.", None);
+        let told = draw_told(Some(&record));
+        let (caption, rect) = told
+            .texts
+            .iter()
+            .find(|(text, _)| text.starts_with("Sent for you"))
+            .unwrap_or_else(|| panic!("the caption in {:?}", told.texts));
+        assert!(rect.height() < 20.0, "{caption}: {rect:?}");
+        assert!(rect.width() <= user_width(600.0) + 0.5, "{rect:?}");
+        assert!(rect.right() <= told.bubble.right() + 0.5, "{rect:?}");
     }
 }
