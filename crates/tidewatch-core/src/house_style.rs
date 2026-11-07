@@ -88,10 +88,19 @@ Ask with your question tool only before something that loses data, spends money 
 ";
 
 pub const AWAY_GUIDANCE: &str = "\
-## The user is away
+## I'm away
 
-Make your own decisions: do not ask the user and do not call the question tool. Write each decision and why under Decisions in your progress report, and keep working through the open steps. Tidewatch never tells you which option to pick.
+I'm away. Make your own decisions: don't ask me and don't call the question tool. Write each decision with its reason under decisions in your progress report. Keep going through the open steps.
 ";
+
+pub const WAKE_YOURSELF: &str = "When you have to wait (CI, a review, a background job, a time), don't end your turn hoping I'll ping you: wake yourself up. Use CronCreate with recurring false for a one-off check-in, Monitor to stream events from a script, or a background Bash or Agent call that notifies you when it ends. Save your report as waiting with waiting_on while you wait.";
+
+pub const WAIT_IN_REPORT: &str = "When you have to wait (CI, a review, a job, a time), save your report as waiting with waiting_on and end your turn; I'll check back.";
+
+#[must_use]
+pub fn wake_line(wakes_itself: bool) -> &'static str {
+    if wakes_itself { WAKE_YOURSELF } else { WAIT_IN_REPORT }
+}
 
 pub const KEPT_AWAKE_NOTE: &str = "\
 Tidewatch keeps this Mac awake, also with the lid closed. Never ask the user to keep the lid open.
@@ -208,7 +217,11 @@ pub fn compose_for_cli(
         Role::Autonomous => format!("\n{AUTONOMOUS_GUIDANCE}"),
         Role::Meeseeks | Role::MeeseeksOnPr => format!("\n{}", meeseeks_block(role)),
     };
-    let away = if presence.away { format!("\n{AWAY_GUIDANCE}") } else { String::new() };
+    let away = if presence.away {
+        format!("\n{AWAY_GUIDANCE}\n{}\n", wake_line(turn_end == TurnEnd::SentBack))
+    } else {
+        String::new()
+    };
     let awake = if presence.kept_awake { format!("\n{KEPT_AWAKE_NOTE}") } else { String::new() };
     format!(
         "{}\n\n{INTRO}\n{}\n{ASKING}\n{JOBS}{}{one_task}{away}{awake}",
@@ -359,11 +372,38 @@ mod tests {
             };
             let here = with(Presence::default());
             let away = with(Presence { away: true, kept_awake: false });
-            assert!(!here.contains("## The user is away"), "{role:?}");
+            assert!(!here.contains("## I'm away"), "{role:?}");
             assert!(away.contains(AWAY_GUIDANCE), "{role:?}");
-            assert!(away.contains("do not call the question tool"), "{role:?}");
-            assert!(away.contains("under Decisions in your progress report"), "{role:?}");
+            assert!(away.contains("don't call the question tool"), "{role:?}");
+            assert!(away.contains("under decisions in your progress report"), "{role:?}");
             assert!(!away.contains(KEPT_AWAKE_NOTE), "{role:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_claude_agent_is_told_the_tools_to_wake_itself_with() {
+        let away = Presence { away: true, kept_awake: false };
+        let with = |turn_end| compose_for_cli("be brief", None, Role::Agent, turn_end, None, away);
+        let claude = with(TurnEnd::SentBack);
+        for tool in ["CronCreate", "Monitor", "recurring false"] {
+            assert_eq!(claude.matches(tool).count(), 1, "{tool}");
+        }
+        assert!(claude.contains(WAKE_YOURSELF) && !claude.contains(WAIT_IN_REPORT));
+        let other = with(TurnEnd::Reminded);
+        for tool in ["CronCreate", "Monitor", "wake yourself up"] {
+            assert!(!other.contains(tool), "{tool}");
+        }
+        assert!(other.contains(WAIT_IN_REPORT) && other.contains("waiting_on"));
+    }
+
+    #[test]
+    fn the_cli_that_wakes_itself_is_the_one_whose_turn_end_is_sent_back() {
+        use crate::agents::AgentTable;
+        let table = AgentTable::builtin();
+        for id in ["claude", "codex", "gemini", "copilot"] {
+            let agent = table.get(id).unwrap();
+            let sent_back = TurnEnd::of(agent.wiring) == TurnEnd::SentBack;
+            assert_eq!(crate::agents::wakes_itself(id), sent_back, "{id}");
         }
     }
 
@@ -374,13 +414,13 @@ mod tests {
         };
         let awake = with(Presence { away: false, kept_awake: true });
         assert!(awake.contains("Never ask the user to keep the lid open."));
-        assert!(!awake.contains("## The user is away"));
+        assert!(!awake.contains("## I'm away"));
         assert!(!with(Presence::default()).contains("lid"));
     }
 
     #[test]
     fn the_away_text_never_names_an_option_and_has_no_dashes() {
-        for text in [AWAY_GUIDANCE, KEPT_AWAKE_NOTE] {
+        for text in [AWAY_GUIDANCE, WAKE_YOURSELF, WAIT_IN_REPORT, KEPT_AWAKE_NOTE] {
             assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "{text}");
         }
         assert!(!AWAY_GUIDANCE.to_lowercase().contains("recommend"));

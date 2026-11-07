@@ -185,6 +185,13 @@ pub fn asks_by_itself(id: &str) -> bool {
     id == "claude"
 }
 
+/// Whether the CLI has tools to schedule its own wake-up (Claude Code's `CronCreate`, `Monitor`
+/// and background calls).
+#[must_use]
+pub fn wakes_itself(id: &str) -> bool {
+    id == "claude"
+}
+
 #[must_use]
 pub fn reports_by_hooks(id: &str) -> bool {
     matches!(id, "claude" | "codex" | "gemini" | "copilot")

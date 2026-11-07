@@ -249,6 +249,7 @@ fn claude_hook_payloads_arrive_as_events_with_a_repaint() {
 #[test]
 fn a_background_launch_and_its_task_notification_arrive_as_background_events() {
     use tidewatch_core::background::Signal;
+    use tidewatch_core::status::Scheduled;
     let h = Harness::start();
     let hook = h.register(7, "a");
     let mut client = h.client();
@@ -264,6 +265,7 @@ fn a_background_launch_and_its_task_notification_arrive_as_background_events() {
             command: "./run.sh".into()
         })
     );
+    assert_eq!(h.next_event().event, TabEvent::Scheduled(Scheduled::Background));
     assert!(matches!(h.next_event().event, TabEvent::Hook(_)));
     let notice = json!({"hook_event_name": "UserPromptSubmit", "prompt": "<task-notification>\n<tool-use-id>toolu_9</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>"})
     .to_string();
