@@ -7,7 +7,6 @@ use egui::Color32;
 
 use tidewatch_core::agents::Level;
 use tidewatch_core::civil_date::Date;
-use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::meeseeks::elapsed_text;
 use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::panel_view::{Tone, Why};
@@ -85,7 +84,6 @@ pub(crate) struct Row {
     /// The one tone every screen shows for the tab: the agent's report, or the facts Tidewatch owns.
     pub(crate) tone: Tone,
     pub(crate) detail: Option<String>,
-    pub(crate) end_block: Option<EndBlock>,
     pub(crate) elapsed: f64,
     /// The tab's pull request: `#42 checks failed`, with its tone.
     pub(crate) pr: Option<(tidewatch_core::pr_status::Tone, String)>,
@@ -219,7 +217,6 @@ pub(crate) fn collect<T>(
                 status: agent.run.status().clone(),
                 tone: agent.run.shown_tone(),
                 detail: agent.run.detail().map(str::to_owned),
-                end_block: agent.run.end_block().cloned(),
                 elapsed: agent.run.elapsed(now),
                 pr: None,
                 done_check: None,
@@ -301,13 +298,7 @@ fn card_view_of(row: &Row) -> CardView {
     CardView {
         fraction: if status_tone == Tone::Done { 1.0 } else { 0.0 },
         ring: ink,
-        line: row
-            .end_block
-            .as_ref()
-            .and_then(|block| block.done.first())
-            .map(|done| first_line(done))
-            .or_else(|| row.detail.as_deref().map(first_line))
-            .unwrap_or_default(),
+        line: row.detail.as_deref().map(first_line).unwrap_or_default(),
         line_ink: crate::brand::SOFT,
         tag: label(status_tone).to_owned(),
         tag_ink: ink,
@@ -610,7 +601,6 @@ mod tests {
             tone: Tone::of(&status),
             status,
             detail: None,
-            end_block: None,
             elapsed: 0.0,
             pr: None,
             done_check: None,
@@ -1008,9 +998,7 @@ mod tests {
         assert_eq!((view.tag.as_str(), view.fraction), ("Needs you", 0.0));
         assert_eq!(card_view(&row(3, "c", AgentStatus::Done)).fraction, 1.0);
         let mut done = row(5, "d", AgentStatus::Done);
-        done.detail = Some("ignored".into());
-        done.end_block =
-            Some(EndBlock { done: vec!["Committed ec84557".into()], ..EndBlock::default() });
+        done.detail = Some("Committed ec84557".into());
         assert_eq!(card_view(&done).line, "Committed ec84557");
     }
 

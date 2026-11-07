@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 
 use tidewatch_core::agents::reports_by_hooks;
 use tidewatch_core::elsewhere_scan::RealSystem;
-use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::events::{TabEvent, TabMessage};
 use tidewatch_core::panel_counter::{self, Counter, Outcome};
 use tidewatch_core::panel_event::{Event, Fact, PrFacts, Source};
@@ -526,15 +525,12 @@ impl Host {
                     ended = true;
                 }
             }
-            if gone || ended {
-                let block = self.end_block(id, now_ms);
-                if agent.run.settle_ended_turn(block, now) {
-                    if ended {
-                        self.missed(Source::Hook);
-                    }
-                    if self.echo {
-                        eprintln!("tidewatch: panel settle tab={id} at {now_ms}");
-                    }
+            if (gone || ended) && agent.run.settle_ended_turn(now) {
+                if ended {
+                    self.missed(Source::Hook);
+                }
+                if self.echo {
+                    eprintln!("tidewatch: panel settle tab={id} at {now_ms}");
                 }
             }
         }
@@ -545,13 +541,6 @@ impl Host {
     fn missed(&mut self, source: Source) {
         self.counter.record((self.clock)(), source, Outcome::Missed);
         self.saving.dirty = true;
-    }
-
-    fn end_block(&self, tab: u64, now_ms: i64) -> Option<EndBlock> {
-        if let Some(fake) = self.fake {
-            return fake.view(now_ms).end_block;
-        }
-        self.tabs.get(&tab)?.ready.as_ref()?.state.end_block().cloned()
     }
 
     fn question_ended(&mut self, tab: u64, asking: bool, now_ms: i64) {

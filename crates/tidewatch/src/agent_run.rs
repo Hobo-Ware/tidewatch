@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use stdusk_core::progress::Progress;
 use stdusk_core::terminal::{CmdState, PtyTerm};
 use tidewatch_core::agents::reports_by_hooks;
-use tidewatch_core::end_block::{self, EndBlock};
 use tidewatch_core::events::TabEvent;
 use tidewatch_core::panel_view::Tone;
 use tidewatch_core::progress::State;
@@ -99,7 +98,6 @@ pub(crate) struct AgentRun {
     goal: Option<String>,
     reported: Option<State>,
     detail: Option<String>,
-    end_block: Option<EndBlock>,
     failed: Option<String>,
     held: Option<AgentStatus>,
     /// The first question of an `ask_user` call the user has not answered: the agent is blocked on it.
@@ -148,7 +146,6 @@ impl AgentRun {
             goal: None,
             reported: None,
             detail: None,
-            end_block: None,
             failed: None,
             held: None,
             asking: None,
@@ -214,7 +211,6 @@ impl AgentRun {
             },
             now,
         );
-        self.end_block = None;
         self.turn_started_at = Some(now);
         self.tools_this_turn = false;
         true
@@ -222,7 +218,7 @@ impl AgentRun {
 
     /// The transcript or the process list shows the turn is over and no hook said so: settle the
     /// status as a finished turn would. Returns whether a turn was open.
-    pub(crate) fn settle_ended_turn(&mut self, end_block: Option<EndBlock>, now: f64) -> bool {
+    pub(crate) fn settle_ended_turn(&mut self, now: f64) -> bool {
         if !self.tracker.turn_open() {
             return false;
         }
@@ -235,9 +231,6 @@ impl AgentRun {
             },
             now,
         );
-        if end_block.is_some() {
-            self.end_block = end_block;
-        }
         true
     }
 
@@ -315,12 +308,6 @@ impl AgentRun {
         self.detail.as_deref()
     }
 
-    /// The Done / Needs you / Next block of the agent's last message (D13), when it had one. Cleared
-    /// when the next turn starts.
-    pub(crate) fn end_block(&self) -> Option<&EndBlock> {
-        self.end_block.as_ref()
-    }
-
     #[cfg(test)]
     pub(crate) fn tracker(&self) -> &StatusTracker {
         &self.tracker
@@ -361,7 +348,6 @@ impl AgentRun {
                 self.unreported = false;
                 match (&hook.kind, &hook.message) {
                     (HookKind::TurnStarted, _) => {
-                        self.end_block = None;
                         self.turn_started_at = Some(now);
                         self.tools_this_turn = false;
                     }
@@ -371,9 +357,6 @@ impl AgentRun {
                         | HookKind::ToolFinished { .. },
                         _,
                     ) => self.tools_this_turn = true,
-                    (HookKind::TurnDone, Some(message)) => {
-                        self.end_block = end_block::parse(message);
-                    }
                     _ => {}
                 }
                 match (&hook.kind, &hook.message) {
@@ -694,29 +677,6 @@ mod tests {
     }
 
     #[test]
-    fn the_end_block_of_the_last_message_is_kept_until_the_next_turn_starts() {
-        let mut run = running(0.0);
-        run.on_event(hook(HookKind::TurnStarted, None), 1.0);
-        let message =
-            "Added it.\n\n**Done**\n- the helper\n\n**Needs you**\n- nothing\n\n**Next**\n- review";
-        run.on_event(hook(HookKind::TurnDone, Some(message)), 2.0);
-        let block = run.end_block().unwrap();
-        assert_eq!(block.done, ["the helper"]);
-        assert_eq!(block.next, ["review"]);
-        run.on_event(hook(HookKind::TurnStarted, None), 3.0);
-        assert_eq!(run.end_block(), None);
-    }
-
-    #[test]
-    fn a_stop_without_text_or_without_the_block_leaves_no_card() {
-        let mut run = running(0.0);
-        run.on_event(hook(HookKind::TurnDone, None), 1.0);
-        assert_eq!(run.end_block(), None);
-        run.on_event(hook(HookKind::TurnDone, Some("Just prose, no block.")), 2.0);
-        assert_eq!(run.end_block(), None);
-    }
-
-    #[test]
     fn a_failed_turn_keeps_its_reason_as_the_detail() {
         let mut run = running(0.0);
         run.on_event(hook(HookKind::TurnFailed("rate_limit".into()), None), 5.0);
@@ -944,31 +904,24 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_the_hooks_never_closed_settles_when_told_it_is_over_and_keeps_the_end_block() {
+    fn a_turn_the_hooks_never_closed_settles_when_told_it_is_over() {
         let mut run = running(0.0);
         run.on_event(hook(HookKind::TurnStarted, None), 1.0);
         run.refresh(2.0);
         assert_eq!(run.status(), &AgentStatus::Working);
-        let block = end_block::parse(
-            "**Done**\n- the helper\n\n**Needs you**\n- nothing\n\n**Next**\n- review",
-        );
-        assert!(run.settle_ended_turn(block, 3.0));
+        assert!(run.settle_ended_turn(3.0));
         run.refresh(3.0);
         assert_eq!(run.status(), &AgentStatus::Done);
-        assert_eq!(
-            run.end_block().map(|block| block.done.clone()),
-            Some(vec!["the helper".to_owned()])
-        );
     }
 
     #[test]
     fn settling_a_turn_that_is_not_open_changes_nothing() {
         let mut run = running(0.0);
-        assert!(!run.settle_ended_turn(None, 1.0));
+        assert!(!run.settle_ended_turn(1.0));
         run.on_event(hook(HookKind::TurnStarted, None), 2.0);
         run.on_event(hook(HookKind::TurnDone, None), 3.0);
         run.refresh(3.0);
-        assert!(!run.settle_ended_turn(None, 4.0));
+        assert!(!run.settle_ended_turn(4.0));
         assert_eq!(run.status(), &AgentStatus::Done);
     }
 
@@ -979,7 +932,7 @@ mod tests {
         run.on_event(hook(HookKind::PermissionNeeded, None), 2.0);
         run.refresh(2.0);
         assert_eq!(run.status(), &AgentStatus::NeedsYou(Reason::Permission));
-        assert!(run.settle_ended_turn(None, 3.0));
+        assert!(run.settle_ended_turn(3.0));
         run.refresh(3.0);
         assert_eq!(run.status(), &AgentStatus::Done);
     }

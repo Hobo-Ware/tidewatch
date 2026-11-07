@@ -3,7 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::end_block::EndBlock;
 use crate::panel_event::{AskKind, Source};
 use crate::progress::State;
 use crate::status::{AgentStatus, Reason};
@@ -170,7 +169,6 @@ pub struct PanelView {
     pub answers: u32,
     pub turn: Turn,
     pub asking: Option<Asking>,
-    pub end_block: Option<EndBlock>,
     pub revs: Revs,
     /// The last event folded.
     pub shown_seq: u64,

@@ -2,7 +2,6 @@
 //! agent tab one fixed `PanelView` (nothing is read, logged or written), and
 //! `TIDEWATCH_FAKE_ONTIME=<percent>` fills the About card's `Panel on time` row.
 
-use tidewatch_core::end_block::EndBlock;
 use tidewatch_core::panel_event::{Source, StepBy};
 use tidewatch_core::panel_state::MarkSeen;
 use tidewatch_core::panel_view::{Age, Ages, PanelView, Quiet, ReportMark, Revs, Tone, Turn, Why};
@@ -89,11 +88,6 @@ impl Fake {
                 ended_ms: (!working).then_some(now_ms - 11 * MINUTE_MS),
             },
             asking: None,
-            end_block: Some(EndBlock {
-                done: vec!["Added the helper".to_owned()],
-                needs_you: Vec::new(),
-                next: vec!["Review the diff".to_owned()],
-            }),
             revs: Revs::default(),
             shown_seq: 0,
         }

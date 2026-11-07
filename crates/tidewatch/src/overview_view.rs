@@ -1150,7 +1150,6 @@ mod tests {
             tone: Tone::of(&status),
             status,
             detail: Some("Bash: touch hello.txt".into()),
-            end_block: None,
             elapsed: 242.0,
             pr: None,
             done_check: None,
