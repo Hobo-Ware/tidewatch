@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 
-use egui::{Context, ViewportCommand};
+use egui::{Context, ViewportCommand, WindowLevel};
 use tidewatch_core::instance::{self, Claim, Command, Guard, Primary};
 use tidewatch_core::prefs::WindowPrefs;
 
@@ -52,6 +52,7 @@ pub(crate) struct Shell<O: Os> {
     label: String,
     quake: Quake,
     prompt: Prompt,
+    on_top: bool,
     inbox: Receiver<Command>,
     guard: Option<Guard>,
     registered: Option<Chord>,
@@ -79,6 +80,7 @@ impl<O: Os> Shell<O> {
             label,
             quake: Quake::new(),
             prompt: Prompt::new(),
+            on_top: false,
             inbox,
             guard,
             registered: None,
@@ -209,6 +211,12 @@ impl<O: Os> Shell<O> {
             let (focused, now) = ctx.input(|i| (i.viewport().focused.unwrap_or(true), i.time));
             let app_active = self.os.app_active();
             let step = self.prompt.tick(prompt_open, app_active, focused, now);
+            if step.on_top != self.on_top {
+                self.on_top = step.on_top;
+                let level =
+                    if step.on_top { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal };
+                ctx.send_viewport_cmd(ViewportCommand::WindowLevel(level));
+            }
             if step.refocus && !(self.plan.quake && self.quake.hidden()) {
                 ctx.send_viewport_cmd(ViewportCommand::Focus);
             }
@@ -763,7 +771,8 @@ mod tests {
         rig.shell.os.active = true;
         rig.settle();
         rig.prompt_open = true;
-        rig.quiet_frame();
+        let (_, opened) = rig.quiet_frame();
+        assert_eq!(opened, vec![ViewportCommand::WindowLevel(WindowLevel::AlwaysOnTop)]);
         rig.shell.os.active = false;
         for _ in 0..4 {
             let (_, commands) = rig.frame(windowed(true, false));
@@ -777,6 +786,8 @@ mod tests {
         let (_, waiting) = rig.frame(windowed(true, false));
         assert_eq!((focus_count(&waiting), hides(&waiting)), (0, false));
         rig.shell.os.active = true;
+        let (_, back_in_place) = rig.frame(windowed(true, true));
+        assert_eq!(back_in_place, vec![ViewportCommand::WindowLevel(WindowLevel::Normal)]);
         for _ in 0..3 {
             let (_, quiet) = rig.frame(windowed(true, true));
             assert_eq!(quiet, vec![]);
@@ -843,7 +854,7 @@ mod tests {
         let (_, back) = rig.frame(windowed(true, false));
         assert_eq!(back, vec![ViewportCommand::Focus]);
         let (_, later) = rig.frame(windowed(true, true));
-        assert_eq!(later, vec![]);
+        assert_eq!(later, vec![ViewportCommand::WindowLevel(WindowLevel::Normal)]);
     }
 
     #[test]

@@ -67,6 +67,9 @@ pub(crate) struct PromptStep {
     /// given the focus back yet: bring the window back to the front, this once. Raising a window
     /// that already has the focus makes it blink.
     pub(crate) refocus: bool,
+    /// Keep the window above other apps until the focus is back: when the Touch ID sheet closes,
+    /// macOS activates the last regular app, not this accessory one, and it would cover the window.
+    pub(crate) on_top: bool,
 }
 
 /// Follows one prompt from the frame it opens to the frame the window has its focus back.
@@ -99,7 +102,9 @@ impl Prompt {
             (_, false) => (PromptState::Idle { was_active: active }, false, false),
         };
         self.state = state;
-        PromptStep { hold, refocus }
+        let on_top =
+            matches!(state, PromptState::Open { owed: true } | PromptState::Returning { .. });
+        PromptStep { hold, refocus, on_top }
     }
 }
 
@@ -376,6 +381,27 @@ mod tests {
         assert_eq!(at(&mut prompt, true, true, true, 3.0), (true, false), "sheet closed");
         assert_eq!(at(&mut prompt, false, true, true, 4.0), (false, false));
         assert_eq!(at(&mut prompt, false, true, true, 5.0), (false, false));
+    }
+
+    #[test]
+    fn the_window_stays_above_other_apps_from_the_prompt_until_the_focus_is_back() {
+        let mut prompt = Prompt::new();
+        let mut on_top =
+            |open, active, focused, now| prompt.tick(open, active, focused, now).on_top;
+        assert!(!on_top(false, true, true, 0.0));
+        assert!(on_top(true, true, true, 1.0));
+        assert!(on_top(true, false, false, 2.0), "the sheet took the focus");
+        assert!(on_top(false, false, false, 3.0), "the sheet closed, another app is active");
+        assert!(on_top(false, false, false, 3.1));
+        assert!(!on_top(false, true, true, 3.2), "the focus is back");
+    }
+
+    #[test]
+    fn a_prompt_opened_from_another_app_never_lifts_the_window_above_it() {
+        let mut prompt = Prompt::new();
+        prompt.tick(false, false, false, 0.0);
+        assert!(!prompt.tick(true, false, false, 1.0).on_top);
+        assert!(!prompt.tick(false, false, false, 2.0).on_top);
     }
 
     #[test]
