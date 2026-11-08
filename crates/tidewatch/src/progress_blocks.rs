@@ -1,15 +1,18 @@
 //! The Progress panel's blocks under the title: Waiting on you, Now, Waiting for, the steps by
-//! stage, Coming up and the Decisions, Not verified and Verified lists.
+//! stage with each step's day tag, and the Decisions, Not verified and Verified lists.
 
 use egui::epaint::text::TextFormat;
 use egui::{Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use tidewatch_core::civil_date::Date;
 use tidewatch_core::panel_state::{CheckSeen, MarkSeen};
 use tidewatch_core::progress::{Entry, Mark};
 
 use crate::brand;
 use crate::link_text::Text;
 use crate::panel_blocks::{self, Blocks, Proof, QUIET_PREFIX};
-use crate::progress_model::{Asked, Coming, ItemRow, JobNow, Now, StageRows, Tag};
+use crate::progress_model::{
+    Asked, ItemRow, JobNow, Now, StageRows, StepTag, Tag, TagTone, step_tag,
+};
 use crate::progress_ring::{paint_mark, tone_color};
 use crate::reader_view::ellipsized;
 use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, body, heading};
@@ -23,7 +26,9 @@ const LABEL_H: f32 = 22.0;
 const BAR_HEIGHT: f32 = 6.0;
 const BAR_SPACE: f32 = 6.0;
 const NAME_H: f32 = 20.0;
-const COMING_WHEN_W: f32 = 18.0;
+const TAG_CHARS: usize = 28;
+const TAG_PAD: f32 = 7.0;
+const TAG_GAP: f32 = 10.0;
 pub(crate) const LIST_LIMIT: usize = 4;
 
 /// How a block draws: its column, whether labels stack over values, and whether it holds a report
@@ -273,6 +278,7 @@ pub(crate) struct Steps<'a> {
     pub(crate) marks: &'a [MarkSeen],
     pub(crate) checks: &'a [CheckSeen],
     pub(crate) time: f64,
+    pub(crate) today: Date,
 }
 
 /// The steps by stage. Returns whether any step is under way, so the caller asks for frames.
@@ -288,22 +294,75 @@ pub(crate) fn steps_block(ui: &mut Ui, column: Column, steps: &Steps<'_>) -> boo
             let (mark, by_tidewatch) = panel_blocks::tick(row.mark, ticked);
             spinning |= mark == Mark::Doing;
             let below = under(row, mark, by_tidewatch, steps.checks);
-            step_row(ui, column, (row.text, mark, below.as_ref()), steps.time);
+            let tag = step_tag(row, steps.today);
+            step_row(ui, column, (row.text, mark, below.as_ref(), tag.as_ref()), steps.time);
         }
     }
     spinning
 }
 
+/// The fill and text color of a step's day tag; a ticked day has no fill.
+pub(crate) fn tag_colors(tone: TagTone) -> (Option<Color32>, Color32) {
+    match tone {
+        TagTone::Ticked => (None, brand::FAINT),
+        TagTone::Due => (Some(brand::ITEM_LINE), brand::SOFT),
+        TagTone::Today => (Some(brand::TEAL_NAV), brand::TEAL_TEXT),
+        TagTone::Late => (Some(brand::RED_FILL), brand::RED),
+        TagTone::You => (Some(brand::NEEDS_FILL), brand::NEEDS),
+        TagTone::Quiet => (Some(brand::ITEM_LINE), brand::MUTED),
+    }
+}
+
+/// A day tag laid out: its text clipped to a short pill, and the width the pill takes.
+pub(crate) struct TagLayout {
+    galley: std::sync::Arc<egui::Galley>,
+    fill: Option<Color32>,
+    ink: Color32,
+    clipped: bool,
+}
+
+impl TagLayout {
+    pub(crate) fn new(ui: &Ui, tag: &StepTag, dim: bool) -> Self {
+        let (fill, ink) = tag_colors(tag.tone);
+        let ink = if dim { ink.gamma_multiply(0.6) } else { ink };
+        let shown = tidewatch_core::text::clip(&tag.text, TAG_CHARS);
+        let clipped = shown != tag.text;
+        let galley = ui.painter().layout_no_wrap(shown, body(TEXT_SECONDARY), ink);
+        Self { galley, fill, ink, clipped }
+    }
+
+    pub(crate) fn width(&self) -> f32 {
+        self.galley.size().x + if self.fill.is_some() { 2.0 * TAG_PAD } else { 0.0 }
+    }
+
+    /// Paints the pill with its right edge at `right`, centred on `mid_y`; a clipped tag shows its whole text on hover.
+    pub(crate) fn paint(self, ui: &Ui, right: f32, mid_y: f32, full: &str, id: egui::Id) {
+        let size = vec2(self.width(), self.galley.size().y + 4.0);
+        let rect = Rect::from_min_size(pos2(right - size.x, mid_y - size.y / 2.0), size);
+        if let Some(fill) = self.fill {
+            ui.painter().rect_filled(rect, CornerRadius::same(255), fill);
+        }
+        let text_x = if self.fill.is_some() { rect.left() + TAG_PAD } else { rect.left() };
+        let at = pos2(text_x, mid_y - self.galley.size().y / 2.0);
+        ui.painter().galley(at, self.galley, self.ink);
+        if self.clipped {
+            ui.interact(rect, id, Sense::hover()).on_hover_text(full);
+        }
+    }
+}
+
 fn step_row(
     ui: &mut Ui,
     column: Column,
-    (text, mark, below): (&str, Mark, Option<&Under>),
+    (text, mark, below, tag): (&str, Mark, Option<&Under>, Option<&StepTag>),
     time: f64,
 ) {
     let painter = ui.painter().clone();
     let muted = matches!(mark, Mark::Skipped);
     let ink = column.ink(if muted { brand::FAINT } else { brand::TEXT });
-    let room = (column.width - TEXT_X).max(MIN_TEXT_W);
+    let tag_layout = tag.map(|tag| TagLayout::new(ui, tag, column.dim));
+    let tag_w = tag_layout.as_ref().map_or(0.0, |tag| tag.width() + TAG_GAP);
+    let room = (column.width - TEXT_X - tag_w).max(MIN_TEXT_W);
     let mut label = Text::new();
     label.run(text, &format(body(TEXT_BODY), ink));
     let label = label.wrapped(room, usize::MAX).lay_out(&painter);
@@ -339,27 +398,11 @@ fn step_row(
         let at = pos2(rect.left() + TEXT_X, rect.top() + label_h + 2.0);
         note.paint_selectable(ui, id.with("note"), at, brand::FAINT);
     }
-}
-
-/// Coming up: the report's scheduled items with when they are due.
-pub(crate) fn coming_block(ui: &mut Ui, column: Column, rows: &[Coming<'_>]) {
-    section_label(ui, column, "Coming up", Some(rows.len()));
-    for (index, row) in rows.iter().enumerate() {
-        let when = format!("{}  ", row.when);
-        let mut runs: Vec<(&str, FontId, Color32)> = vec![
-            (&when, body(TEXT_SECONDARY), column.ink(brand::TEAL_TEXT)),
-            (row.text, body(TEXT_BODY), column.ink(brand::TEXT)),
-        ];
-        if let Some(why) = row.why {
-            runs.push(("  ", body(TEXT_SECONDARY), brand::FAINT));
-            runs.push((why, body(TEXT_SECONDARY), column.ink(brand::FAINT)));
-        }
-        paragraph(ui, column, COMING_WHEN_W * 0.0, &runs, &format!("coming-{index}"));
-        ui.add_space(ROW_GAP - 2.0);
+    if let (Some(layout), Some(tag)) = (tag_layout, tag) {
+        layout.paint(ui, rect.right(), rect.top() + 10.0, &tag.text, id.with("tag"));
     }
 }
 
-/// What a list of entries draws: the first few, or all of them after a click.
 pub(crate) fn shown_count(len: usize, all: bool) -> usize {
     if all { len } else { len.min(LIST_LIMIT) }
 }

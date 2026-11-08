@@ -1,9 +1,10 @@
 //! What the progress screens say about a ledger, as plain data: ring, bars, rows, tags (pure).
 
+use tidewatch_core::civil_date::Date;
 use tidewatch_core::kind::Kind;
 use tidewatch_core::panel_rules::{Waiting, fresh, waiting_of};
 use tidewatch_core::progress::{
-    Choice, Entry, Item, Ledger, Mark, Phase, PhaseState, Scheduled, State, When, real,
+    Choice, Entry, Item, Ledger, Mark, Phase, PhaseState, State, When, real,
 };
 use tidewatch_core::progress_report::{StageKind, WaitingOn};
 use tidewatch_core::stages::{self, Group, Stage};
@@ -199,6 +200,8 @@ pub(crate) struct ItemRow<'a> {
     pub(crate) mark: Mark,
     pub(crate) text: &'a str,
     pub(crate) why: Option<&'a str>,
+    pub(crate) when: Option<&'a When>,
+    pub(crate) done_at: Option<u64>,
 }
 
 /// The steps of one stage, under the stage's name. A finished stage is `over`.
@@ -225,6 +228,8 @@ pub(crate) fn stage_rows(ledger: &Ledger, kind: Kind) -> Vec<StageRows<'_>> {
                     mark: item.mark,
                     text: item.text.as_str(),
                     why: item.why.as_deref().map(str::trim).filter(|why| !why.is_empty()),
+                    when: item.when.as_ref(),
+                    done_at: item.done_at,
                 })
                 .collect();
             let over = phases
@@ -368,40 +373,59 @@ pub(crate) fn asked(open: &[String], ledger: &Ledger) -> Option<Asked> {
         .map(|(first, rest)| Asked { text: (*first).to_owned(), more: rest.len() })
 }
 
-/// One item of the report's Coming up list.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Coming<'a> {
-    pub(crate) when: String,
-    pub(crate) text: &'a str,
-    pub(crate) why: Option<&'a str>,
+/// How a step's tag reads: the day it was ticked, or when an open step happens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TagTone {
+    Ticked,
+    Due,
+    Today,
+    Late,
+    You,
+    Quiet,
 }
 
-fn when_text(when: &When) -> String {
-    match when {
-        When::Date(date) => date.to_string(),
-        When::About(date) => format!("about {date}"),
-        When::On(event) => format!("when {event}"),
-        When::Parked(until) => format!("parked until {until}"),
-        When::You => "you decide".to_owned(),
-        When::Unknown(text) => text.clone(),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StepTag {
+    pub(crate) text: String,
+    pub(crate) tone: TagTone,
+}
+
+/// `today`, a weekday and day within the next or last six days (`Mon 9`), else month and day (`Nov 14`).
+pub(crate) fn day_text(date: Date, today: Date) -> String {
+    match today.days_until(date) {
+        0 => "today".to_owned(),
+        -6..=6 => format!("{} {}", date.weekday().short(), date.day()),
+        _ => format!(
+            "{} {}",
+            crate::park::MONTHS[usize::from(date.month().clamp(1, 12)) - 1],
+            date.day()
+        ),
     }
 }
 
-/// The scheduled items still open, the dated ones first and by date, then the rest as written.
-pub(crate) fn coming_up(ledger: &Ledger) -> Vec<Coming<'_>> {
-    let mut open: Vec<&Scheduled> = ledger
-        .scheduled
-        .iter()
-        .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
-        .collect();
-    open.sort_by_key(|item| item.when.date().map_or((1, None), |date| (0, Some(date))));
-    open.into_iter()
-        .map(|item| Coming {
-            when: when_text(&item.when),
-            text: item.what.trim(),
-            why: item.why.as_deref().map(str::trim).filter(|why| !why.is_empty()),
-        })
-        .collect()
+/// The tag at the end of a step row: when a finished step was ticked, when an open one is due. None
+/// for a skipped step, an open step for this turn, and a finished one from before the stamp existed.
+pub(crate) fn step_tag(row: &ItemRow<'_>, today: Date) -> Option<StepTag> {
+    let tag = |text: String, tone| Some(StepTag { text, tone });
+    match row.mark {
+        Mark::Skipped => None,
+        Mark::Done => {
+            let secs = i64::try_from(row.done_at?).ok()?;
+            tag(day_text(Date::from_unix_secs(secs), today), TagTone::Ticked)
+        }
+        _ => match row.when? {
+            When::Date(date) if *date < today => {
+                tag(format!("late \u{b7} {}", day_text(*date, today)), TagTone::Late)
+            }
+            When::Date(date) if *date == today => tag("today".to_owned(), TagTone::Today),
+            When::Date(date) => tag(day_text(*date, today), TagTone::Due),
+            When::About(date) => tag(format!("about {}", day_text(*date, today)), TagTone::Due),
+            When::On(event) => tag(format!("when {event}"), TagTone::Quiet),
+            When::Parked(until) => tag(format!("parked until {until}"), TagTone::Quiet),
+            When::You => tag("you".to_owned(), TagTone::You),
+            When::Unknown(text) => tag(text.clone(), TagTone::Quiet),
+        },
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -545,6 +569,68 @@ pub(crate) struct Look {
     pub(crate) tag: CardTag,
     pub(crate) questions: usize,
     pub(crate) ask: Option<Ask>,
+    pub(crate) checklist: CardChecklist,
+}
+
+/// One step on an Overview card: the facts its row and day tag need.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CardStep {
+    pub(crate) mark: Mark,
+    pub(crate) text: String,
+    pub(crate) when: Option<When>,
+    pub(crate) done_at: Option<u64>,
+}
+
+impl CardStep {
+    pub(crate) fn row(&self) -> ItemRow<'_> {
+        ItemRow {
+            mark: self.mark,
+            text: &self.text,
+            why: None,
+            when: self.when.as_ref(),
+            done_at: self.done_at,
+        }
+    }
+}
+
+/// What a card shows of the checklist: the last ticked step, then the open ones in the plan's
+/// order, and how many open steps did not fit. Empty when nothing is left.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CardChecklist {
+    pub(crate) steps: Vec<CardStep>,
+    pub(crate) more: usize,
+}
+
+pub(crate) const CARD_STEPS: usize = 4;
+
+pub(crate) fn card_checklist(ledger: &Ledger) -> CardChecklist {
+    let items: Vec<&Item> = ledger.checklist.iter().flat_map(|phase| &phase.items).collect();
+    let open: Vec<&Item> = items
+        .iter()
+        .copied()
+        .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
+        .collect();
+    if open.is_empty() {
+        return CardChecklist::default();
+    }
+    let ticked = items
+        .iter()
+        .copied()
+        .filter(|item| item.mark == Mark::Done)
+        .enumerate()
+        .max_by_key(|(at, item)| (item.done_at, *at))
+        .map(|(_, item)| item);
+    let room = CARD_STEPS - usize::from(ticked.is_some());
+    let step = |item: &Item| CardStep {
+        mark: item.mark,
+        text: item.text.clone(),
+        when: item.when.clone(),
+        done_at: item.done_at,
+    };
+    CardChecklist {
+        steps: ticked.into_iter().chain(open.iter().copied().take(room)).map(step).collect(),
+        more: open.len().saturating_sub(room),
+    }
 }
 
 /// The one question a card can answer with a click: its text, why it matters and the agent's options.
@@ -587,6 +673,7 @@ pub(crate) fn look_as(ledger: &Ledger, stale: bool, state: State) -> Look {
         tag: card_tag(ledger, tone),
         questions: questions(ledger).len(),
         ask: ask_of(ledger),
+        checklist: card_checklist(ledger),
     }
 }
 
@@ -1008,21 +1095,68 @@ mod tests {
     }
 
     #[test]
-    fn coming_up_lists_the_open_scheduled_items_dated_first_by_date() {
-        let text = "# Goal\nx\n\n## Scheduled\n- [ ] on: the partner replies -- Reconcile -- needs their file\n- [ ] 2026-11-09 -- Retire the flag\n- [x] 2026-10-01 -- Done already\n- [ ] ~2026-11-02 -- Check the counts\n- [ ] you -- Decide the rollout\n";
-        let ledger = ledger(text);
-        let rows: Vec<(String, &str, Option<&str>)> =
-            coming_up(&ledger).into_iter().map(|row| (row.when, row.text, row.why)).collect();
+    fn a_card_shows_the_last_ticked_step_then_the_open_ones_in_order_and_counts_the_rest() {
+        let text = "# Goal\nx\n\n## Checklist\n### 1. A\n- [x] one\n- [x] two\n### 2. B\n- [~] three\n- [ ] four\n- [!] five\n- [-] gone\n- [ ] six\n- [ ] seven\n";
+        let list = card_checklist(&ledger(text));
+        let texts: Vec<&str> = list.steps.iter().map(|step| step.text.as_str()).collect();
+        assert_eq!(texts, ["two", "three", "four", "five"]);
+        assert_eq!(list.more, 2);
+        let mut stamped = ledger(text);
+        stamped.checklist[0].items[0].done_at = Some(9);
+        stamped.checklist[0].items[1].done_at = Some(5);
+        assert_eq!(card_checklist(&stamped).steps[0].text, "one", "the latest tick wins");
+        let finished = ledger("# Goal\nx\n\n## Checklist\n### 1. A\n- [x] one\n- [-] two\n");
+        assert_eq!(card_checklist(&finished), CardChecklist::default());
+        let fresh = card_checklist(&ledger(
+            "# Goal\nx\n\n## Checklist\n### 1. A\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n- [ ] e\n",
+        ));
         assert_eq!(
-            rows,
-            [
-                ("about 2026-11-02".to_owned(), "Check the counts", None),
-                ("2026-11-09".to_owned(), "Retire the flag", None),
-                ("when the partner replies".to_owned(), "Reconcile", Some("needs their file")),
-                ("you decide".to_owned(), "Decide the rollout", None),
-            ]
+            (fresh.steps.len(), fresh.more),
+            (4, 1),
+            "no tick leaves all four rows to open steps"
         );
-        assert_eq!(coming_up(&super::tests::ledger("# Goal\nx\n")), Vec::<Coming<'_>>::new());
+    }
+
+    #[test]
+    fn a_step_tag_says_when_it_was_ticked_or_when_it_is_due() {
+        fn row(mark: Mark, when: Option<&When>, done_at: Option<u64>) -> ItemRow<'_> {
+            ItemRow { mark, text: "x", why: None, when, done_at }
+        }
+        let today = Date::parse("2026-11-08").unwrap();
+        let day = |text: &str| Date::parse(text).unwrap();
+        let noon = |date: Date| u64::try_from(date.day_number() * 86_400 + 43_200).unwrap();
+        let whens = [
+            When::Date(day("2026-11-07")),
+            When::Date(today),
+            When::Date(day("2026-11-09")),
+            When::About(day("2026-11-14")),
+            When::Date(day("2026-11-20")),
+            When::On("the partner replies".to_owned()),
+            When::Parked("the rewrite".to_owned()),
+            When::You,
+        ];
+        let open: Vec<(String, TagTone)> = whens
+            .iter()
+            .map(|when| step_tag(&row(Mark::Todo, Some(when), None), today).unwrap())
+            .map(|tag| (tag.text, tag.tone))
+            .collect();
+        let want = [
+            ("late \u{b7} Sat 7", TagTone::Late),
+            ("today", TagTone::Today),
+            ("Mon 9", TagTone::Due),
+            ("about Sat 14", TagTone::Due),
+            ("Nov 20", TagTone::Due),
+            ("when the partner replies", TagTone::Quiet),
+            ("parked until the rewrite", TagTone::Quiet),
+            ("you", TagTone::You),
+        ];
+        assert_eq!(open, want.map(|(text, tone)| (text.to_owned(), tone)));
+        let ticked =
+            step_tag(&row(Mark::Done, Some(&whens[2]), Some(noon(day("2026-11-07")))), today);
+        assert_eq!(ticked, Some(StepTag { text: "Sat 7".to_owned(), tone: TagTone::Ticked }));
+        assert_eq!(step_tag(&row(Mark::Done, None, None), today), None, "ticked before stamps");
+        assert_eq!(step_tag(&row(Mark::Skipped, Some(&whens[2]), Some(1)), today), None);
+        assert_eq!(step_tag(&row(Mark::Doing, None, None), today), None, "work for this turn");
     }
 
     #[test]

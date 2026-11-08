@@ -171,7 +171,6 @@ mod tests {
             steps: Vec::new(),
             needs_you: None,
             waiting_on: None,
-            scheduled: Vec::new(),
             verified: Vec::new(),
             not_verified: Vec::new(),
             decisions: Vec::new(),

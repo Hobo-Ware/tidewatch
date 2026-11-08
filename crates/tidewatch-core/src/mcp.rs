@@ -987,7 +987,6 @@ mod tests {
             "steps",
             "needs_you",
             "waiting_on",
-            "scheduled",
             "verified",
             "not_verified",
             "decisions",
@@ -995,6 +994,8 @@ mod tests {
             assert!(props.contains_key(key), "{key}");
         }
         assert!(!props.contains_key("ledger"));
+        assert!(!props.contains_key("scheduled"));
+        assert!(props["steps"]["items"]["properties"]["when"]["properties"]["about"].is_object());
         assert_eq!(schema["required"], json!(["state", "now", "stages"]));
         assert_eq!(
             props["state"]["enum"],

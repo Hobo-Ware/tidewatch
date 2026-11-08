@@ -20,8 +20,9 @@ use crate::overview::{
     fmt_elapsed, idle_line, needs_line, repo_ink, waiting_line,
 };
 use crate::overview_rail;
+use crate::overview_steps;
 use crate::panel_blocks;
-use crate::progress_model::Ask;
+use crate::progress_model::{Ask, CardChecklist};
 use crate::progress_ring;
 use crate::progress_view::flow;
 use crate::question_compact::{self, Click};
@@ -457,6 +458,12 @@ impl Lane {
     }
 
     fn plan(self, painter: &Painter, row: &Row, card_w: f32) -> Plan {
+        let steps = checklist_of(row).map_or(0.0, overview_steps::height);
+        let plan = self.plan_without_steps(painter, row, card_w);
+        Plan { text: plan.text + steps, ..plan }
+    }
+
+    fn plan_without_steps(self, painter: &Painter, row: &Row, card_w: f32) -> Plan {
         match (self, ask_of(row)) {
             (Self::Needs, Some(ask)) => {
                 let ask = AskLayout::new(painter, ask, card_w);
@@ -708,6 +715,10 @@ fn with_summary(summary: Option<&str>, tip: String) -> String {
     }
 }
 
+fn checklist_of(row: &Row) -> Option<&CardChecklist> {
+    row.look.as_ref().map(|look| &look.checklist)
+}
+
 fn ask_of(row: &Row) -> Option<&Ask> {
     row.look.as_ref()?.ask.as_ref()
 }
@@ -921,6 +932,16 @@ fn card(
             line_mid - galley.size().y / 2.0,
         );
         painter.galley(at, galley, brand::FAINT);
+    }
+    if let Some(list) = checklist_of(row) {
+        let top = inner.top() + plan.text - overview_steps::height(list);
+        overview_steps::paint(
+            ui,
+            &painter,
+            (text_x, inner.right(), top),
+            list,
+            (crate::progress_glue::today(), row.tab_id),
+        );
     }
     let mut out = CardOut::default();
     match lane {
@@ -1615,6 +1636,24 @@ mod tests {
         let mut screen = Screen::new(two_repos());
         assert_eq!(screen.click("web-working").jump, Some(1));
         assert_eq!(screen.click("Overview").jump, None);
+    }
+
+    #[test]
+    fn a_card_lists_what_is_left_and_counts_the_rest() {
+        let mut working = row(5, "importer", "acme-api", AgentStatus::Working);
+        working.look = Some(crate::progress_model::look(
+            &tidewatch_core::progress::Ledger::parse(
+                "# Goal\nx\n\n## Status\nstate: working\n\n## Checklist\n### 1. Build\n- [x] Merge the writes\n- [~] Hourly watch\n- [ ] Gate check\n- [ ] Turn on people\n- [ ] Switch images\n- [ ] Retire crons\n",
+            ),
+            false,
+        ));
+        let mut screen = Screen::new(overview(vec![working]));
+        let texts = screen.texts();
+        for text in ["Merge the writes", "Hourly watch", "Gate check", "Turn on people", "+ 2 more"]
+        {
+            assert!(has(&texts, text), "{text}: {texts:?}");
+        }
+        assert!(!has(&texts, "Switch images"), "only four rows fit: {texts:?}");
     }
 
     #[test]

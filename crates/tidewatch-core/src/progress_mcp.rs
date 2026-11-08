@@ -21,7 +21,7 @@ use crate::progress_store;
 pub const UPDATE_TOOL: &str = "update_progress";
 pub const GET_TOOL: &str = "get_progress";
 const LEDGER_KEY: &str = "ledger";
-const LEDGER_GONE: &str = "the `ledger` field is gone: send the typed fields, state, now and stages first, then steps, needs_you, waiting_on and scheduled when they apply";
+const LEDGER_GONE: &str = "the `ledger` field is gone: send the typed fields, state, now and stages first, then steps, needs_you and waiting_on when they apply";
 
 fn words<T: Copy>(all: &[T], word: fn(T) -> &'static str) -> Vec<&'static str> {
     all.iter().copied().map(word).collect()
@@ -62,6 +62,20 @@ fn links_schema(what: &str, with_for: bool) -> Value {
     })
 }
 
+fn when_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "For an open step that does not happen in this turn: exactly one of date (YYYY-MM-DD), about (YYYY-MM-DD, a guess), event (waits for something to happen), parked (set aside until what) or you (only the user can decide it, written as {\"you\": true}).",
+        "properties": {
+            "date": { "type": "string" },
+            "about": { "type": "string" },
+            "event": { "type": "string" },
+            "parked": { "type": "string" },
+            "you": { "type": "boolean" },
+        },
+    })
+}
+
 fn input_schema() -> Value {
     json!({
         "type": "object",
@@ -92,7 +106,7 @@ fn input_schema() -> Value {
             },
             "steps": {
                 "type": "array",
-                "description": "The concrete steps of this task, each under one of your stages.",
+                "description": "The checklist of the whole goal, not only this turn: every step done and every step left, each under one of your stages. Later work is a step too, with a when.",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -101,6 +115,7 @@ fn input_schema() -> Value {
                         "status": { "type": "string", "enum": words(StepStatus::ALL, StepStatus::word) },
                         "evidence": { "type": "string", "description": "For a done step: what shows it is done." },
                         "reason": { "type": "string", "description": "For a blocked or skipped step: why." },
+                        "when": when_schema(),
                     },
                     "required": ["stage", "text", "status"],
                 },
@@ -126,29 +141,6 @@ fn input_schema() -> Value {
                     "pr": { "type": "integer", "minimum": 1, "description": "A pull request number." },
                     "date": { "type": "string", "description": "YYYY-MM-DD." },
                     "event": { "type": "string" },
-                },
-            },
-            "scheduled": {
-                "type": "array",
-                "description": "Later work that is not for this turn. Everything you tell the user about later belongs here.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "when": {
-                            "type": "object",
-                            "description": "Exactly one of date (YYYY-MM-DD), about (YYYY-MM-DD, a guess), event (waits for something to happen), parked (set aside until what) or you (only the user can decide it, written as {\"you\": true}).",
-                            "properties": {
-                                "date": { "type": "string" },
-                                "about": { "type": "string" },
-                                "event": { "type": "string" },
-                                "parked": { "type": "string" },
-                                "you": { "type": "boolean" },
-                            },
-                        },
-                        "text": { "type": "string" },
-                        "why": { "type": "string" },
-                    },
-                    "required": ["when", "text"],
                 },
             },
             "verified": note_schema("What you checked, with the command and its result as why."),
@@ -216,9 +208,10 @@ pub fn update(args: &Map<String, Value>, file: &Path, emit: &dyn Fn(TabEvent)) -
             None
         }
     };
-    let Some(Checked { report, links }) = checked.filter(|_| problems.is_empty()) else {
+    let Some(Checked { mut report, links }) = checked.filter(|_| problems.is_empty()) else {
         return not_saved(&problems);
     };
+    report.stamp_done(saved.as_ref(), crate::clock::now_secs());
     if let Err(e) = progress_store::save_report(file, &report) {
         return save_failed(&e);
     }

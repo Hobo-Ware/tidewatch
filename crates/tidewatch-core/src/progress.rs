@@ -109,12 +109,14 @@ impl Mark {
     }
 }
 
-/// One checklist line: `- [~] text -- why`.
+/// One checklist line: `- [~] text -- why`. A report's step adds when it is due and when it was ticked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub mark: Mark,
     pub text: String,
     pub why: Option<String>,
+    pub when: Option<When>,
+    pub done_at: Option<u64>,
 }
 
 /// One ready answer on a Needs you line: `B*` is the recommended option `B`.
@@ -775,7 +777,7 @@ fn split_entry(text: &str) -> (String, Option<String>, Vec<Choice>) {
 
 fn item(mark: Mark, text: &str) -> Item {
     let (text, why) = split_why(text);
-    Item { mark, text, why }
+    Item { mark, text, why, when: None, done_at: None }
 }
 
 fn starts_like_when(text: &str) -> bool {

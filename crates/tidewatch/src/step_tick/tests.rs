@@ -3,7 +3,7 @@ use tidewatch_core::panel_event::StepBy;
 use super::*;
 
 fn row(mark: Mark, text: &str) -> ItemRow<'_> {
-    ItemRow { mark, text, why: None }
+    ItemRow { mark, text, why: None, when: None, done_at: None }
 }
 
 fn answered(question: &str) -> AnswerSeen {

@@ -63,11 +63,36 @@ fn report(state: &str, now: &str, stage: (&str, &str), extra: &serde_json::Value
         .expect("the stand-in report follows the contract")
 }
 
+const STEP_TEXTS: [&str; 8] = [
+    "Read the import code",
+    "Write the shadow reader",
+    "Hourly watch, 6 clean checks",
+    "Gate check before writes go live",
+    "Turn on people and shows",
+    "Switch movie images",
+    "Retire the legacy crons",
+    "Turn on subgenre writes",
+];
+
 fn ledger_look(phase: &str, note: &str, done: usize, total: usize) -> crate::progress_model::Look {
+    let today = crate::progress_glue::today();
     let steps: Vec<serde_json::Value> = (0..total)
         .map(|n| {
-            let status = if n < done { "done" } else { "todo" };
-            serde_json::json!({ "stage": phase, "text": format!("step {n}"), "status": status })
+            let text = STEP_TEXTS[n % STEP_TEXTS.len()];
+            let mut step = serde_json::json!({ "stage": phase, "text": text, "status": "todo" });
+            match n.cmp(&done) {
+                std::cmp::Ordering::Less => step["status"] = "done".into(),
+                std::cmp::Ordering::Equal => step["status"] = "active".into(),
+                std::cmp::Ordering::Greater => {
+                    step["when"] = match (n - done) % 4 {
+                        1 => serde_json::json!({ "date": today.plus_days(1).to_string() }),
+                        2 => serde_json::json!({ "about": today.plus_days(5).to_string() }),
+                        3 => serde_json::json!({ "event": "the PR merges" }),
+                        _ => serde_json::json!({ "you": true }),
+                    };
+                }
+            }
+            step
         })
         .collect();
     let mut ledger =
