@@ -63,8 +63,9 @@ enum PromptState {
 pub(crate) struct PromptStep {
     /// Do not hide on blur: the prompt, not the user, took the focus.
     pub(crate) hold: bool,
-    /// The prompt just ended and Tidewatch was the active app when it opened: bring the window
-    /// back to the front, this once.
+    /// The prompt just ended, Tidewatch was the active app when it opened, and macOS has not
+    /// given the focus back yet: bring the window back to the front, this once. Raising a window
+    /// that already has the focus makes it blink.
     pub(crate) refocus: bool,
 }
 
@@ -89,7 +90,7 @@ impl Prompt {
             (PromptState::Returning { .. }, true) => {
                 (PromptState::Open { owed: true }, true, false)
             }
-            (PromptState::Open { owed: true }, false) => {
+            (PromptState::Open { owed: true }, false) if !(focused && active) => {
                 (PromptState::Returning { until: now + REFOCUS_GRACE_S }, true, true)
             }
             (PromptState::Returning { until }, false) if !focused && now < until => {
@@ -364,6 +365,17 @@ mod tests {
         );
         assert_eq!(at(&mut prompt, false, true, true, 31.4), (false, false));
         assert_eq!(at(&mut prompt, false, true, true, 32.0), (false, false));
+    }
+
+    #[test]
+    fn a_prompt_that_ends_after_macos_gave_the_focus_back_does_not_raise_the_window_again() {
+        let mut prompt = Prompt::new();
+        at(&mut prompt, false, true, true, 0.0);
+        at(&mut prompt, true, true, true, 1.0);
+        assert_eq!(at(&mut prompt, true, false, false, 2.0), (true, false));
+        assert_eq!(at(&mut prompt, true, true, true, 3.0), (true, false), "sheet closed");
+        assert_eq!(at(&mut prompt, false, true, true, 4.0), (false, false));
+        assert_eq!(at(&mut prompt, false, true, true, 5.0), (false, false));
     }
 
     #[test]
