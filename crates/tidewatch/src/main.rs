@@ -158,6 +158,7 @@ mod overview;
 mod overview_checklist;
 mod overview_fake;
 mod overview_rail;
+mod overview_steps;
 mod overview_view;
 mod palette;
 mod palette_view;

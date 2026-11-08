@@ -2,8 +2,8 @@
 //! an agent sends replaces it, and the schedule index follows (in memory at once, on disk through a
 //! writer thread). Reads happen on `Jobs` threads.
 //!
-//! `TIDEWATCH_DEV_PROGRESS=<file>` gives the first agent tab the ledger in that file instead of
-//! reading its own, and writes nothing, so a screen can be captured without a real agent.
+//! `TIDEWATCH_DEV_PROGRESS=<file>` gives the first agent tab the ledger in that file (markdown, or a
+//! typed report when it ends in `.json`) instead of reading its own, and writes nothing, so a screen can be captured without a real agent.
 
 use std::path::{Path, PathBuf};
 
@@ -33,6 +33,10 @@ impl Dev {
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .and_then(|path| match std::fs::read_to_string(&path) {
+                Ok(text) if path.extension().is_some_and(|ext| ext == "json") => {
+                    tidewatch_core::progress_report::ProgressReport::from_stored_json(&text)
+                        .map(|report| report.to_ledger())
+                }
                 Ok(text) => Some(Ledger::parse(&text)),
                 Err(e) => {
                     eprintln!("tidewatch: cannot read {} ({e})", path.display());

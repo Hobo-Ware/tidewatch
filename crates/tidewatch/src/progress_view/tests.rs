@@ -1382,18 +1382,18 @@ fn a_quiet_turn_source_takes_the_age_slot_of_the_now_line_with_no_word_since() {
 const SCHEDULED: &str = "# Goal\nShip the digest\n\n## Status\nstate: waiting\nnote: Waiting for the partner\n\n## Checklist\n### 1. Build\n- [x] Write it -- ran the suite\n- [~] Wire the opt-out\n\n## Scheduled\n- [ ] 2026-11-09 -- Retire the old flag -- after the soak\n- [ ] 2026-11-02 -- Check the opt-out counts\n- [ ] on: the partner replies -- Reconcile the list\n";
 
 #[test]
-fn coming_up_lists_the_reports_scheduled_items_by_date_under_the_steps() {
-    let panel = Panel::new(SCHEDULED, 420.0);
-    assert!(panel.drawn("Coming up") && panel.drawn("3"), "{:?}", panel.texts);
-    let top = |text: &str| panel.texts.iter().find(|(t, _)| t.starts_with(text)).unwrap().1.top();
-    assert!(top("Wire the opt-out") < top("Coming up"));
-    assert!(
-        top("2026-11-02") < top("2026-11-09")
-            && top("2026-11-09") < top("when the partner replies")
-    );
-    assert!(panel.drawn("2026-11-09  Retire the old flag  after the soak"), "{:?}", panel.texts);
-    let none = Panel::new("# Goal\nx\n\n## Checklist\n### 1. Build\n- [~] a\n", 420.0);
-    assert!(!none.drawn("Coming up"));
+fn a_dated_step_shows_its_day_tag_on_its_own_row_and_the_panel_has_no_second_list() {
+    let report =
+        tidewatch_core::progress_report::ProgressReport::from_ledger(&Ledger::parse(SCHEDULED));
+    let mut panel = Panel::new("# Goal\nx\n", 420.0);
+    panel.ledger = Some(TabLedger { ledger: report.to_ledger(), updated_ms: Some(0) });
+    panel.frame(Vec::new());
+    assert!(!panel.drawn("Coming up"), "{:?}", panel.texts);
+    let row = |text: &str| panel.texts.iter().find(|(t, _)| t.starts_with(text)).unwrap().1;
+    let (step, tag) = (row("Reconcile the list"), row("when the partner replies"));
+    assert!((step.center().y - tag.center().y).abs() < 4.0, "{step:?} {tag:?}");
+    assert!(tag.left() > step.right(), "the tag sits after the text");
+    assert!(panel.drawn("Retire the old flag") && panel.drawn("Check the opt-out counts"));
 }
 
 #[test]

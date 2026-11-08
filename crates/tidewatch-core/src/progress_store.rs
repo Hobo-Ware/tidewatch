@@ -11,7 +11,7 @@ use crate::progress_report::ProgressReport;
 #[must_use]
 pub fn load_report(file: &Path) -> Option<ProgressReport> {
     let text = std::fs::read_to_string(file).ok()?;
-    serde_json::from_str(&text).ok()
+    ProgressReport::from_stored_json(&text)
 }
 
 /// The saved report as the screens read it.

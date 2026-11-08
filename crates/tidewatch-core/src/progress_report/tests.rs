@@ -422,19 +422,23 @@ fn a_job_wait_may_ride_along_with_a_question_and_work_but_never_with_done() {
     assert!(done.iter().any(|p| p.contains("waiting_on is set but state is done")), "{done:?}");
 }
 
+fn later(when: &Value) -> Value {
+    json!({ "stage": "Verify", "text": "x", "status": "todo", "when": when })
+}
+
 #[test]
-fn scheduled_takes_each_typed_when_and_refuses_a_bad_one() {
-    let value = with(|v| {
-        v["scheduled"] = json!([
-            { "when": { "date": "2026-11-01" }, "text": "a" },
-            { "when": { "about": "2026-11-07" }, "text": "b", "why": "w" },
-            { "when": { "event": "the partner replies" }, "text": "c" },
-            { "when": { "parked": "until the rewrite" }, "text": "d" },
-            { "when": { "you": true }, "text": "e" }
-        ]);
-    });
+fn a_step_takes_each_typed_when_and_refuses_a_bad_one() {
+    let whens = [
+        json!({ "date": "2026-11-01" }),
+        json!({ "about": "2026-11-07" }),
+        json!({ "event": "the partner replies" }),
+        json!({ "parked": "until the rewrite" }),
+        json!({ "you": true }),
+    ];
+    let value = with(|v| v["steps"] = Value::Array(whens.iter().map(later).collect()));
     let report = ProgressReport::check(&args(&value), None).unwrap();
-    let whens: Vec<When> = report.scheduled.iter().map(|item| item.when.to_when()).collect();
+    let whens: Vec<When> =
+        report.steps.iter().map(|step| step.when.as_ref().unwrap().to_when()).collect();
     assert!(matches!(whens[0], When::Date(_)));
     assert!(matches!(whens[1], When::About(_)));
     assert!(matches!(whens[2], When::On(_)));
@@ -443,26 +447,139 @@ fn scheduled_takes_each_typed_when_and_refuses_a_bad_one() {
     let cases = [
         (
             "a date after the word on",
-            json!({ "when": { "date": "on: 2026-11-01" }, "text": "x" }),
-            "scheduled[0].when.date must be a date written YYYY-MM-DD",
+            json!({ "date": "on: 2026-11-01" }),
+            "steps[0].when.date must be a date written YYYY-MM-DD",
         ),
         (
             "someday",
-            json!({ "when": { "someday": true }, "text": "x" }),
-            "scheduled[0].when must hold exactly one of date, about, event, parked or you",
+            json!({ "someday": true }),
+            "steps[0].when must hold exactly one of date, about, event, parked or you",
         ),
         (
             "two whens",
-            json!({ "when": { "date": "2026-11-01", "you": true }, "text": "x" }),
-            "scheduled[0].when must hold exactly one of",
+            json!({ "date": "2026-11-01", "you": true }),
+            "steps[0].when must hold exactly one of",
         ),
-        ("no when", json!({ "text": "x" }), "scheduled[0].when is required"),
-        ("no text", json!({ "when": { "you": true } }), "scheduled[0].text is required"),
     ];
-    for (name, item, want) in cases {
-        let found = problems(&with(|v| v["scheduled"] = json!([item])));
+    for (name, when, want) in cases {
+        let found = problems(&with(|v| v["steps"] = json!([later(&when)])));
         assert!(found.iter().any(|problem| problem.contains(want)), "{name}: {found:?}");
     }
+}
+
+#[test]
+fn the_old_scheduled_field_is_refused_with_the_fix() {
+    let found = problems(&with(|v| {
+        v["scheduled"] = json!([{ "when": { "you": true }, "text": "x" }]);
+    }));
+    assert!(
+        found.iter().any(|p| p.contains("`scheduled` field is gone") && p.contains("`when`")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn done_may_keep_dated_steps_for_later_but_not_undated_open_ones() {
+    let done = |steps: Value| {
+        with(|v| {
+            v["state"] = json!("done");
+            v["stages"] = json!([
+                { "name": "Build", "kind": "build", "status": "done" },
+                { "name": "Verify", "kind": "verify", "status": "todo" }
+            ]);
+            v["steps"] = steps;
+        })
+    };
+    let dated = done(json!([
+        { "stage": "Build", "text": "Ship it", "status": "done" },
+        { "stage": "Verify", "text": "List grows past 18", "status": "todo", "when": { "about": "2026-11-14" } }
+    ]));
+    let report = ProgressReport::check(&args(&dated), None).unwrap();
+    assert_eq!(report.warnings(), Vec::<String>::new());
+    let ledger = report.to_ledger();
+    assert_eq!(ledger.scheduled.len(), 1, "a dated open step is on Coming up");
+    assert_eq!(ledger.scheduled[0].what, "List grows past 18");
+    let undated = problems(&done(json!([
+        { "stage": "Build", "text": "Ship it", "status": "done" },
+        { "stage": "Verify", "text": "Check one row", "status": "todo" }
+    ])));
+    assert!(
+        undated
+            .iter()
+            .any(|p| p.contains("still open") && p.contains("give the ones for later a when")),
+        "{undated:?}"
+    );
+}
+
+#[test]
+fn only_open_dated_steps_reach_the_ledger_schedule_and_every_step_keeps_its_when() {
+    let value = with(|v| {
+        v["steps"] = json!([
+            { "stage": "Build", "text": "Done one", "status": "done", "when": { "date": "2026-11-01" } },
+            { "stage": "Verify", "text": "Later one", "status": "todo", "when": { "date": "2026-11-09" } },
+            { "stage": "Verify", "text": "Now one", "status": "active" }
+        ]);
+    });
+    let ledger = ProgressReport::check(&args(&value), None).unwrap().to_ledger();
+    let whats: Vec<&str> = ledger.scheduled.iter().map(|item| item.what.as_str()).collect();
+    assert_eq!(whats, ["Later one"]);
+    let items: Vec<_> = ledger.checklist.iter().flat_map(|phase| &phase.items).collect();
+    assert!(items[1].when.is_some() && items[2].when.is_none());
+    let back = ProgressReport::from_ledger(&ledger);
+    assert_eq!(back.steps.len(), 3, "a dated step is not repeated from the schedule");
+    assert_eq!(back.steps[1].when, Some(ReportWhen::Date(Date::parse("2026-11-09").unwrap())));
+}
+
+#[test]
+fn a_report_saved_with_scheduled_items_loads_them_as_dated_steps_of_the_last_stage() {
+    let mut old = good();
+    old["scheduled"] = json!([{ "when": { "about": "2026-11-14" }, "text": "Check the list", "why": "weekly refresh" }]);
+    let report = ProgressReport::from_stored_json(&old.to_string()).unwrap();
+    let step = report.steps.last().unwrap();
+    assert_eq!((step.stage.as_str(), step.text.as_str()), ("Verify", "Check the list"));
+    assert_eq!(step.when, Some(ReportWhen::About(Date::parse("2026-11-14").unwrap())));
+    assert_eq!(step.reason.as_deref(), Some("weekly refresh"));
+    assert!(!report.to_json().contains("scheduled"));
+}
+
+#[test]
+fn a_done_step_keeps_the_time_it_was_first_seen_done() {
+    let first = ProgressReport::check(&args(&good()), None).unwrap();
+    let mut saved = first.clone();
+    saved.stamp_done(None, 100);
+    assert_eq!(saved.steps[0].done_at, Some(100));
+    assert_eq!(saved.steps[1].done_at, None);
+    let value = with(|v| v["steps"][1]["status"] = json!("done"));
+    let mut next = ProgressReport::check(&args(&value), Some(&saved)).unwrap();
+    next.stamp_done(Some(&saved), 200);
+    assert_eq!((next.steps[0].done_at, next.steps[1].done_at), (Some(100), Some(200)));
+    let reopened = with(|v| v["steps"][0]["status"] = json!("active"));
+    let mut again = ProgressReport::check(&args(&reopened), Some(&next)).unwrap();
+    again.stamp_done(Some(&next), 300);
+    assert_eq!(again.steps[0].done_at, None);
+}
+
+#[test]
+fn a_stopped_report_with_open_steps_and_no_when_gets_a_warning() {
+    let waiting = with(|v| {
+        v["state"] = json!("waiting");
+        v["waiting_on"] = json!({ "job": "backfill" });
+    });
+    let report = ProgressReport::check(&args(&waiting), None).unwrap();
+    assert!(
+        report.warnings().iter().any(|w| w.contains("no open step has a when")),
+        "{:?}",
+        report.warnings()
+    );
+    let dated = with(|v| {
+        v["state"] = json!("waiting");
+        v["waiting_on"] = json!({ "job": "backfill" });
+        v["steps"][2]["when"] = json!({ "event": "the backfill ends" });
+    });
+    assert_eq!(
+        ProgressReport::check(&args(&dated), None).unwrap().warnings(),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
@@ -559,14 +676,18 @@ fn an_old_markdown_ledger_maps_onto_the_four_fixed_stages_and_keeps_its_facts() 
     );
     assert_eq!(report.state, State::Working);
     assert_eq!(report.now, "writing the 429 test");
-    assert_eq!(report.steps.len(), 6);
+    assert_eq!(report.steps.len(), 8, "six steps and two open scheduled items");
     assert_eq!(report.steps[0].evidence.as_deref(), Some("found the loop"));
     assert_eq!(report.steps[5].status, StepStatus::Blocked);
     assert_eq!(report.steps[5].reason.as_deref(), Some("waits on the deploy"));
     let ask = report.needs_you.as_ref().unwrap();
     assert_eq!((ask.options.len(), ask.recommended), (3, 1));
     assert_eq!(ask.why.as_deref(), Some("it changes the worst case"));
-    assert_eq!(report.scheduled.len(), 2, "a finished item is not later work");
+    assert_eq!(
+        report.steps.iter().filter(|step| step.when.is_some()).count(),
+        2,
+        "a finished scheduled item is not later work"
+    );
     assert_eq!(report.verified.len() + report.not_verified.len() + report.decisions.len(), 3);
 }
 

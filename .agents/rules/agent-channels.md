@@ -18,7 +18,7 @@ to show a choice, about 14 status sources and 18 senders. This file keeps it fro
 | --- | --- | --- |
 | Show the owner a choice | The question card: one model with an answer route (Claude menu, held `ask_user` call, typed chat), one widget, one answer function, a "Let's chat about this" button | `question_view.rs`, `tidewatch-core/src/question.rs` |
 | Live state (working, needs you, done, failed) | Hooks and terminal signals, folded by the status tracker | `tidewatch-core/src/status.rs` |
-| Task state (stages, steps, done, waiting, blocked) | The agent's `update_progress` report, nothing parsed from chat text | `tidewatch-core/src/progress_report.rs` |
+| Task state (stages, the checklist with dates, done, waiting, blocked) | The agent's `update_progress` report, nothing parsed from chat text. Its steps are the one checklist of the whole goal: later work is a step with a `when`, never a second list; Coming up, due today and the Overview cards read those steps | `tidewatch-core/src/progress_report.rs` |
 | Job progress | `report_job`, or JSON lines in `$TIDEWATCH_PROGRESS`; never scraped from the terminal | `job_mcp.rs`, `job_glue.rs` |
 | Text into an agent | `flow_glue::send_or_queue` with a `Reason`, drawn as the owner's bubble with the Tidewatch badge | `outbox.rs`, `flow_glue.rs`, `tidewatch-core/src/sent.rs` |
 | What the agent should do on its own | The launch text, written once per tab | `tidewatch-core/src/house_style.rs`, `prepare.rs` |

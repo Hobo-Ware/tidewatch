@@ -24,6 +24,7 @@ pub const MAX_OPTIONS: usize = 4;
 const UNNAMED_STAGE: &str = "Steps";
 const OPEN_NAMED: usize = 3;
 const TEXT_CHARS: usize = 60;
+const SCHEDULED_GONE: &str = "the `scheduled` field is gone: later work is a step like any other, with a `when` (date, about, event, parked or you) on the step";
 
 macro_rules! word_enum {
     ($(#[$meta:meta])* $name:ident { $($variant:ident = $word:literal),+ $(,)? }) => {
@@ -187,6 +188,12 @@ pub struct ReportStep {
     pub evidence: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// When an open step happens, for a step that does not happen in this turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<ReportWhen>,
+    /// Unix seconds of the first report that had this step done; Tidewatch stamps it, the agent never sends it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_at: Option<u64>,
 }
 
 impl ReportStep {
@@ -195,6 +202,8 @@ impl ReportStep {
             mark: self.status.mark(),
             text: self.text.clone(),
             why: self.evidence.clone().or_else(|| self.reason.clone()),
+            when: self.when.as_ref().map(ReportWhen::to_when),
+            done_at: self.done_at,
         }
     }
 
@@ -204,7 +213,35 @@ impl ReportStep {
             StepStatus::Done => (item.why.clone(), None),
             _ => (None, item.why.clone()),
         };
-        Self { stage: stage.to_owned(), text: item.text.clone(), status, evidence, reason }
+        Self {
+            stage: stage.to_owned(),
+            text: item.text.clone(),
+            status,
+            evidence,
+            reason,
+            when: item.when.as_ref().map(ReportWhen::of_when),
+            done_at: item.done_at,
+        }
+    }
+
+    fn is_due_later(&self) -> bool {
+        self.status.is_open() && self.when.is_some()
+    }
+
+    fn is_open_now(&self) -> bool {
+        self.status.is_open() && self.when.is_none()
+    }
+
+    fn to_scheduled(&self) -> Option<Scheduled> {
+        let when = self.when.as_ref().filter(|_| self.status.is_open())?.to_when();
+        Some(Scheduled {
+            mark: Mark::Todo,
+            when_text: when.to_string(),
+            when,
+            what: self.text.clone(),
+            why: self.reason.clone(),
+            steps: Vec::new(),
+        })
     }
 }
 
@@ -217,12 +254,20 @@ pub struct ReportAsk {
     pub why: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReportScheduled {
-    pub when: ReportWhen,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub why: Option<String>,
+/// A `scheduled` item of a report saved before steps took a `when`; it loads as a step.
+#[derive(Deserialize)]
+struct StoredScheduled {
+    when: ReportWhen,
+    text: String,
+    why: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StoredReport {
+    #[serde(flatten)]
+    report: ProgressReport,
+    #[serde(default)]
+    scheduled: Vec<StoredScheduled>,
 }
 
 /// One line of verified, not verified or decisions: the thing, and the evidence, blocker or reason.
@@ -269,8 +314,6 @@ pub struct ProgressReport {
     pub needs_you: Option<ReportAsk>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_on: Option<WaitingOn>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub scheduled: Vec<ReportScheduled>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verified: Vec<ReportNote>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -344,21 +387,7 @@ impl ProgressReport {
             verified: ReportNote::to_entries(&self.verified),
             not_verified: ReportNote::to_entries(&self.not_verified),
             needs_you: self.needs_you.iter().map(ReportAsk::to_entry).collect(),
-            scheduled: self
-                .scheduled
-                .iter()
-                .map(|item| {
-                    let when = item.when.to_when();
-                    Scheduled {
-                        mark: Mark::Todo,
-                        when_text: when.to_string(),
-                        when,
-                        what: item.text.clone(),
-                        why: item.why.clone(),
-                        steps: Vec::new(),
-                    }
-                })
-                .collect(),
+            scheduled: self.steps.iter().filter_map(ReportStep::to_scheduled).collect(),
             ..Ledger::default()
         }
     }
@@ -387,6 +416,30 @@ impl ProgressReport {
             steps.extend(phase.items.iter().map(|item| ReportStep::of_item(&name, item)));
             names.push(name);
         }
+        let later: Vec<&Scheduled> = ledger
+            .scheduled
+            .iter()
+            .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
+            .filter(|item| !steps.iter().any(|step| same_name(&step.text, &item.what)))
+            .collect();
+        if !later.is_empty() && stages.is_empty() {
+            stages.push(ReportStage {
+                name: UNNAMED_STAGE.to_owned(),
+                kind: StageKind::Build,
+                status: StageStatus::Todo,
+            });
+        }
+        if let Some(stage) = stages.last().map(|stage| stage.name.clone()) {
+            steps.extend(later.into_iter().map(|item| ReportStep {
+                stage: stage.clone(),
+                text: item.what.clone(),
+                status: StepStatus::Todo,
+                evidence: None,
+                reason: item.why.clone(),
+                when: Some(ReportWhen::of_when(&item.when)),
+                done_at: None,
+            }));
+        }
         let state = ledger.status.state.unwrap_or(State::Working);
         Self {
             goal: ledger.goal.clone(),
@@ -398,16 +451,6 @@ impl ProgressReport {
             steps,
             needs_you: real(&ledger.needs_you).next().map(ReportAsk::of_entry),
             waiting_on: ledger.waiting_on.clone(),
-            scheduled: ledger
-                .scheduled
-                .iter()
-                .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
-                .map(|item| ReportScheduled {
-                    when: ReportWhen::of_when(&item.when),
-                    text: item.what.clone(),
-                    why: item.why.clone(),
-                })
-                .collect(),
             verified: ReportNote::of_entries(&ledger.verified),
             not_verified: ReportNote::of_entries(&ledger.not_verified),
             decisions: ReportNote::of_entries(&ledger.decisions),
@@ -422,17 +465,59 @@ impl ProgressReport {
 
     /// The text of a ledger step that is still open, for the reply of a refused `done`.
     fn open_steps(&self) -> Vec<&ReportStep> {
-        self.steps.iter().filter(|step| step.status.is_open()).collect()
+        self.steps.iter().filter(|step| step.is_open_now()).collect()
+    }
+
+    /// A saved report: one written before steps took a `when` brings its `scheduled` items back as dated steps of its last stage.
+    #[must_use]
+    pub fn from_stored_json(text: &str) -> Option<Self> {
+        let StoredReport { mut report, scheduled } = serde_json::from_str(text).ok()?;
+        let Some(stage) = report.stages.last().map(|stage| stage.name.clone()) else {
+            return Some(report);
+        };
+        report.steps.extend(scheduled.into_iter().map(|item| ReportStep {
+            stage: stage.clone(),
+            text: item.text,
+            status: StepStatus::Todo,
+            evidence: None,
+            reason: item.why,
+            when: Some(item.when),
+            done_at: None,
+        }));
+        Some(report)
+    }
+
+    /// Stamps each done step with the time it was first seen done: kept from `saved` when that report had it done too, else `now`.
+    pub fn stamp_done(&mut self, saved: Option<&Self>, now: u64) {
+        for step in &mut self.steps {
+            step.done_at = (step.status == StepStatus::Done).then(|| {
+                saved
+                    .into_iter()
+                    .flat_map(|saved| &saved.steps)
+                    .find(|old| old.status == StepStatus::Done && same_name(&old.text, &step.text))
+                    .and_then(|old| old.done_at)
+                    .unwrap_or(now)
+            });
+        }
     }
 
     /// Soft problems of a report that was saved: lines that read after the saved line.
     #[must_use]
     pub fn warnings(&self) -> Vec<String> {
+        let only_later = |stage: &ReportStage| {
+            let mut open = self
+                .steps
+                .iter()
+                .filter(|step| same_name(&step.stage, &stage.name))
+                .filter(|step| step.status.is_open());
+            open.clone().next().is_some() && open.all(ReportStep::is_due_later)
+        };
         let unfinished = (self.state == State::Done)
             .then(|| {
-                self.stages
-                    .iter()
-                    .find(|stage| matches!(stage.status, StageStatus::Todo | StageStatus::Active))
+                self.stages.iter().find(|stage| {
+                    matches!(stage.status, StageStatus::Todo | StageStatus::Active)
+                        && !only_later(stage)
+                })
             })
             .flatten()
             .map(|stage| {
@@ -444,7 +529,14 @@ impl ProgressReport {
         let no_steps = self.steps.is_empty().then(|| {
             "Warning: no steps. List the concrete steps of this task under your stages.".to_owned()
         });
-        [unfinished, no_steps].into_iter().flatten().collect()
+        let stopped = matches!(self.state, State::Waiting | State::Blocked);
+        let undated = (stopped
+            && self.steps.iter().any(|step| step.status == StepStatus::Todo)
+            && !self.steps.iter().any(ReportStep::is_due_later))
+            .then(|| {
+                "Warning: no open step has a when. Give each step that will not happen in this turn a when, so the user sees what is left and by when.".to_owned()
+            });
+        [unfinished, no_steps, undated].into_iter().flatten().collect()
     }
 }
 
@@ -541,7 +633,7 @@ struct RawReport {
     needs_you: Option<RawAsk>,
     links: Option<Vec<RawLink>>,
     waiting_on: Option<Map<String, Value>>,
-    scheduled: Option<Vec<RawScheduled>>,
+    scheduled: Option<Value>,
     verified: Option<Vec<RawNote>>,
     not_verified: Option<Vec<RawNote>>,
     decisions: Option<Vec<RawNote>>,
@@ -563,6 +655,7 @@ struct RawStep {
     status: Option<String>,
     evidence: Option<String>,
     reason: Option<String>,
+    when: Option<Map<String, Value>>,
 }
 
 #[derive(Deserialize)]
@@ -580,13 +673,6 @@ struct RawLink {
     title: Option<String>,
     #[serde(rename = "for")]
     note: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RawScheduled {
-    when: Option<Map<String, Value>>,
-    text: Option<String>,
-    why: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -670,12 +756,11 @@ fn check_waiting(map: &Map<String, Value>, problems: &mut Vec<String>) -> Option
 }
 
 fn check_when(
-    at: usize,
+    what: &str,
     map: &Map<String, Value>,
     problems: &mut Vec<String>,
 ) -> Option<ReportWhen> {
-    let what = format!("scheduled[{at}].when");
-    let (key, value) = single_key(&what, map, &ReportWhen::WORDS, problems)?;
+    let (key, value) = single_key(what, map, &ReportWhen::WORDS, problems)?;
     let field = format!("{what}.{key}");
     match key {
         "date" => date_value(&field, value, problems).map(ReportWhen::Date),
@@ -781,6 +866,10 @@ fn check_steps(
             )),
             (Some(_), Some(_)) => {}
         }
+        let when = step
+            .when
+            .as_ref()
+            .and_then(|map| check_when(&format!("steps[{at}].when"), map, problems));
         if let (Some(text), Some(status), Some(stage)) = (text, status, stage) {
             steps.push(ReportStep {
                 stage,
@@ -788,6 +877,8 @@ fn check_steps(
                 status,
                 evidence: filled(step.evidence),
                 reason: filled(step.reason),
+                when,
+                done_at: None,
             });
         }
     }
@@ -886,30 +977,6 @@ fn check_links(
         .collect()
 }
 
-fn check_scheduled(
-    raw: Option<Vec<RawScheduled>>,
-    problems: &mut Vec<String>,
-) -> Vec<ReportScheduled> {
-    raw.into_iter()
-        .flatten()
-        .enumerate()
-        .filter_map(|(at, item)| {
-            let text = filled(item.text);
-            if text.is_none() {
-                problems.push(format!("scheduled[{at}].text is required"));
-            }
-            let when = item.when.as_ref().and_then(|map| check_when(at, map, problems));
-            if item.when.is_none() {
-                problems.push(format!(
-                    "scheduled[{at}].when is required: one of {}",
-                    or_list(ReportWhen::WORDS)
-                ));
-            }
-            Some(ReportScheduled { when: when?, text: text?, why: filled(item.why) })
-        })
-        .collect()
-}
-
 /// A report that passed every rule, and the links that came with it: its own `links`, then the
 /// ones sent with the question, which are for that question.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -989,7 +1056,9 @@ impl ProgressReport {
         let waiting_on = raw.waiting_on.and_then(|map| check_waiting(&map, &mut problems));
         let waits = waiting_on.is_some()
             || problems.iter().any(|problem| problem.starts_with("waiting_on"));
-        let scheduled = check_scheduled(raw.scheduled, &mut problems);
+        if raw.scheduled.is_some() {
+            problems.push(SCHEDULED_GONE.to_owned());
+        }
         let verified = check_notes("verified", raw.verified, &mut problems);
         let not_verified = check_notes("not_verified", raw.not_verified, &mut problems);
         let decisions = check_notes("decisions", raw.decisions, &mut problems);
@@ -1016,7 +1085,6 @@ impl ProgressReport {
             steps,
             needs_you,
             waiting_on,
-            scheduled,
             verified,
             not_verified,
             decisions,
@@ -1032,7 +1100,7 @@ impl ProgressReport {
                 let more = open.len().saturating_sub(OPEN_NAMED);
                 let more = if more > 0 { format!(" and {more} more") } else { String::new() };
                 problems.push(format!(
-                    "state is done but {} step{} still open: {}{more}. Finish them, mark them skipped with a reason, or do not report done",
+                    "state is done but {} step{} still open: {}{more}. Finish them, mark them skipped with a reason, give the ones for later a when, or do not report done",
                     open.len(),
                     if open.len() == 1 { " is" } else { "s are" },
                     named.join(", ")

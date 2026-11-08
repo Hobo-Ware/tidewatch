@@ -14,7 +14,7 @@ const MINUTE_MS: u64 = 60_000;
 const HOUR_MS: u64 = 60 * MINUTE_MS;
 const WORK_QUIET_MS: u64 = 30 * MINUTE_MS;
 const LONG_JOB_SECS: u64 = 30 * 60;
-const MONTHS: [&str; 12] =
+pub(crate) const MONTHS: [&str; 12] =
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

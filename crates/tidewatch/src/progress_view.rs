@@ -1,5 +1,5 @@
 //! The Progress panel in the History card, top to bottom: the goal, Waiting on you, Now, Waiting
-//! for, the stage bars and steps, Coming up, the lists, the done check and the links. Which side a
+//! for, the stage bars and steps with their day tags, the lists, the done check and the links. Which side a
 //! tab shows is kept here.
 
 use std::collections::{HashMap, HashSet};
@@ -373,7 +373,7 @@ fn old_heading(ui: &mut Ui, column: Column, shown: &mut bool) {
     }
 }
 
-/// The blocks that come from the report itself: the steps, Coming up and the lists. A report from
+/// The blocks that come from the report itself: the steps and the lists. A report from
 /// the last turn shows them dimmed under one heading.
 fn report_blocks(
     ui: &mut Ui,
@@ -388,12 +388,6 @@ fn report_blocks(
         gaps.before(ui);
         old_heading(ui, column, heading_shown);
         steps_block(ui, column, &stages, input, state);
-    }
-    let coming = model::coming_up(ledger);
-    if !coming.is_empty() {
-        gaps.before(ui);
-        old_heading(ui, column, heading_shown);
-        blocks_view::coming_block(ui, column, &coming);
     }
     state.forget_short_folds(TAGS.map(|tag| entries(ledger, tag).len()));
     for tag in [Tag::Decisions, Tag::NotVerified, Tag::Verified] {
@@ -588,8 +582,13 @@ fn steps_block(
     let shown = stages_shown(stages, all);
     let hidden = stages.len() - shown.len();
     let folds = stages.iter().any(|stage| stage.over) && stages.iter().any(|stage| !stage.over);
-    let steps =
-        Steps { stages: &shown, marks: input.marks, checks: input.checks, time: input.time };
+    let steps = Steps {
+        stages: &shown,
+        marks: input.marks,
+        checks: input.checks,
+        time: input.time,
+        today: crate::progress_glue::today(),
+    };
     let spinning = blocks_view::steps_block(ui, column, &steps);
     if spinning && input.animate {
         ui.ctx().request_repaint_after(SPIN_EVERY);

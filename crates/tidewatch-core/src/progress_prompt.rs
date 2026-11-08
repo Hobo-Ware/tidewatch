@@ -8,7 +8,7 @@ use crate::agents::Wiring;
 const REPORT_FORMAT: &str = "\
 ## Report
 
-Call `update_progress` once real work starts and again before your final reply. The tool tells you what it needs. {turn_end}{identity}
+Call `update_progress` once real work starts and again before your final reply. The tool tells you what it needs. Steps are the user's checklist for the whole goal: done and left, each later one with a `when`. {turn_end}{identity}
 After a context reset, call `get_progress` first. If `update_progress` is missing, look for `mcp__tidewatch__update_progress` with tool search once. If it is still missing, tell the user that Tidewatch reporting is down.
 ";
 
@@ -114,8 +114,9 @@ mod tests {
             "Call `update_progress` once real work starts and again before your final reply."
         ));
         assert!(text.contains("The tool tells you what it needs."));
+        assert!(text.contains("checklist for the whole goal") && text.contains("`when`"));
         assert!(text.contains("After a context reset, call `get_progress` first."));
-        assert!(text.split_whitespace().count() <= 90, "{text}");
+        assert!(text.split_whitespace().count() <= 100, "{text}");
         assert!(!text.contains("```"), "no format example: the tool teaches the format");
     }
 
