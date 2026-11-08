@@ -1034,8 +1034,6 @@ pub(crate) fn paint_caps(painter: &Painter, right: f32, mid: f32, keys: &str) ->
 pub(crate) enum Glyph {
     Restart,
     More,
-    Clock,
-    Infinity,
     Up,
     Down,
     Play,
@@ -1070,10 +1068,6 @@ pub(crate) fn paint_glyph(
                 painter.circle_filled(at(x, 8.0), 1.3 * unit, ink);
             }
         }
-        Glyph::Clock => {
-            painter.circle_stroke(at(8.0, 8.0), 5.5 * unit, stroke);
-            painter.add(egui::Shape::line(vec![at(8.0, 5.0), at(8.0, 8.0), at(10.0, 9.5)], stroke));
-        }
         Glyph::Up => {
             painter
                 .add(egui::Shape::line(vec![at(4.0, 10.0), at(8.0, 6.0), at(12.0, 10.0)], stroke));
@@ -1089,19 +1083,6 @@ pub(crate) fn paint_glyph(
         Glyph::Stop => {
             let square = Rect::from_min_max(at(4.5, 4.5), at(11.5, 11.5));
             painter.rect_filled(square, CornerRadius::same(2), ink);
-        }
-        Glyph::Infinity => {
-            let curve: Vec<egui::Pos2> = (0..=40)
-                .map(|step| {
-                    let angle = (step as f32 * 9.0).to_radians();
-                    let shrink = 1.0 + angle.sin() * angle.sin();
-                    at(
-                        8.0 + 6.0 * angle.cos() / shrink,
-                        8.0 + 6.0 * angle.sin() * angle.cos() / shrink,
-                    )
-                })
-                .collect();
-            painter.add(egui::Shape::line(curve, stroke));
         }
     }
 }

@@ -95,8 +95,9 @@ impl Tidewatch {
         let (wall, now) = (wall_secs(), ctx.input(|i| i.time));
         match action {
             Action::Pick(choice) => self.amphetamine.pick(choice, wall, now, ctx),
-            Action::AddHour => self.amphetamine.add_hour(wall, now, ctx),
+            Action::Retime(choice) => self.amphetamine.retime(choice, wall, now, ctx),
             Action::TurnOff => self.amphetamine.turn_off(wall, now, ctx),
+            Action::Away => self.flip_away(ctx),
         }
     }
 }

@@ -104,7 +104,7 @@ fn is_on(host: &Host<Recorder>) -> bool {
 #[test]
 fn starting_writes_the_marker_and_token_first_then_asks_once_and_turns_on() {
     let mut rig = Rig::new();
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     assert!(matches!(rig.host.state(), State::Starting { .. }));
     assert_eq!(rig.token(), Some(format!("{}", (WALL + 3600.0) as u64)));
     assert_eq!(read_marker(&rig.files().marker).unwrap().helper, None);
@@ -123,13 +123,13 @@ fn a_prompt_is_open_from_the_click_until_the_start_answers_either_way() {
     let mut rig =
         Rig::with(FakeSystem::with_biometrics().holding(Duration::from_millis(150)), true);
     assert!(!rig.host.prompt_open());
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     assert!(rig.host.prompt_open());
     rig.until(is_on);
     assert!(!rig.host.prompt_open());
 
     let mut refused = Rig::with(FakeSystem::refusing("the password prompt was cancelled"), true);
-    refused.pick(Choice::Hour);
+    refused.pick(Choice::Minutes(60));
     assert!(refused.host.prompt_open());
     refused.until(|host| host.state() == State::Off);
     assert!(!refused.host.prompt_open());
@@ -150,7 +150,7 @@ fn a_background_host_never_has_a_prompt_open() {
     let system = Arc::new(FakeSystem::new());
     let mut host = Host::new(system, Recorder::default(), None, true, false);
     let ctx = egui::Context::default();
-    host.pick(Choice::Hour, WALL, 0.0, &ctx);
+    host.pick(Choice::Minutes(60), WALL, 0.0, &ctx);
     host.change_touch_id(Click::SetUp, &ctx);
     assert!(!host.prompt_open());
 }
@@ -158,7 +158,7 @@ fn a_background_host_never_has_a_prompt_open() {
 #[test]
 fn a_refused_prompt_leaves_nothing_behind_and_says_so() {
     let mut rig = Rig::with(FakeSystem::refusing("the password prompt was cancelled"), true);
-    rig.pick(Choice::HalfHour);
+    rig.pick(Choice::Minutes(30));
     rig.until(|host| host.state() == State::Off);
     assert_eq!(
         rig.host.take_voices(),
@@ -190,7 +190,7 @@ fn turning_off_removes_the_token_waits_for_sleep_and_asks_for_no_second_password
 #[test]
 fn the_deadline_ends_the_session_by_itself_and_the_hour_is_told() {
     let mut rig = Rig::new();
-    rig.pick(Choice::FourHours);
+    rig.pick(Choice::Minutes(240));
     rig.until(is_on);
     rig.host.take_voices();
     rig.advance(3600.0 + 1.0);
@@ -204,15 +204,18 @@ fn the_deadline_ends_the_session_by_itself_and_the_hour_is_told() {
 }
 
 #[test]
-fn adding_an_hour_rewrites_the_token_and_the_line_total_without_another_prompt() {
+fn retiming_rewrites_the_token_and_the_line_total_without_another_prompt() {
     let mut rig = Rig::new();
-    rig.pick(Choice::HalfHour);
+    rig.pick(Choice::Minutes(30));
     rig.until(is_on);
     let before = rig.token().unwrap().parse::<f64>().unwrap();
     let wall = rig.wall();
-    rig.host.add_hour(wall, 1.0, &rig.ctx);
+    rig.host.retime(Choice::Minutes(90), wall, 1.0, &rig.ctx);
     assert_eq!(rig.token().unwrap().parse::<f64>().unwrap(), before + 3600.0);
     assert_eq!(rig.host.total(), Some(1800.0 + 3600.0));
+    rig.host.retime(Choice::Open, wall, 2.0, &rig.ctx);
+    assert_eq!(rig.token().as_deref(), Some("0"));
+    assert_eq!(rig.host.total(), None);
     let starts = rig.system.calls().iter().filter(|c| matches!(c, Call::StartLid { .. })).count();
     assert_eq!(starts, 1);
 }
@@ -220,7 +223,7 @@ fn adding_an_hour_rewrites_the_token_and_the_line_total_without_another_prompt()
 #[test]
 fn without_lid_mode_it_takes_the_hold_and_never_reaches_the_system() {
     let mut rig = Rig::with(FakeSystem::new(), false);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     assert!(is_on(&rig.host));
     assert_eq!(rig.host.hold.taken, [HOLD_REASON]);
     rig.turn_off();
@@ -338,7 +341,7 @@ fn a_not_allowed_host_ignores_every_event() {
     let system = Arc::new(FakeSystem::new());
     let mut host = Host::new(system.clone(), Recorder::default(), None, true, false);
     let ctx = egui::Context::default();
-    host.pick(Choice::Hour, WALL, 0.0, &ctx);
+    host.pick(Choice::Minutes(60), WALL, 0.0, &ctx);
     assert_eq!(host.state(), State::Off);
     assert_eq!(system.calls(), []);
 }
@@ -373,7 +376,7 @@ fn repaints(ctx: &egui::Context) -> Arc<std::sync::atomic::AtomicUsize> {
 fn a_click_shows_the_pending_look_and_asks_for_a_frame_before_anything_else_finishes() {
     let mut rig = Rig::with(FakeSystem::with_biometrics().holding(Duration::from_secs(2)), true);
     let asked = repaints(&rig.ctx);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     assert!(matches!(rig.host.state(), State::Starting { .. }));
     assert_eq!(rig.host.look(0.0), Look::Pending);
     assert!(asked.load(Ordering::SeqCst) >= 1, "nothing asked for the frame that shows it");
@@ -387,7 +390,7 @@ fn the_start_prompt_does_not_wait_behind_other_slow_jobs() {
     }
     std::thread::sleep(Duration::from_millis(50));
     let asked_at = Instant::now();
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     let deadline = asked_at + Duration::from_secs(5);
     while password_starts(&inner) == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(2));
@@ -408,7 +411,7 @@ fn the_first_start_on_a_mac_with_a_reader_installs_and_starts_in_one_prompt() {
     let mut rig = Rig::with(FakeSystem::with_biometrics(), true);
     rig.host.check_last_run(&rig.ctx);
     rig.until(|host| host.route() == Route::SetUp);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!(rig.host.take_voices(), [Voice::Start]);
     assert_eq!(
@@ -420,7 +423,7 @@ fn the_first_start_on_a_mac_with_a_reader_installs_and_starts_in_one_prompt() {
     rig.until(|host| host.route() == Route::Fingerprint);
     rig.turn_off();
     rig.until(|host| host.state() == State::Off);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!(
         (setups(&rig.system), password_starts(&rig.system), sudo_starts(&rig.system)),
@@ -433,7 +436,7 @@ fn the_first_start_on_a_mac_with_a_reader_installs_and_starts_in_one_prompt() {
 fn a_cancelled_first_prompt_installs_nothing_and_asks_nothing_else() {
     let fake = FakeSystem::refusing("the password prompt was cancelled").with_reader();
     let mut rig = Rig::with(fake, true);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(|host| host.state() == State::Off);
     assert_eq!(
         rig.host.take_voices(),
@@ -458,7 +461,7 @@ fn a_cancelled_first_prompt_installs_nothing_and_asks_nothing_else() {
 fn a_mac_without_a_reader_keeps_asking_for_the_password_and_never_installs() {
     let mut rig = Rig::with(FakeSystem::new(), true);
     rig.host.check_last_run(&rig.ctx);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!(rig.host.route(), Route::Password);
     assert_eq!((setups(&rig.system), password_starts(&rig.system)), (0, 1));
@@ -506,7 +509,7 @@ fn password_starts(system: &FakeSystem) -> usize {
 #[test]
 fn with_the_helper_installed_a_fingerprint_starts_it_and_the_password_is_never_asked() {
     let mut rig = Rig::with(FakeSystem::with_touch_id(), true);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!(rig.host.take_voices(), [Voice::Start]);
     assert_eq!(read_marker(&rig.files().marker).unwrap().helper, Some(4242));
@@ -519,7 +522,7 @@ fn with_the_helper_installed_a_fingerprint_starts_it_and_the_password_is_never_a
 fn a_cancelled_fingerprint_leaves_it_off_and_asks_nothing_else() {
     let fake = FakeSystem::with_touch_id().answering(Auth::Denied("Touch ID was cancelled".into()));
     let mut rig = Rig::with(fake, true);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(|host| host.state() == State::Off);
     assert_eq!(rig.host.take_voices(), [Voice::NotStarted("Touch ID was cancelled".to_owned())]);
     assert_eq!((rig.token(), read_marker(&rig.files().marker)), (None, None));
@@ -530,7 +533,7 @@ fn a_cancelled_fingerprint_leaves_it_off_and_asks_nothing_else() {
 fn a_broken_sudo_rule_falls_back_to_the_password_prompt_and_still_turns_on() {
     let fake = FakeSystem::with_touch_id().sudo_refusing("a password is required");
     let mut rig = Rig::with(fake, true);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!((sudo_starts(&rig.system), password_starts(&rig.system)), (1, 1));
 }
@@ -556,11 +559,11 @@ fn authentications(system: &FakeSystem) -> usize {
 #[test]
 fn a_second_activation_in_the_same_run_asks_nothing_and_sends_the_helper_a_command() {
     let mut rig = Rig::with(FakeSystem::with_touch_id(), true);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     rig.turn_off();
     rig.until(|host| host.state() == State::Off);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!((authentications(&rig.system), sudo_starts(&rig.system)), (1, 1));
     assert!(
@@ -574,12 +577,12 @@ fn a_second_activation_in_the_same_run_asks_nothing_and_sends_the_helper_a_comma
 #[test]
 fn a_helper_gone_before_the_next_activation_asks_for_the_fingerprint_again() {
     let mut rig = Rig::with(FakeSystem::with_touch_id(), true);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     rig.system.owner_exits();
     rig.turn_off();
     rig.until(|host| host.state() == State::Off);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!((authentications(&rig.system), sudo_starts(&rig.system)), (2, 2));
 }
@@ -590,7 +593,7 @@ fn an_outdated_helper_is_replaced_by_the_first_start_with_no_notice() {
     rig.host.check_last_run(&rig.ctx);
     rig.until(|host| host.route() == Route::Outdated);
     assert_eq!(rig.host.touch_id(), Some(TouchId::Outdated));
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     rig.until(|host| host.route() == Route::Fingerprint);
     assert_eq!(rig.host.notice(), None);
@@ -678,7 +681,7 @@ fn gated_rig_over(inner: FakeSystem) -> (Rig, Arc<AtomicBool>, Arc<FakeSystem>) 
 #[test]
 fn the_button_is_on_as_soon_as_the_start_returns_without_waiting_for_pmset() {
     let (mut rig, open, _) = gated_rig();
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!(rig.host.take_voices(), [Voice::Start]);
     assert!(rig.host.hold.held);
@@ -728,7 +731,7 @@ fn the_tablet_plays_its_whole_close_even_though_the_state_is_already_off() {
 #[test]
 fn a_start_pmset_never_shows_flips_back_with_a_toast_and_lets_the_helper_go() {
     let mut rig = Rig::with(FakeSystem::new().sleep_stays_on(), true);
-    rig.pick(Choice::Hour);
+    rig.pick(Choice::Minutes(60));
     rig.until(is_on);
     assert_eq!(rig.host.take_voices(), [Voice::Start]);
     rig.until(|host| host.state() == State::Off);

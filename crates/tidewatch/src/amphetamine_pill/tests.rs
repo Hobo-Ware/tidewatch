@@ -94,3 +94,21 @@ fn the_menu_and_tooltip_say_the_time_left_in_words() {
         assert_eq!(left_text(left), text, "{left}");
     }
 }
+
+#[test]
+fn pips_count_hours_up_to_eight_and_quarters_under_two_hours() {
+    let hour = 3600.0;
+    let cases = [
+        (4.0 * hour, 72.0 * 60.0, 4, 2),
+        (hour, 42.0 * 60.0, 4, 3),
+        (12.0 * hour, 9.0 * hour, 8, 6),
+        (2.0 * hour, 2.0 * hour, 2, 2),
+        (90.0 * 60.0, 60.0, 6, 1),
+        (3.0 * hour, 0.0, 3, 0),
+        (15.0 * 60.0, 14.0 * 60.0, 1, 1),
+    ];
+    for (total, left, count, lit) in cases {
+        assert_eq!(pips(left, total), Some(Pips { count, lit }), "{total} {left}");
+    }
+    assert_eq!(pips(60.0, 0.0), None);
+}

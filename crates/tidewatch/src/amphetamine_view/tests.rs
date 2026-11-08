@@ -12,6 +12,7 @@ fn the_tooltip_matches_the_board_for_each_state() {
         gap: 100.0,
         force_short: false,
         pinned: false,
+        away: false,
     };
     let (title, text) = tip_text(&input(State::Off, true));
     assert_eq!(
@@ -45,8 +46,9 @@ fn the_copy_says_what_the_first_start_will_ask_for() {
         gap: 100.0,
         force_short: false,
         pinned: false,
+        away: false,
     };
-    let starting = State::Starting { choice: Choice::Hour };
+    let starting = State::Starting { choice: Choice::Minutes(60) };
     let cases = [
         (
             Route::SetUp,
@@ -61,16 +63,6 @@ fn the_copy_says_what_the_first_start_will_ask_for() {
         assert!(text.ends_with(off), "{route:?}: {text}");
         let (_, text) = tip_text(&input(starting, route));
         assert_eq!(text, waiting, "{route:?}");
-    }
-    assert!(menu_note(&input(State::Off, Route::SetUp)).starts_with("Asks for your password once"));
-    assert_eq!(
-        menu_note(&input(State::Off, Route::Fingerprint)),
-        "Lid closed on battery starts with Touch ID."
-    );
-    assert!(menu_note(&input(State::Off, Route::Password)).contains("needs your password"));
-    for route in [Route::SetUp, Route::Fingerprint, Route::Password] {
-        let text = menu_note(&input(State::Off, route));
-        assert!(!text.contains(['\u{2014}', '\u{2013}']), "{text}");
     }
 }
 
@@ -104,6 +96,7 @@ mod frames {
             gap,
             force_short: false,
             pinned: false,
+            away: false,
         }
     }
 
@@ -200,7 +193,7 @@ mod frames {
         assert_eq!(settled(State::Off, Look::Off, true), Duration::MAX);
         assert!(settled(on, Look::On { age: 9.0 }, true) <= Duration::from_millis(33));
         assert_eq!(settled(on, Look::On { age: 9.0 }, false), Duration::MAX);
-        let asking = State::Starting { choice: Choice::Hour };
+        let asking = State::Starting { choice: Choice::Minutes(60) };
         assert_eq!(settled(asking, Look::Pending, true), Duration::MAX);
     }
 
@@ -286,10 +279,14 @@ mod frames {
 
     impl Open {
         fn new(session: State, lid: bool) -> Self {
+            Self::with(Input { lid, ..input(session, Look::Off, 300.0) })
+        }
+
+        fn with(input: Input) -> Self {
             let mut open = Self {
                 ctx: crate::fonts::test_context(),
                 memory: Memory { force_menu: true, ..Memory::default() },
-                input: Input { lid, ..input(session, Look::Off, 300.0) },
+                input,
                 texts: Vec::new(),
                 boxes: Vec::new(),
                 action: None,
@@ -346,42 +343,59 @@ mod frames {
         }
     }
 
-    #[test]
-    fn the_menu_is_a_label_four_duration_rows_with_room_and_the_note_in_a_sunken_box() {
-        let open = Open::new(State::Off, true);
-        let label = open.text("KEEP AWAKE WITH THE LID CLOSED");
-        let words = ["30 minutes", "1 hour", "4 hours", "Until I turn it off"];
-        let rows: Vec<Rect> = words.iter().map(|word| open.text(word)).collect();
-        assert!(rows[0].top() > label.bottom() + 6.0, "space under the label");
-        for pair in rows.windows(2) {
-            let step = pair[1].center().y - pair[0].center().y;
-            assert_eq!(step, crate::screen_kit::MENU_ROW_H + 2.0, "{pair:?}");
+    impl Open {
+        fn track_at(&self, fraction: f32) -> egui::Pos2 {
+            let zone = jiff::tz::TimeZone::system();
+            let first = self.text(&amphetamine_menu::tick_text(0, WALL, &zone));
+            let last =
+                self.text(&amphetamine_menu::tick_text(amphetamine_menu::HOURS, WALL, &zone));
+            let x = first.left() + (last.right() - first.left()) * fraction;
+            pos2(x, first.center().y - 27.0)
+        }
+
+        fn drag(&mut self, from: egui::Pos2, to: egui::Pos2) -> Option<Action> {
+            let press = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            self.frame(vec![egui::Event::PointerMoved(from)]);
+            self.frame(vec![press(from, true)]);
+            for step in 1..=4 {
+                let at = from + (to - from) * (step as f32 / 4.0);
+                self.frame(vec![egui::Event::PointerMoved(at)]);
+            }
+            let before_release = self.action;
+            self.frame(vec![press(to, false)]);
+            before_release
         }
     }
 
     #[test]
-    fn the_note_sits_inside_one_sunken_box_under_the_rows() {
-        let open = Open::new(State::Off, true);
-        let sunken: Vec<Rect> = open
-            .boxes
-            .iter()
-            .filter(|(_, fill)| *fill == brand::SUNKEN)
-            .map(|(rect, _)| *rect)
-            .collect();
-        assert_eq!(sunken.len(), 1, "{:?}", open.boxes);
-        let last_row = open.text("Until I turn it off");
-        assert!(sunken[0].top() > last_row.bottom());
-        let inside: Vec<&str> = open
-            .texts
-            .iter()
-            .filter(|(_, rect)| sunken[0].contains_rect(*rect))
-            .map(|(text, _)| text.as_str())
-            .collect();
-        assert!(inside.iter().any(|text| text.contains("macOS asks once")), "{inside:?}");
-        assert!(
-            inside.iter().any(|text| text.contains("already keeps the Mac awake")),
-            "{inside:?}"
-        );
+    fn a_click_on_the_track_ends_on_that_hour_and_the_cap_starts_without_a_timer() {
+        let mut open = Open::new(State::Off, true);
+        open.text("KEEP AWAKE WITH THE LID CLOSED");
+        open.text("Start \u{b7} 1h");
+        let fourth = open.track_at(3.5 / 12.0);
+        open.click(fourth);
+        open.text("Start \u{b7} 4h");
+        assert_eq!(open.action, None, "the track only changes the length");
+        let cap = open.text(crate::amphetamine_pill::INFINITY).center();
+        open.click(cap);
+        let start = open.text("Start, no timer").center();
+        open.click(start);
+        assert_eq!(open.action, Some(Action::Pick(Choice::Open)));
+    }
+
+    #[test]
+    fn a_drag_on_the_track_snaps_to_quarter_hours() {
+        let mut open = Open::new(State::Off, true);
+        let (from, to) = (open.track_at(0.02), open.track_at(1.5 / 12.0));
+        open.drag(from, to);
+        let start = open.text("Start \u{b7} 1h 30m").center();
+        open.click(start);
+        assert_eq!(open.action, Some(Action::Pick(Choice::Minutes(90))));
     }
 
     #[test]
@@ -391,24 +405,36 @@ mod frames {
     }
 
     #[test]
-    fn a_click_on_a_duration_row_picks_that_duration() {
-        let mut open = Open::new(State::Off, true);
-        let at = open.text("1 hour").center();
-        open.click(at);
-        assert_eq!(open.action, Some(Action::Pick(Choice::Hour)));
-    }
-
-    #[test]
-    fn the_menu_of_a_running_session_keeps_add_an_hour_and_turn_off() {
+    fn a_running_session_moves_its_end_on_release_and_turns_off() {
         let on = State::On { until: Some(WALL + 1800.0), told: 0 };
         let mut open = Open::new(on, true);
         open.text("AMPHETAMINE IS ON");
+        let third = open.track_at(2.5 / 12.0);
+        open.click(third);
+        assert_eq!(open.action, Some(Action::Retime(Choice::Minutes(180))));
+        let mut open = Open::new(on, true);
+        let (from, to) = (open.track_at(0.02), open.track_at(2.0 / 12.0));
+        assert_eq!(open.drag(from, to), None, "nothing is written while the drag runs");
+        assert_eq!(open.action, Some(Action::Retime(Choice::Minutes(120))));
+        let mut open = Open::new(on, true);
+        let forever = open.text(crate::amphetamine_pill::INFINITY).center();
+        open.click(forever);
+        assert_eq!(open.action, Some(Action::Retime(Choice::Open)));
+        let mut open = Open::new(on, true);
         let at = open.text("Turn off").center();
         open.click(at);
         assert_eq!(open.action, Some(Action::TurnOff));
-        let mut open = Open::new(on, true);
-        let at = open.text("Add 1 hour").center();
-        open.click(at);
-        assert_eq!(open.action, Some(Action::AddHour));
+    }
+
+    #[test]
+    fn the_away_band_flips_away_in_both_states_and_says_when_you_are_away() {
+        for session in [State::Off, State::On { until: None, told: 0 }] {
+            let mut open = Open::new(session, true);
+            let at = open.text("Away").center();
+            open.click(at);
+            assert_eq!(open.action, Some(Action::Away), "{session:?}");
+            let away = Open::with(Input { away: true, ..input(session, Look::Off, 300.0) });
+            away.text("You are away");
+        }
     }
 }

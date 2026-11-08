@@ -85,6 +85,8 @@ pub(crate) struct Tablet {
     pub(crate) glow: f32,
     pub(crate) rock_deg: f32,
     pub(crate) specks: f32,
+    /// 1 asleep (shut eyes and a z, the off look), 0 awake.
+    pub(crate) sleep: f32,
 }
 
 /// The cubic-bezier easing of CSS: `x1 y1 x2 y2` and the progress `t` in 0 to 1.
@@ -120,11 +122,7 @@ fn mix(from: Color32, to: Color32, amount: f64) -> Color32 {
 }
 
 fn off_colors(hover: f64) -> (Color32, Color32, Color32) {
-    (
-        mix(brand::TEAL.gamma_multiply(0.30), brand::TEAL.gamma_multiply(0.55), hover),
-        mix(brand::MUTED, brand::TEXT, hover),
-        mix(brand::MUTED.gamma_multiply(0.85), brand::TEXT.gamma_multiply(0.85), hover),
-    )
+    (mix(brand::GROUND, brand::TEAL_NAV, hover), brand::TEAL_TEXT, brand::TEAL_TEXT)
 }
 
 fn on_colors() -> (Color32, Color32, Color32) {
@@ -146,10 +144,11 @@ pub(crate) fn tablet(look: Look, hover: f64) -> Tablet {
         glow: 0.0,
         rock_deg: 0.0,
         specks: 0.0,
+        sleep: 1.0 - bezier(POP, hover) as f32,
     };
     match look {
         Look::Off => still,
-        Look::Pending => Tablet { eyes: 1.0, ..still },
+        Look::Pending => Tablet { eyes: 1.0, sleep: 0.0, ..still },
         Look::On { age } => {
             let (fill, rim, face) = on_colors();
             Tablet {
@@ -164,6 +163,7 @@ pub(crate) fn tablet(look: Look, hover: f64) -> Tablet {
                 glow: glow(age),
                 rock_deg: rock(age),
                 specks: smooth((age - FIZZ_START_S) / FIZZ_FADE_S) as f32,
+                sleep: 0.0,
             }
         }
         Look::Stopping { age } => {
@@ -182,6 +182,7 @@ pub(crate) fn tablet(look: Look, hover: f64) -> Tablet {
                 glow: (glow(age) * (1.0 - gone) as f32).max(0.0),
                 rock_deg: rock(age) * (1.0 - gone) as f32,
                 specks: 0.0,
+                sleep: gone as f32 * still.sleep,
             }
         }
     }

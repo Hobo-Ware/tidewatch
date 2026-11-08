@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidewatch_core::amphetamine::{ADD_S, Choice, Effect, Event, State, Voice, step};
+use tidewatch_core::amphetamine::{Choice, Effect, Event, State, Voice, step};
 use tidewatch_core::amphetamine_lid::{
     Marker, Recovery, read_marker, recovery, remove_marker, remove_token, write_marker, write_token,
 };
@@ -37,7 +37,7 @@ pub(crate) const HOLD_REASON: &str = "Tidewatch: Amphetamine";
 const SETTLE_TRIES: u32 = 20;
 const CONFIRM_TRIES: u32 = 6;
 const SETTLE_EVERY: Duration = Duration::from_millis(if cfg!(test) { 5 } else { 500 });
-const PALETTE_CHOICE: Choice = Choice::Hour;
+const PALETTE_CHOICE: Choice = Choice::Minutes(60);
 const PINNED_ON_AGE: f64 = 30.5;
 const PINNED_ACTIVATING_AGE: f64 = 0.62;
 const DEV_LEFT_S: f64 = 41.5 * 60.0;
@@ -332,8 +332,8 @@ impl<H: Hold> Host<H> {
         self.event(&Event::TurnOff, wall, now, ctx);
     }
 
-    pub(crate) fn add_hour(&mut self, wall: f64, now: f64, ctx: &egui::Context) {
-        self.event(&Event::AddHour, wall, now, ctx);
+    pub(crate) fn retime(&mut self, choice: Choice, wall: f64, now: f64, ctx: &egui::Context) {
+        self.event(&Event::Retime(choice), wall, now, ctx);
     }
 
     /// The palette row: starts the default session, or ends the one that runs.
@@ -399,8 +399,11 @@ impl<H: Hold> Host<H> {
         if let (Event::Pick(choice), State::Off) = (event, self.state) {
             self.total = choice.seconds();
         }
-        if matches!((event, self.state), (Event::AddHour, State::On { until: Some(_), .. })) {
-            self.total = self.total.map(|total| total + ADD_S);
+        if let (Event::Retime(choice), State::On { until, .. }) = (event, self.state) {
+            self.total = match (choice.seconds(), until, self.total) {
+                (Some(left), Some(until), Some(total)) => Some(total + wall + left - until),
+                (left, _, _) => left,
+            };
         }
         let (state, effects) = step(self.state, event, wall, self.lid);
         if std::mem::discriminant(&state) != std::mem::discriminant(&self.state) {

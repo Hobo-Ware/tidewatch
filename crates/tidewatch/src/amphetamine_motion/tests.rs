@@ -27,18 +27,20 @@ fn the_easings_start_at_zero_end_at_one_and_the_spring_overshoots() {
 }
 
 #[test]
-fn off_is_a_smooth_calm_tablet_and_hover_pops_the_eyes_and_lights_the_rim() {
+fn off_is_an_asleep_outline_and_hover_wakes_it_and_pops_the_eyes() {
     let off = tablet(Look::Off, 0.0);
     assert_eq!(
         (off.smooth_rim, off.rough_draw, off.wink, off.eyes, off.glow),
         (1.0, 0.0, 0.0, 0.0, 0.0)
     );
     assert_eq!((off.rock_deg, off.specks), (0.0, 0.0));
-    assert_eq!((off.rim, off.fill), (brand::MUTED, brand::TEAL.gamma_multiply(0.30)));
+    assert_eq!((off.rim, off.fill, off.sleep), (brand::TEAL_TEXT, brand::GROUND, 1.0));
     let hover = tablet(Look::Off, 1.0);
-    assert_eq!((hover.rim, hover.fill), (brand::TEXT, brand::TEAL.gamma_multiply(0.55)));
+    assert_eq!((hover.rim, hover.fill, hover.sleep), (brand::TEAL_TEXT, brand::TEAL_NAV, 0.0));
     assert_eq!(hover.eyes, 1.0);
-    assert_eq!(tablet(Look::Pending, 0.0).eyes, 1.0);
+    let pending = tablet(Look::Pending, 0.0);
+    assert_eq!((pending.eyes, pending.sleep), (1.0, 0.0));
+    assert_eq!(tablet(Look::On { age: 0.0 }, 0.0).sleep, 0.0);
 }
 
 #[test]
@@ -70,8 +72,9 @@ fn turning_off_retracts_the_rim_in_400_ms_and_falls_back_to_the_off_colors() {
     assert_eq!((end.rough_draw, end.rough_fill, end.smooth_rim, end.specks), (0.0, 0.0, 1.0, 0.0));
     assert_eq!(
         (end.fill, end.rim, end.rock_deg, end.glow),
-        (tablet(Look::Off, 0.0).fill, brand::MUTED, 0.0, 0.0)
+        (tablet(Look::Off, 0.0).fill, brand::TEAL_TEXT, 0.0, 0.0)
     );
+    assert_eq!((start.sleep, end.sleep), (0.0, 1.0), "it falls asleep as it turns off");
     assert_eq!(end.eyes, 0.0);
     assert_eq!(at(100.0).specks, 0.0);
     assert!(at(100.0).wink < 1.0);

@@ -2,37 +2,30 @@
 //! and time (wall seconds) is passed in.
 
 pub const HOUR_S: f64 = 3600.0;
-pub const ADD_S: f64 = HOUR_S;
 
+/// How long a session runs: a whole number of minutes, or until it is turned off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
-    HalfHour,
-    Hour,
-    FourHours,
+    Minutes(u32),
     Open,
 }
 
 impl Choice {
-    pub const ALL: [Self; 4] = [Self::HalfHour, Self::Hour, Self::FourHours, Self::Open];
+    pub const SHORTEST: u32 = 15;
+    pub const LONGEST: u32 = 12 * 60;
 
     #[must_use]
     pub fn seconds(self) -> Option<f64> {
         match self {
-            Self::HalfHour => Some(30.0 * 60.0),
-            Self::Hour => Some(HOUR_S),
-            Self::FourHours => Some(4.0 * HOUR_S),
+            Self::Minutes(minutes) => Some(f64::from(minutes) * 60.0),
             Self::Open => None,
         }
     }
 
+    /// The time left of a running session, rounded up to a whole minute.
     #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::HalfHour => "30 min",
-            Self::Hour => "1 h",
-            Self::FourHours => "4 h",
-            Self::Open => "Until I turn it off",
-        }
+    pub fn left(seconds: Option<f64>) -> Self {
+        seconds.map_or(Self::Open, |seconds| Self::Minutes((seconds / 60.0).ceil().max(0.0) as u32))
     }
 }
 
@@ -83,7 +76,8 @@ pub enum Event {
     /// The stop command returned.
     Stopped,
     StartFailed(String),
-    AddHour,
+    /// A running session gets a new length, counted from now.
+    Retime(Choice),
     TurnOff,
     Tick,
     /// Sleep is back on (`true`), or could not be confirmed in time.
@@ -229,12 +223,9 @@ pub fn step(state: State, event: &Event, now: f64, lid: bool) -> (State, Vec<Eff
         (State::Starting { .. }, Event::StartFailed(why)) => {
             (State::Off, vec![Effect::Say(Voice::NotStarted(why.clone()))])
         }
-        (State::On { until: Some(until), .. }, Event::AddHour) => {
-            let later = until + ADD_S;
-            (
-                State::On { until: Some(later), told: hours_left(later - now) },
-                vec![Effect::WriteDeadline(Some(later))],
-            )
+        (State::On { .. }, Event::Retime(choice)) => {
+            let until = choice.seconds().map(|seconds| now + seconds);
+            (on(until, now), vec![Effect::WriteDeadline(until)])
         }
         (State::On { .. }, Event::TurnOff) => stop(lid),
         (State::On { until: Some(until), told }, Event::Tick) => {

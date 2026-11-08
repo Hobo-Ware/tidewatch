@@ -18,7 +18,6 @@ use super::{Tidewatch, wall_ms};
 use crate::agent_avatar::{self, Face};
 use crate::amphetamine_view;
 use crate::avatar_glue::meeseeks_avatar;
-use crate::away_view;
 use crate::brand;
 use crate::commands::Command;
 use crate::job_model::{TabJob, tab_job};
@@ -167,7 +166,6 @@ impl Tidewatch {
                         - tail
                         - controls
                         - amphetamine_view::SLOT_W
-                        - away_view::width(ui)
                         - STRIP_GAP;
                     let open = room + parked_tail;
                     self.parking.set_fits(Fits {
@@ -199,7 +197,6 @@ impl Tidewatch {
                             - tail
                             - controls
                             - amphetamine_view::SLOT_W
-                            - away_view::width(ui)
                             - STRIP_GAP)
                             .max(0.0),
                     );
@@ -208,9 +205,6 @@ impl Tidewatch {
                         ui.next_widget_position().x - plus.rect.right(),
                         now,
                     );
-                    if away_view::pill(ui, self.away.is_away()).clicked() {
-                        self.flip_away(ui.ctx());
-                    }
                     service_action =
                         services_view::pill(ui, &service_rows, &here_label, &mut self.services_ui);
                     self.updates.pill(ui);
@@ -246,6 +240,7 @@ impl Tidewatch {
             gap,
             force_short: self.amphetamine.short(),
             pinned: self.amphetamine.pinned(),
+            away: self.away.is_away(),
         };
         let out = amphetamine_view::show(ui, &input, &mut self.amphetamine_view, now);
         if let Some(action) = out.action {
