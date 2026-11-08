@@ -1,4 +1,5 @@
-//! The services pill at the right end of the tab strip (one 8 px dot per service, then
+//! The services pill at the right end of the tab strip (an 8 px dot per service, at most five,
+//! the worst states first, then
 //! `N services`, a 1 px outline and no fill), the 400 px list it opens (a 48 px row per service
 //! under a `SERVICES` label, the shared ones first and then each tab's own under its tab's name:
 //! a play or stop button always at the right end, Restart and a `...` menu to its left while the
@@ -28,12 +29,14 @@ use crate::screen_kit::{
 use crate::services_glue::{Command, Row};
 use crate::settings_ui::{switch_line, text_input};
 
-pub(crate) const PILL_H: f32 = Size::Compact.height();
+pub(crate) const PILL_H: f32 = crate::amphetamine_view::PILL_H;
 const PILL_PAD: f32 = 12.0;
 const DOT: f32 = 8.0;
 const DOT_GAP: f32 = 5.0;
 const DOT_TEXT_GAP: f32 = 10.0;
-const MOST_DOTS: usize = 8;
+const MOST_DOTS: usize = 5;
+const DOT_ORDER: [Word; 5] =
+    [Word::Crashed, Word::Restarting, Word::Starting, Word::Running, Word::Stopped];
 const LIST_W: f32 = 400.0;
 const LIST_MARGIN: i8 = 6;
 const ROW_H: f32 = 48.0;
@@ -209,6 +212,14 @@ pub(crate) fn outline(rows: &[Row]) -> Color32 {
     }
 }
 
+/// The pill's dots, the worst states first, so a crash past the last dot still shows.
+pub(crate) fn dot_words(rows: &[Row]) -> impl Iterator<Item = Word> + '_ {
+    DOT_ORDER
+        .into_iter()
+        .flat_map(move |word| rows.iter().filter(move |row| row.word == word).map(|row| row.word))
+        .take(MOST_DOTS)
+}
+
 pub(crate) fn is_running(word: Word) -> bool {
     matches!(word, Word::Running | Word::Starting | Word::Restarting)
 }
@@ -245,8 +256,8 @@ pub(crate) fn pill(ui: &mut Ui, rows: &[Row], repo: &str, memory: &mut Memory) -
     let painter = ui.painter();
     painter.rect_stroke(rect, CornerRadius::same(255), Stroke::new(1.0, line), StrokeKind::Inside);
     let mut x = rect.left() + PILL_PAD;
-    for row in rows.iter().take(MOST_DOTS) {
-        painter.circle_filled(pos2(x + DOT / 2.0, rect.center().y), DOT / 2.0, dot_color(row.word));
+    for word in dot_words(rows) {
+        painter.circle_filled(pos2(x + DOT / 2.0, rect.center().y), DOT / 2.0, dot_color(word));
         x += DOT + DOT_GAP;
     }
     painter.text(

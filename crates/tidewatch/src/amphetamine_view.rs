@@ -26,7 +26,7 @@ use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TEXT_TITLE};
 
 pub(crate) const SLOT_W: f32 = ICON_W;
 const SLOT_H: f32 = ICON_BOX;
-const PILL_H: f32 = 32.0;
+pub(crate) const PILL_H: f32 = 32.0;
 const LABEL_SIZE: f32 = 13.0;
 const LABEL_PAD_LEFT: f32 = 10.0;
 const LABEL_PAD_RIGHT: f32 = 4.0;

@@ -637,3 +637,14 @@ fn tab_services_draw_under_their_tab_after_the_shared_ones() {
     let shared_gap = placed.rows[1].top() - placed.rows[0].bottom();
     assert!(gap > shared_gap + 10.0, "a section label sits before the tab's rows: {gap}");
 }
+
+#[test]
+fn the_pill_shows_at_most_five_dots_with_the_worst_states_first() {
+    let mut words = vec![Word::Running; 20];
+    words.extend([Word::Stopped, Word::Starting, Word::Crashed]);
+    let rows: Vec<Row> = words.into_iter().map(|word| row("x", word, "")).collect();
+    let dots: Vec<Word> = dot_words(&rows).collect();
+    assert_eq!(dots, [Word::Crashed, Word::Starting, Word::Running, Word::Running, Word::Running]);
+    let few = [row("a", Word::Stopped, ""), row("b", Word::Running, "")];
+    assert_eq!(dot_words(&few).collect::<Vec<_>>(), [Word::Running, Word::Stopped]);
+}
