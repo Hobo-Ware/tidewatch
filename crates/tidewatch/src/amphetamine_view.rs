@@ -10,20 +10,18 @@ use tidewatch_core::amphetamine::{Choice, Omen, State};
 use tidewatch_core::amphetamine_system::Route;
 
 use stdusk_egui::colors;
-use stdusk_egui::ui::icons;
 
 use crate::amphetamine_icon;
+use crate::amphetamine_menu;
 use crate::amphetamine_motion::{Look, STANDARD, bezier};
 use crate::amphetamine_pill::{
-    self as pill, Fit, ICON_W, INFINITY, ROLL_S, Slide, clock_texts, left_text, line_fraction,
+    self as pill, Fit, ICON_W, INFINITY, Pips, ROLL_S, Slide, clock_texts, left_text, line_fraction,
 };
 use crate::app::strip::ICON_BOX;
+use crate::away_model;
 use crate::brand;
 use crate::mascot_motion;
-use crate::screen_kit::{
-    Glyph, MENU_ROW_H, MENU_ROW_PAD, Size, body, menu_label, menu_row, mono, paint_glyph,
-    quiet_button,
-};
+use crate::screen_kit::{Size, body, mono, quiet_button};
 use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TEXT_TITLE};
 
 pub(crate) const SLOT_W: f32 = ICON_W;
@@ -37,21 +35,28 @@ const LINE_INSET: f32 = 12.0;
 const LINE_INSET_BARE: f32 = 8.0;
 const MENU_W: f32 = 340.0;
 const MENU_MARGIN: i8 = 6;
-const ROW_GAP: f32 = 10.0;
-const ROW_ICON: f32 = 16.0;
 const STILL_AGE: f64 = 30.5;
 const NOTICE_W: f32 = 450.0;
 const TOAST_BOTTOM: f32 = 34.0;
 const TOAST_PAD: egui::Vec2 = vec2(14.0, 8.0);
+const BREATH_S: f64 = 2.4;
+const GRADIENT_END: Color32 = Color32::from_rgb(0x15, 0x39, 0x3a);
+const PIP_W: f32 = 3.0;
+const PIP_GAP: f32 = 2.5;
+const PIP_H: f32 = 10.0;
+const MARK_GAP: f32 = 8.0;
+const AWAY_WORD: &str = "Away";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Action {
     Pick(Choice),
-    AddHour,
+    Retime(Choice),
     TurnOff,
+    Away,
 }
 
 /// Everything the button reads from the app for one frame.
+#[allow(clippy::struct_excessive_bools)] // independent facts of one frame, not a mode
 pub(crate) struct Input {
     pub(crate) look: Look,
     pub(crate) session: State,
@@ -62,6 +67,7 @@ pub(crate) struct Input {
     pub(crate) gap: f32,
     pub(crate) force_short: bool,
     pub(crate) pinned: bool,
+    pub(crate) away: bool,
 }
 
 #[derive(Default)]
@@ -72,6 +78,7 @@ pub(crate) struct Memory {
     shown: String,
     rolled: Option<(String, f64)>,
     last_pill: Option<Rect>,
+    draft: Option<Choice>,
 }
 
 impl Memory {
@@ -118,8 +125,38 @@ fn text_width(ui: &Ui, text: &str) -> f32 {
     ui.painter().layout_no_wrap(text.to_owned(), mono(LABEL_SIZE), brand::TEAL_TEXT).size().x
 }
 
-fn pill_for(ui: &Ui, text: &str) -> f32 {
-    ICON_W + LABEL_PAD_LEFT + text_width(ui, text) + LABEL_PAD_RIGHT
+fn pill_for(ui: &Ui, text: &str, marks: f32) -> f32 {
+    ICON_W + LABEL_PAD_LEFT + marks + text_width(ui, text) + LABEL_PAD_RIGHT
+}
+
+/// What sits left of the time in the pill: the hour pips and, while away, the violet word.
+struct Marks {
+    pips: Option<Pips>,
+    away: bool,
+}
+
+impl Marks {
+    fn of(input: &Input) -> Self {
+        let pips = match (input.session.left(input.wall), input.total) {
+            (Some(left), Some(total)) => pill::pips(left, total),
+            _ => None,
+        };
+        Self { pips, away: input.away }
+    }
+
+    fn width(&self, painter: &egui::Painter) -> f32 {
+        let pips = self.pips.map_or(0.0, |pips| pips_width(pips.count) + MARK_GAP);
+        let away = if self.away { away_word_width(painter) + MARK_GAP * 2.0 } else { 0.0 };
+        pips + away
+    }
+}
+
+fn pips_width(count: u32) -> f32 {
+    count as f32 * PIP_W + count.saturating_sub(1) as f32 * PIP_GAP
+}
+
+fn away_word_width(painter: &egui::Painter) -> f32 {
+    painter.layout_no_wrap(AWAY_WORD.to_owned(), body(TEXT_TAG), brand::VIOLET_TEXT).size().x
 }
 
 /// Draws the button where the strip's cursor is and returns what the menu asked for.
@@ -128,7 +165,9 @@ pub(crate) fn show(ui: &mut Ui, input: &Input, memory: &mut Memory, now: f64) ->
     let (slot, _) = ui.allocate_exact_size(vec2(SLOT_W, SLOT_H), Sense::hover());
     let on = input.session.is_on();
     let (full, short) = label_texts(input.session, input.wall);
-    let (full_pill, short_pill) = (pill_for(ui, &full), pill_for(ui, &short));
+    let marks = Marks::of(input);
+    let marks_w = marks.width(ui.painter());
+    let (full_pill, short_pill) = (pill_for(ui, &full, marks_w), pill_for(ui, &short, marks_w));
     let fit = if input.force_short && on && input.gap >= 0.0 {
         Fit::Short
     } else if on {
@@ -176,11 +215,15 @@ pub(crate) fn show(ui: &mut Ui, input: &Input, memory: &mut Memory, now: f64) ->
     paint_button_frame(&painter, slot, hovered, open, amount > 0.01);
     if amount > 0.01 {
         paint_pill(&painter, pill_rect, text, memory, amount, now);
+        paint_marks(&painter, pill_rect, text, &marks, amount);
     }
-    if on {
+    if on && (fit == Fit::Hidden || marks.pips.is_none()) {
         paint_line(&painter, pill_rect, slot, fit, input, amount);
     }
     amphetamine_icon::paint(&painter, slot, look, hover);
+    if input.away {
+        paint_away_badge(&painter, slot);
+    }
     if animating
         && (look.animating() || sliding || rolling)
         && let Some(after) = mascot_motion::next_repaint(true)
@@ -188,7 +231,9 @@ pub(crate) fn show(ui: &mut Ui, input: &Input, memory: &mut Memory, now: f64) ->
         ctx.request_repaint_after(after);
     }
     let response = if open { response } else { response.on_hover_ui(|ui| tooltip(ui, input)) };
-    let action = menu(&response, input, memory.force_menu, ui.ctx());
+    let mut draft = memory.draft.unwrap_or(amphetamine_menu::FIRST_DRAFT);
+    let action = menu(&response, input, memory.force_menu, ui.ctx(), &mut draft);
+    memory.draft = Some(draft);
     Output { action }
 }
 
@@ -210,13 +255,21 @@ fn paint_pill(
     amount: f64,
     now: f64,
 ) {
-    let radius = CornerRadius::same(14);
+    let radius = CornerRadius::same(16);
     let fade = pill::label_alpha(amount);
-    painter.rect_filled(rect, radius, brand::TEAL_NAV);
+    let breath = 0.75 + 0.25 * (now * std::f64::consts::TAU / BREATH_S).sin() as f32;
+    let glow = egui::epaint::Shadow {
+        offset: [0, 0],
+        blur: 18,
+        spread: 0,
+        color: brand::TEAL.gamma_multiply(0.22 * breath * amount as f32),
+    };
+    painter.add(glow.as_shape(rect, radius));
+    painter.add(gradient(rect, brand::TEAL_NAV, GRADIENT_END));
     painter.rect_stroke(
         rect,
         radius,
-        Stroke::new(1.0, brand::TEAL.gamma_multiply(0.35)),
+        Stroke::new(1.0, brand::TEAL.gamma_multiply(0.5)),
         StrokeKind::Inside,
     );
     let clip = painter.with_clip_rect(rect.shrink2(vec2(2.0, 0.0)));
@@ -254,6 +307,46 @@ fn paint_pill(
     }
 }
 
+fn paint_marks(painter: &egui::Painter, pill: Rect, text: &str, marks: &Marks, amount: f64) {
+    let fade = pill::label_alpha(amount);
+    let clip = painter.with_clip_rect(pill.shrink2(vec2(2.0, 0.0)));
+    let label_w =
+        painter.layout_no_wrap(text.to_owned(), mono(LABEL_SIZE), brand::TEAL_TEXT).size().x;
+    let mut right = pill.right() - ICON_W - LABEL_PAD_RIGHT - label_w - MARK_GAP;
+    let y = pill.center().y;
+    if let Some(pips) = marks.pips {
+        for index in 0..pips.count {
+            let x = right - (pips.count - index) as f32 * (PIP_W + PIP_GAP) + PIP_GAP;
+            let pip = Rect::from_min_size(pos2(x, y - PIP_H / 2.0), vec2(PIP_W, PIP_H));
+            let glowing = index >= pips.count - pips.lit;
+            if glowing {
+                clip.rect_filled(
+                    pip.expand(1.5),
+                    CornerRadius::same(3),
+                    brand::TEAL.gamma_multiply(0.25 * fade),
+                );
+            }
+            let ink = if glowing { brand::TEAL_TEXT } else { brand::ITEM_LINE };
+            clip.rect_filled(pip, CornerRadius::same(2), ink.gamma_multiply(fade));
+        }
+        right -= pips_width(pips.count) + MARK_GAP;
+    }
+    if marks.away {
+        let rule = right;
+        clip.line_segment(
+            [pos2(rule, y - 7.0), pos2(rule, y + 7.0)],
+            Stroke::new(1.0, brand::VIOLET_LINE.gamma_multiply(fade)),
+        );
+        clip.text(
+            pos2(rule - MARK_GAP, y),
+            Align2::RIGHT_CENTER,
+            AWAY_WORD,
+            body(TEXT_TAG),
+            brand::VIOLET_TEXT.gamma_multiply(fade),
+        );
+    }
+}
+
 fn paint_line(
     painter: &egui::Painter,
     pill: Rect,
@@ -275,7 +368,37 @@ fn paint_line(
         track.min,
         vec2(track.width() * line_fraction(left, total), track.height()),
     );
-    painter.rect_filled(fill, radius, brand::TEAL.gamma_multiply(0.85 * shown));
+    let halo = fill.expand2(vec2(1.0, 1.5));
+    painter.rect_filled(halo, CornerRadius::same(2), brand::TEAL.gamma_multiply(0.25 * shown));
+    painter.rect_filled(fill, radius, brand::TEAL.gamma_multiply(0.95 * shown));
+}
+
+/// A left-to-right fill inside the pill's rounded outline, as one fan of triangles.
+fn gradient(rect: Rect, from: Color32, to: Color32) -> egui::Shape {
+    let mut outline = Vec::new();
+    egui::epaint::tessellator::path::rounded_rectangle(
+        &mut outline,
+        rect.shrink(0.5),
+        CornerRadius::same(16).into(),
+    );
+    let ink = |x: f32| from.lerp_to_gamma(to, ((x - rect.left()) / rect.width()).clamp(0.0, 1.0));
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.center(), ink(rect.center().x));
+    for point in &outline {
+        mesh.colored_vertex(*point, ink(point.x));
+    }
+    let count = outline.len() as u32;
+    for index in 0..count {
+        mesh.add_triangle(0, 1 + index, 1 + (index + 1) % count);
+    }
+    egui::Shape::mesh(mesh)
+}
+
+/// The crescent on the tablet's lower right while Away is on.
+fn paint_away_badge(painter: &egui::Painter, slot: Rect) {
+    let center = slot.center() + vec2(11.0, 10.0);
+    painter.circle(center, 5.5, brand::VIOLET_FILL, Stroke::new(1.5, brand::GROUND));
+    amphetamine_menu::paint_moon(painter, center, 3.2, brand::VIOLET_TEXT, brand::VIOLET_FILL);
 }
 
 fn tooltip(ui: &mut Ui, input: &Input) {
@@ -283,6 +406,9 @@ fn tooltip(ui: &mut Ui, input: &Input) {
     let (title, body_text) = tip_text(input);
     ui.label(RichText::new(title).color(brand::TEXT));
     ui.label(RichText::new(body_text).color(brand::SOFT));
+    if input.away {
+        ui.label(RichText::new(away_model::TIP).color(brand::VIOLET_TEXT));
+    }
 }
 
 pub(crate) fn tip_text(input: &Input) -> (&'static str, String) {
@@ -343,7 +469,13 @@ fn menu_frame() -> egui::Frame {
         .inner_margin(Margin::same(MENU_MARGIN))
 }
 
-fn menu(response: &Response, input: &Input, force: bool, ctx: &egui::Context) -> Option<Action> {
+fn menu(
+    response: &Response,
+    input: &Input,
+    force: bool,
+    ctx: &egui::Context,
+    draft: &mut Choice,
+) -> Option<Action> {
     let menu_session = matches!(input.session, State::Off | State::On { .. });
     if force {
         egui::Popup::open_id(ctx, egui::Popup::default_response_id(response));
@@ -361,125 +493,12 @@ fn menu(response: &Response, input: &Input, force: bool, ctx: &egui::Context) ->
         .show(|ui| {
             ui.set_width(MENU_W - f32::from(MENU_MARGIN) * 2.0);
             ui.spacing_mut().item_spacing.y = 2.0;
-            action = menu_body(ui, input);
-            if action.is_some() {
+            action = amphetamine_menu::body_ui(ui, input, draft);
+            if action.is_some_and(|action| action != Action::Away) {
                 ui.close();
             }
         });
     action
-}
-
-fn menu_body(ui: &mut Ui, input: &Input) -> Option<Action> {
-    if let State::On { until, .. } = input.session {
-        return on_menu(ui, input, until);
-    }
-    off_menu(ui, input)
-}
-
-fn on_menu(ui: &mut Ui, input: &Input, until: Option<f64>) -> Option<Action> {
-    let left = until.map_or_else(String::new, |until| left_text((until - input.wall).max(0.0)));
-    menu_label(ui, "Amphetamine is on", &left);
-    let mut action = None;
-    if until.is_some() && row(ui, Lead::Drawn(Glyph::Clock), "Add 1 hour").clicked() {
-        action = Some(Action::AddHour);
-    }
-    if row(ui, Lead::Font(icons::X), "Turn off").clicked() {
-        action = Some(Action::TurnOff);
-    }
-    action
-}
-
-fn menu_note(input: &Input) -> &'static str {
-    if !input.lid {
-        return "No lid mode on Linux. This keeps the computer awake with systemd-inhibit.";
-    }
-    match input.route {
-        Route::SetUp => {
-            "Asks for your password once to set up Touch ID. After that a fingerprint starts it."
-        }
-        Route::Fingerprint => "Lid closed on battery starts with Touch ID.",
-        Route::Outdated => {
-            "Touch ID needs an update. The next start asks for your password once, then a fingerprint starts it."
-        }
-        Route::Password => {
-            "Lid closed on battery needs your password. macOS asks once when you start."
-        }
-    }
-}
-
-fn choice_words(choice: Choice) -> &'static str {
-    match choice {
-        Choice::HalfHour => "30 minutes",
-        Choice::Hour => "1 hour",
-        Choice::FourHours => "4 hours",
-        Choice::Open => "Until I turn it off",
-    }
-}
-
-fn off_menu(ui: &mut Ui, input: &Input) -> Option<Action> {
-    menu_label(ui, if input.lid { "Keep awake with the lid closed" } else { "Keep awake" }, "");
-    let mut action = None;
-    for choice in Choice::ALL {
-        let lead = if choice == Choice::Open { Glyph::Infinity } else { Glyph::Clock };
-        if row(ui, Lead::Drawn(lead), choice_words(choice)).clicked() {
-            action = Some(Action::Pick(choice));
-        }
-    }
-    ui.add_space(4.0);
-    let machine = if input.lid { "Mac" } else { "computer" };
-    let always = format!(
-        "Tidewatch already keeps the {machine} awake while agents work. That is automatic and separate."
-    );
-    egui::Frame::new()
-        .fill(brand::SUNKEN)
-        .corner_radius(8)
-        .inner_margin(Margin::symmetric(12, 10))
-        .outer_margin(Margin::symmetric(4, 0))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 6.0;
-            ui.add(
-                egui::Label::new(
-                    RichText::new(menu_note(input)).color(brand::MUTED).size(TEXT_TAG),
-                )
-                .wrap(),
-            );
-            ui.add(
-                egui::Label::new(RichText::new(always).color(brand::FAINT).size(TEXT_TAG)).wrap(),
-            );
-        });
-    action
-}
-
-#[derive(Clone, Copy)]
-enum Lead {
-    Drawn(Glyph),
-    Font(&'static str),
-}
-
-fn row(ui: &mut Ui, lead: Lead, label: &str) -> Response {
-    let (rect, response) = menu_row(ui, MENU_ROW_H, false, true);
-    let icon = pos2(rect.left() + MENU_ROW_PAD + ROW_ICON / 2.0, rect.center().y);
-    match lead {
-        Lead::Drawn(glyph) => paint_glyph(ui.painter(), icon, ROW_ICON, glyph, brand::SOFT),
-        Lead::Font(text) => {
-            ui.painter().text(
-                icon,
-                Align2::CENTER_CENTER,
-                text,
-                egui::FontId::proportional(ROW_ICON),
-                brand::SOFT,
-            );
-        }
-    }
-    ui.painter().text(
-        pos2(icon.x + ROW_ICON / 2.0 + ROW_GAP, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        body(TEXT_BODY),
-        brand::TEXT,
-    );
-    response
 }
 
 /// An amber triangle with a bar and a dot, drawn so no font has to have the glyph.

@@ -1,6 +1,8 @@
 //! The time pill that grows left of the Amphetamine icon: the text it shows, whether it fits the
 //! gap before the new tab button, and how its width eases open and shut. Pure.
 
+use tidewatch_core::amphetamine;
+
 use crate::amphetamine_motion::{POP, STANDARD, bezier};
 
 pub(crate) const ICON_W: f32 = 44.0;
@@ -9,6 +11,9 @@ pub(crate) const OPEN_S: f64 = 0.26;
 pub(crate) const CLOSE_S: f64 = 0.2;
 pub(crate) const ROLL_S: f64 = 0.38;
 pub(crate) const INFINITY: &str = "\u{221e}";
+pub(crate) const MAX_PIPS: u32 = 8;
+const QUARTER_S: f64 = 900.0;
+const QUARTERS_BELOW_S: f64 = 7200.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fit {
@@ -104,6 +109,26 @@ pub(crate) fn label_alpha(amount: f64) -> f32 {
 /// The share of the progress line still showing: time left of the whole session.
 pub(crate) fn line_fraction(left: f64, total: f64) -> f32 {
     if total <= 0.0 { 0.0 } else { (left / total).clamp(0.0, 1.0) as f32 }
+}
+
+/// The pips beside the pill's time: how many there are and how many still glow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Pips {
+    pub(crate) count: u32,
+    pub(crate) lit: u32,
+}
+
+/// One pip per hour of the session, at most [`MAX_PIPS`]; under two hours one per quarter hour.
+/// A pip glows while any of its stretch is still to come.
+pub(crate) fn pips(left: f64, total: f64) -> Option<Pips> {
+    if total <= 0.0 {
+        return None;
+    }
+    let unit = if total < QUARTERS_BELOW_S { QUARTER_S } else { amphetamine::HOUR_S };
+    let count = ((total / unit - 1e-6).ceil() as u32).clamp(1, MAX_PIPS);
+    let each = total / f64::from(count);
+    let lit = ((left.max(0.0) / each - 1e-6).ceil() as u32).min(count);
+    Some(Pips { count, lit })
 }
 
 #[cfg(test)]

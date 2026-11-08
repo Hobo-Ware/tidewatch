@@ -40,6 +40,9 @@ pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);
 
 pub(crate) const NEEDS_FILL: Color32 = Color32::from_rgb(0x16, 0x13, 0x0f);
 pub(crate) const VIOLET_TEXT: Color32 = Color32::from_rgb(0xc4, 0xb5, 0xfd);
+pub(crate) const VIOLET: Color32 = Color32::from_rgb(0x7c, 0x6b, 0xd6);
+pub(crate) const VIOLET_FILL: Color32 = Color32::from_rgb(0x22, 0x1d, 0x3d);
+pub(crate) const VIOLET_LINE: Color32 = Color32::from_rgb(0x3b, 0x34, 0x66);
 pub(crate) const REPO_INKS: [Color32; 7] = [
     Color32::from_rgb(0xf4, 0x72, 0xb6),
     BLUE,

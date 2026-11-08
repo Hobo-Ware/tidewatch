@@ -189,12 +189,13 @@ fn body(frame: &Frame, tablet: &Tablet) {
 fn face(frame: &Frame, tablet: &Tablet) {
     let drop = vec2(0.0, FACE_DROP);
     let ink = tablet.face;
+    let awake = 1.0 - tablet.sleep;
     frame.painter.circle_stroke(
         frame.at(vec2(8.3, 10.3) + drop),
         1.5 * frame.scale,
-        frame.stroke(FACE_STROKE, ink),
+        frame.stroke(FACE_STROKE, with_alpha(ink, awake)),
     );
-    let open = 1.0 - tablet.wink;
+    let open = (1.0 - tablet.wink) * awake;
     if open > 0.0 {
         let ry = 1.5 * (1.0 - 0.9 * tablet.wink);
         let center = vec2(15.7, 10.3) + drop;
@@ -208,8 +209,27 @@ fn face(frame: &Frame, tablet: &Tablet) {
         let arc = quadratic(vec2(14.1, 10.7), vec2(15.7, 9.0), vec2(17.3, 10.7), 8);
         frame.line(arc.into_iter().map(|p| p + drop), FACE_STROKE, with_alpha(ink, tablet.wink));
     }
+    if tablet.sleep > 0.0 {
+        for x in [8.3, 15.7] {
+            let lid = quadratic(vec2(x - 1.6, 9.9), vec2(x, 11.8), vec2(x + 1.6, 9.9), 8);
+            frame.line(
+                lid.into_iter().map(|p| p + drop),
+                FACE_STROKE,
+                with_alpha(ink, tablet.sleep),
+            );
+        }
+        snore(frame, tablet.sleep, ink);
+    }
     let smile = quadratic(vec2(7.6, 14.2), vec2(12.0, 18.0), vec2(16.4, 14.2), 12);
     frame.line(smile.into_iter().map(|p| p + drop), FACE_STROKE, ink);
+}
+
+/// The small z beside a sleeping tablet, drawn as three strokes so it needs no font.
+fn snore(frame: &Frame, amount: f32, ink: Color32) {
+    let (left, right, top, bottom) = (19.6, 22.4, 1.6, 4.6);
+    let points = [vec2(left, top), vec2(right, top), vec2(left, bottom), vec2(right, bottom)];
+    let path: Vec<Pos2> = points.into_iter().map(|p| frame.outside(p)).collect();
+    frame.painter.add(Shape::line(path, frame.stroke(1.1, with_alpha(ink, amount))));
 }
 
 fn eye(frame: &Frame, slot: usize, center: Vec2, radius: f32, pop: f32, age: f64) {

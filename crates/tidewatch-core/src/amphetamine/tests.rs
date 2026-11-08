@@ -12,14 +12,14 @@ fn on(until: Option<f64>, told: u32) -> State {
 
 #[test]
 fn picking_on_a_mac_asks_for_the_password_before_anything_else() {
-    let (state, effects) = run(State::Off, &Event::Pick(Choice::Hour), NOW, true);
-    assert_eq!(state, State::Starting { choice: Choice::Hour });
+    let (state, effects) = run(State::Off, &Event::Pick(Choice::Minutes(60)), NOW, true);
+    assert_eq!(state, State::Starting { choice: Choice::Minutes(60) });
     assert_eq!(effects, [Effect::StartLid { until: Some(NOW + 3600.0) }]);
 }
 
 #[test]
 fn an_answered_prompt_turns_it_on_from_that_moment() {
-    let starting = State::Starting { choice: Choice::HalfHour };
+    let starting = State::Starting { choice: Choice::Minutes(30) };
     let (state, effects) = run(starting, &Event::Started, NOW + 20.0, true);
     let until = NOW + 20.0 + 1800.0;
     assert_eq!(state, on(Some(until), 1));
@@ -58,7 +58,7 @@ fn a_refused_prompt_leaves_it_off_and_says_why() {
 
 #[test]
 fn without_lid_mode_there_is_no_prompt_and_no_waiting() {
-    let (state, effects) = run(State::Off, &Event::Pick(Choice::FourHours), NOW, false);
+    let (state, effects) = run(State::Off, &Event::Pick(Choice::Minutes(240)), NOW, false);
     assert_eq!(state, on(Some(NOW + 4.0 * 3600.0), 4));
     assert_eq!(effects, [Effect::TakeHold, Effect::Say(Voice::Start)]);
     let (state, effects) = run(state, &Event::TurnOff, NOW + 5.0, false);
@@ -81,11 +81,17 @@ fn turning_off_is_off_as_soon_as_the_stop_command_returns_and_sleep_is_checked_a
 }
 
 #[test]
-fn adding_an_hour_moves_the_deadline_and_the_token_but_asks_nothing() {
-    let (state, effects) = run(on(Some(NOW + 600.0), 1), &Event::AddHour, NOW, true);
+fn retiming_moves_the_deadline_and_the_token_but_asks_nothing() {
+    let (state, effects) =
+        run(on(Some(NOW + 600.0), 1), &Event::Retime(Choice::Minutes(70)), NOW, true);
     assert_eq!(state, on(Some(NOW + 4200.0), 2));
     assert_eq!(effects, [Effect::WriteDeadline(Some(NOW + 4200.0))]);
-    assert_eq!(run(on(None, 0), &Event::AddHour, NOW, true), (on(None, 0), vec![]));
+    let (state, effects) = run(on(None, 0), &Event::Retime(Choice::Minutes(30)), NOW, true);
+    assert_eq!(state, on(Some(NOW + 1800.0), 1));
+    assert_eq!(effects, [Effect::WriteDeadline(Some(NOW + 1800.0))]);
+    let (state, effects) = run(on(Some(NOW + 600.0), 1), &Event::Retime(Choice::Open), NOW, true);
+    assert_eq!(state, on(None, 0));
+    assert_eq!(effects, [Effect::WriteDeadline(None)]);
 }
 
 #[test]
@@ -99,7 +105,7 @@ fn the_deadline_ends_the_session_like_turning_it_off() {
 
 #[test]
 fn each_full_hour_left_is_said_once_and_a_short_session_says_none() {
-    let mut state = run(State::Off, &Event::Pick(Choice::FourHours), NOW, false).0;
+    let mut state = run(State::Off, &Event::Pick(Choice::Minutes(240)), NOW, false).0;
     let mut said = Vec::new();
     for minute in 0..=240 {
         let (next, effects) = run(state, &Event::Tick, NOW + f64::from(minute) * 60.0, false);
@@ -111,7 +117,7 @@ fn each_full_hour_left_is_said_once_and_a_short_session_says_none() {
     }
     assert_eq!(said, [(60, 3), (120, 2), (180, 1)]);
 
-    let mut short = run(State::Off, &Event::Pick(Choice::Hour), NOW, false).0;
+    let mut short = run(State::Off, &Event::Pick(Choice::Minutes(60)), NOW, false).0;
     for minute in 0..60 {
         let (next, effects) = run(short, &Event::Tick, NOW + f64::from(minute) * 60.0, false);
         assert_eq!(effects, []);
@@ -120,10 +126,10 @@ fn each_full_hour_left_is_said_once_and_a_short_session_says_none() {
 }
 
 #[test]
-fn an_added_hour_is_announced_again_when_it_comes_round() {
+fn a_longer_session_is_announced_again_when_it_comes_round() {
     let state = on(Some(NOW + 2.0 * 3600.0 + 30.0), 3);
-    let (state, _) = run(state, &Event::AddHour, NOW, false);
-    let (_, effects) = run(state, &Event::Tick, NOW + 30.0, false);
+    let (state, _) = run(state, &Event::Retime(Choice::Minutes(3 * 60 + 1)), NOW, false);
+    let (_, effects) = run(state, &Event::Tick, NOW + 61.0, false);
     assert_eq!(effects, [Effect::Say(Voice::HoursLeft(3))]);
 }
 
@@ -132,18 +138,19 @@ fn events_that_make_no_sense_in_a_state_change_nothing() {
     let cases = [
         (State::Off, Event::TurnOff),
         (State::Off, Event::Started),
-        (State::Off, Event::AddHour),
+        (State::Off, Event::Retime(Choice::Minutes(60))),
+        (State::Stopping, Event::Retime(Choice::Minutes(60))),
         (State::Off, Event::Settled(true)),
         (State::Off, Event::Unconfirmed),
         (State::Off, Event::Stopped),
         (State::Stopping, Event::Settled(false)),
         (on(None, 0), Event::Stopped),
-        (State::Starting { choice: Choice::Hour }, Event::Unconfirmed),
-        (State::Starting { choice: Choice::Hour }, Event::TurnOff),
-        (State::Starting { choice: Choice::Hour }, Event::Pick(Choice::Open)),
-        (State::Stopping, Event::Pick(Choice::Hour)),
+        (State::Starting { choice: Choice::Minutes(60) }, Event::Unconfirmed),
+        (State::Starting { choice: Choice::Minutes(60) }, Event::TurnOff),
+        (State::Starting { choice: Choice::Minutes(60) }, Event::Pick(Choice::Open)),
+        (State::Stopping, Event::Pick(Choice::Minutes(60))),
         (State::Stopping, Event::Tick),
-        (on(None, 0), Event::Pick(Choice::Hour)),
+        (on(None, 0), Event::Pick(Choice::Minutes(60))),
         (on(None, 0), Event::Tick),
     ];
     for (state, event) in cases {
@@ -152,11 +159,10 @@ fn events_that_make_no_sense_in_a_state_change_nothing() {
 }
 
 #[test]
-fn the_choices_are_the_menu_in_order() {
-    let labels: Vec<_> = Choice::ALL.iter().map(|choice| choice.label()).collect();
-    assert_eq!(labels, ["30 min", "1 h", "4 h", "Until I turn it off"]);
-    let seconds: Vec<_> = Choice::ALL.iter().map(|choice| choice.seconds()).collect();
-    assert_eq!(seconds, [Some(1800.0), Some(3600.0), Some(14400.0), None]);
+fn the_time_left_rounds_up_to_a_whole_minute() {
+    assert_eq!(Choice::left(Some(71.0 * 60.0 + 1.0)), Choice::Minutes(72));
+    assert_eq!(Choice::left(Some(0.0)), Choice::Minutes(0));
+    assert_eq!(Choice::left(None), Choice::Open);
 }
 
 #[test]
