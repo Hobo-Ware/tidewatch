@@ -16,6 +16,7 @@ use tidewatch_core::prepare::{PrepareInput, prepare};
 use tidewatch_core::session_id;
 use tidewatch_core::setup_recipe::{self, Recipe};
 use tidewatch_core::start_base;
+use tidewatch_core::strays;
 use tidewatch_core::tools::Tools;
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::{self, BranchOutcome, Leftover, Terms, Worktree};
@@ -200,6 +201,7 @@ pub(crate) fn remove<T: Send + 'static>(
     jobs.spawn(ctx, move || {
         let had_shell = shell.is_some();
         drop(shell);
+        let _ = strays::stop_escaped(&worktree.path);
         if had_shell {
             wait_for_exit(&paths, &worktree);
         }
