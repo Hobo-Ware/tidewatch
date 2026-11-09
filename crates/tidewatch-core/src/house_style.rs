@@ -56,8 +56,10 @@ const PR_HEAD: &str = "\
 
 Once you open a pull request, it's yours to watch: CI checks, review comments and threads, and conflicts with the base branch. React yourself: fix failures, answer every review thread, and resolve conflicts the way this repo's workflow says.";
 
-const PR_WATCH_CLAUDE: &str = "Start a Monitor on a script that polls `gh pr checks` and new review comments, or set a CronCreate check-in.";
-const PR_WATCH_OTHER: &str = "Check again before you end your turn.";
+const PR_FEED: &str = "`$TIDEWATCH_EVENTS` gets a JSON line when your pull request, or a pull request or issue you linked, changes on GitHub.";
+const PR_WATCH_CLAUDE: &str =
+    "Start a Monitor on `tail -n 0 -F \"$TIDEWATCH_EVENTS\"`, then read details with `gh`.";
+const PR_WATCH_OTHER: &str = "Read its new lines before you end your turn.";
 const PR_TAIL: &str = "Tidewatch only tells you about something you haven't picked up.";
 
 fn pr_section(role: Role, turn_end: TurnEnd) -> String {
@@ -68,7 +70,7 @@ fn pr_section(role: Role, turn_end: TurnEnd) -> String {
         TurnEnd::SentBack => PR_WATCH_CLAUDE,
         TurnEnd::Reminded => PR_WATCH_OTHER,
     };
-    format!("\n{PR_HEAD} {watch} {PR_TAIL}\n")
+    format!("\n{PR_HEAD} {PR_FEED} {watch} {PR_TAIL}\n")
 }
 
 const PUSH_LINE: &str =
@@ -627,6 +629,7 @@ mod tests {
                     "it's yours to watch: CI checks, review comments and threads, and conflicts with the base branch",
                     "React yourself: fix failures, answer every review thread",
                     "Tidewatch only tells you about something you haven't picked up.",
+                    PR_FEED,
                 ] {
                     assert!(text.contains(needle), "{role:?} {turn_end:?}: {needle}");
                 }

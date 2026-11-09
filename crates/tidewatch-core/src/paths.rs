@@ -17,6 +17,7 @@ const AVATAR_FILE: &str = "avatar.json";
 const AVATAR_ASKED_FILE: &str = "avatar-asked";
 const AVATAR_FALLBACK_FILE: &str = "avatar-fallback";
 const PROGRESS_FEED_FILE: &str = "progress-feed.jsonl";
+const EVENTS_FEED_FILE: &str = "github-events.jsonl";
 const SENT_FILE: &str = "tidewatch-sent.jsonl";
 const PLAN_LIMITS_FILE: &str = "plan-limits.json";
 const PANEL_LOG_FILE: &str = "panel-log.jsonl";
@@ -63,6 +64,11 @@ pub fn avatar_fallback_file_beside(notes_file: &Path) -> PathBuf {
 #[must_use]
 pub fn progress_feed_file_beside(notes_file: &Path) -> PathBuf {
     notes_file.with_file_name(PROGRESS_FEED_FILE)
+}
+
+#[must_use]
+pub fn events_feed_file_beside(notes_file: &Path) -> PathBuf {
+    notes_file.with_file_name(EVENTS_FEED_FILE)
 }
 
 #[must_use]
@@ -403,6 +409,11 @@ impl TidewatchPaths {
     #[must_use]
     pub fn progress_feed_file(&self, repo: &Path, tab: &str) -> PathBuf {
         self.tab_state_dir(repo, tab).join(PROGRESS_FEED_FILE)
+    }
+
+    #[must_use]
+    pub fn events_feed_file(&self, repo: &Path, tab: &str) -> PathBuf {
+        self.tab_state_dir(repo, tab).join(EVENTS_FEED_FILE)
     }
 
     /// What one agent is given as its house style: the house-style file and the launch text with

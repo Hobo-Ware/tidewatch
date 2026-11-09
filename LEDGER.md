@@ -9,6 +9,10 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
+## 2026-11-09
+
+- **Agents hear about their pull requests and issues from Tidewatch's webhooks.** Owner: "I want us to inform agents of PR or Issue statuses as well it feels like our webhooks are better", picked the event file over sending messages or a forwarder per agent (GitHub allows one `gh webhook forward` hook per repo). Each agent gets `$TIDEWATCH_EVENTS` (the tab's `github-events.jsonl`); a JSON line goes there whenever a pull request or issue link of the tab (its own PR and the links it saw) changes state, draft, checks, review, conflicts, close reason, comment count or access, whether a webhook, a timed lookup or the PR watch saw it. The launch text drops "poll `gh pr checks`" for a Monitor on `tail -n 0 -F "$TIDEWATCH_EVENTS"` (other CLIs read new lines before they end a turn). New row in `agent-channels.md`. Tests: `github_feed` table tests, a `link_glue` test that a lookup writes one line per change and a recheck with the same answer none; clippy and fmt clean.
+
 ## 2026-11-08
 
 - **Services pill sized to match its neighbours.** The pill is 32 px tall, the Amphetamine pill's height (was 28 px), and shows at most five dots (was eight), the worst states first, so a crash past the last dot still shows and 25 services no longer stretch the strip. Tests: services_view 32 passed.

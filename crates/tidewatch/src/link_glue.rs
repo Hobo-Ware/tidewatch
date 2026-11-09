@@ -13,11 +13,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use tidewatch_core::clock;
+use tidewatch_core::github_feed;
 use tidewatch_core::github_hook::Hit;
 use tidewatch_core::link_board::{Access, Kind, Link, LinkBoard, Status};
 use tidewatch_core::link_check::{self, Lookup};
 use tidewatch_core::link_store;
-use tidewatch_core::paths::links_file_beside;
+use tidewatch_core::paths::{events_feed_file_beside, links_file_beside};
 use tidewatch_core::tools::Tools;
 
 use crate::job_glue::Facts;
@@ -33,6 +35,7 @@ enum Done {
 struct Tab {
     board: LinkBoard,
     file: PathBuf,
+    events: PathBuf,
     loaded: bool,
     own_pr: Option<(u64, String, Option<String>, tidewatch_core::link_board::LinkState, Status)>,
 }
@@ -155,6 +158,7 @@ impl Host {
             let mut tab = Tab {
                 board: LinkBoard::default(),
                 file: file.clone(),
+                events: events_feed_file_beside(facts.notes_file),
                 loaded: false,
                 own_pr: None,
             };
@@ -274,6 +278,8 @@ impl Host {
             return;
         }
         let Some(tab) = self.tabs.get_mut(&id) else { return };
+        let before: Vec<Option<Link>> =
+            links.iter().map(|link| held_link(&tab.board, link).cloned()).collect();
         let changed = tab.board.absorb_all(&links);
         if changed {
             self.told.extend(links.iter().map(|link| (id, link.clone())));
@@ -281,9 +287,18 @@ impl Host {
         if !changed || !self.writable {
             return;
         }
-        let file = tab.file.clone();
+        let news: Vec<String> = links
+            .iter()
+            .zip(&before)
+            .filter_map(|(link, before)| {
+                let after = held_link(&tab.board, link)?;
+                github_feed::line(before.as_ref(), after, clock::now_ms())
+            })
+            .collect();
+        let (file, events) = (tab.file.clone(), tab.events.clone());
         self.jobs.spawn(ctx, move || {
             let _ = link_store::merge(&file, &links);
+            let _ = github_feed::append(&events, &news);
             Done::Saved
         });
     }
@@ -305,6 +320,11 @@ impl Host {
         known.own_pr = Some(seen);
         self.found(tab, vec![pr_link(pr, now_ms)], ctx);
     }
+}
+
+fn held_link<'a>(board: &'a LinkBoard, link: &Link) -> Option<&'a Link> {
+    let key = link.key();
+    board.links.iter().find(|held| held.key() == key)
 }
 
 /// A link the lookups of every tab share.
