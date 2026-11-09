@@ -44,6 +44,7 @@ pub mod folder_repos;
 mod fsutil;
 pub mod github_clone;
 pub mod github_events;
+pub mod github_feed;
 pub mod github_forwarder;
 pub mod github_hook;
 pub mod github_hooks;

@@ -632,3 +632,37 @@ fn only_the_links_that_were_new_to_a_board_are_told() {
     assert_eq!(told, [(1, "https://a.dev/1".to_owned()), (1, "https://a.dev/2".to_owned())]);
     assert_eq!(host.take_told().len(), 0);
 }
+
+#[cfg(unix)]
+fn feed_urls(fx: &Fx) -> Vec<String> {
+    let text = std::fs::read_to_string(events_feed_file_beside(&fx.notes())).unwrap_or_default();
+    let mut urls: Vec<String> = text
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["url"].to_string())
+        .collect();
+    urls.sort();
+    urls
+}
+
+#[cfg(unix)]
+#[test]
+fn each_change_a_lookup_finds_goes_once_into_the_tabs_events_feed() {
+    let fx = Fx::new();
+    let mut host = loaded_host(&fx, fx.fake_gh(ANSWERS), true);
+    until_looked_up(&fx, &mut host);
+    let want: Vec<String> = {
+        let mut urls: Vec<String> =
+            [ISSUE_CLOSED, PR_MERGED, PR_OPEN].iter().map(|url| format!("\"{url}\"")).collect();
+        urls.sort();
+        urls
+    };
+    fx.until(&mut host, &[1], |_| feed_urls(&fx).len() >= want.len());
+    assert_eq!(feed_urls(&fx), want);
+
+    fx.tick_at(&mut host, &[1], NOW + 31 * MIN);
+    wait_for_calls(&fx, 4);
+    fx.until(&mut host, &[1], |host| host.looks.values().all(|looks| !looks.in_flight));
+    std::thread::sleep(Duration::from_millis(100));
+    fx.tick(&mut host, &[1]);
+    assert_eq!(feed_urls(&fx), want, "a recheck that finds the same adds no line");
+}

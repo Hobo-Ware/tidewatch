@@ -16,6 +16,7 @@ use crate::claude_memory::memory_dir;
 use crate::comment_flags::TabFiles;
 use crate::extra_worktree;
 use crate::fsutil::{write_atomic, write_private_atomic};
+use crate::github_feed::EVENTS_ENV;
 use crate::guard_shim::{GuardCtx, ensure_shims};
 use crate::guards::Rule;
 use crate::house_style::{self, Presence};
@@ -235,6 +236,9 @@ fn prepare_with(
     let feed = paths.progress_feed_file(input.repo, input.tab);
     let feed_env = soft("progress feed", touch(&feed).map(|()| feed.clone()))
         .map(|file| (PROGRESS_ENV.to_owned(), file.display().to_string()));
+    let events = paths.events_feed_file(input.repo, input.tab);
+    let events_env = soft("GitHub events feed", touch(&events).map(|()| events.clone()))
+        .map(|file| (EVENTS_ENV.to_owned(), file.display().to_string()));
 
     let mut ctx = context(input, house_style, copilot_instructions_dir, guard_bin_dir, mcp_config);
     ctx.copilot_plugin_dir = copilot_plugin_dir;
@@ -295,6 +299,7 @@ fn prepare_with(
     }
     let mut env = merge_env(&ctx.env, &launch.env);
     env.extend(feed_env);
+    env.extend(events_env);
     if input.worktree_tab {
         let recipe = crate::setup_recipe::recipe_for(paths, input.repo);
         for (key, value) in crate::setup_recipe::env_for(&recipe, input.repo) {
@@ -745,6 +750,9 @@ mod tests {
             let want = fx.paths.progress_feed_file(Path::new("/work/web"), "brave-otter");
             assert_eq!(env_of(&prepared, PROGRESS_ENV), want.to_str(), "{id}");
             assert!(want.is_file(), "{id}");
+            let events = fx.paths.events_feed_file(Path::new("/work/web"), "brave-otter");
+            assert_eq!(env_of(&prepared, EVENTS_ENV), events.to_str(), "{id}");
+            assert!(events.is_file(), "{id}");
         }
     }
 
