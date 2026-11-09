@@ -64,20 +64,40 @@ fn has_first_option(screen: &str, label: &str) -> bool {
     })
 }
 
+fn column_break(c: char) -> bool {
+    SIDES.contains(&c) || ('\u{2500}'..='\u{257f}').contains(&c)
+}
+
+fn starts_option_column(row: &str, label: &str) -> bool {
+    row.match_indices("1.").any(|(at, marker)| {
+        let alone = !row[..at].chars().next_back().is_some_and(|c| c.is_ascii_digit());
+        let rest =
+            row[at + marker.len()..].trim_start_matches(|c: char| c == ' ' || MARKS.contains(&c));
+        let column = rest.find("  ").into_iter().chain(rest.find(column_break)).min();
+        let head = squash(&rest[..column.unwrap_or(rest.len())]);
+        alone
+            && !head.is_empty()
+            && label
+                .strip_prefix(head.as_str())
+                .is_some_and(|tail| tail.is_empty() || tail.starts_with(' '))
+    })
+}
+
 /// What the screen `rows` say about the menu of `questions`. The rows are joined, so a question or
 /// label that wraps over rows reads as one line; the first option is found by a prefix of its label
 /// after a `1.` that any cursor glyph or tick box may precede, and a label cut at the window edge
-/// still counts.
+/// still counts. A label wrapped in the narrow column beside a preview box is found by its first
+/// row alone, since the joined rows put the preview's text inside it.
 pub(crate) fn look(rows: &[String], questions: &[Question]) -> Look {
     let screen = squash(&rows.join(" "));
-    let label = questions
-        .first()
-        .and_then(|question| question.options.first())
-        .map(|option| label_prefix(&option.label))
-        .unwrap_or_default();
+    let first = questions.first().and_then(|question| question.options.first());
+    let label = first.map(|option| label_prefix(&option.label)).unwrap_or_default();
+    let full = first.map(|option| squash(&option.label)).unwrap_or_default();
     if screen.is_empty() || label.is_empty() {
         Look::Unreadable
-    } else if has_first_option(&screen, &label) {
+    } else if has_first_option(&screen, &label)
+        || rows.iter().any(|row| starts_option_column(row, &full))
+    {
         Look::Open
     } else {
         Look::Gone
@@ -193,6 +213,21 @@ mod tests {
     }
 
     #[test]
+    fn a_menu_with_a_preview_box_reads_open_when_its_label_wraps_beside_the_box() {
+        let questions =
+            vec![question("Which email?", Select::Single, &["A: stat tiles (Recommended)", "B"])];
+        let screen = rows(&[
+            "Which email should go live?",
+            "\u{276f} 1. A: stat tiles         \u{250c}\u{2500}\u{2500}\u{2500}\u{2510}",
+            "     (Recommended)         \u{2502} Trakt Account \u{2502}",
+            "  2. B                     \u{2502} 9 years       \u{2502}",
+            "                           \u{2514}\u{2500}\u{2500}\u{2500}\u{2518}",
+            "Notes: press n to add notes",
+        ]);
+        assert_eq!(look(&screen, &questions), Look::Open);
+    }
+
+    #[test]
     fn a_screen_that_shows_something_else_reads_gone() {
         let echo = rows(&[
             "\u{25cf} User answered Claude's questions:",
@@ -213,6 +248,7 @@ mod tests {
                 rows(&["Do you want to run it?", "\u{276f} 1. Yes", "  2. No"]),
             ),
             ("an option number inside a longer number", rows(&["Where?", "11. Stage"])),
+            ("a cut word of the label", rows(&["Where?", "\u{276f} 1. Sta     Stage it"])),
         ];
         for (what, screen) in cases {
             assert_eq!(look(&screen, &asked()), Look::Gone, "{what}");
