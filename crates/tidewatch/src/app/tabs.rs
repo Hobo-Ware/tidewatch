@@ -3,6 +3,7 @@
 use std::hash::{BuildHasher, Hasher, RandomState};
 
 use stdusk_core::terminal::PtyTerm;
+use tidewatch_core::strays;
 use tidewatch_core::worktree::{BranchOutcome, Terms, Why};
 use tidewatch_core::worktree_safety::Owner;
 
@@ -244,8 +245,12 @@ impl Tidewatch {
             Answer::Cancel => {}
             Answer::Pick(Choice::KeepWorktree) => {
                 self.note_kept_tab(tab, ctx);
+                let worktree = self.tabs.get(tab).and_then(|t| t.pane.worktree.clone());
                 self.tabs.remove_id(tab);
                 self.close_tab_for_good(tab);
+                if let Some(worktree) = worktree {
+                    std::thread::spawn(move || strays::stop_escaped(&worktree.path));
+                }
             }
             Answer::Pick(Choice::Remove { branch, mode }) => {
                 let Some(paths) = self.paths.clone() else { return };
