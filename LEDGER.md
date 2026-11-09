@@ -4,12 +4,14 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## Status
 
-- **Current milestone:** v0.2.4: agents hear about their pull requests and issues through `$TIDEWATCH_EVENTS` (#376), and dev servers an agent left running end when its tab closes (#375). Before it, v0.2.1: one dated checklist per agent, shown on every Overview card (#366), and the Amphetamine glow-up with Away inside its menu (#367).
-- **Done:** Phases 0 to 10; v0.1.0 to v0.2.4 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
+- **Current milestone:** v0.2.5: a Claude question menu with preview boxes no longer reads as gone (#379). Before it, v0.2.4: agents hear about their pull requests and issues through `$TIDEWATCH_EVENTS` (#376), and dev servers an agent left running end when its tab closes (#375). Before it, v0.2.1: one dated checklist per agent, shown on every Overview card (#366), and the Amphetamine glow-up with Away inside its menu (#367).
+- **Done:** Phases 0 to 10; v0.1.0 to v0.2.5 released (Homebrew cask, Linux tarball and AppImage); the K mark identity; the showcase page.
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
 ## 2026-11-09
+
+- **v0.2.5 released: preview-box question menus answer again.** #379 merged, then version PR #380 and tag v0.2.5 (published 14:39 UTC). verify-release.sh passed: universal app (x86_64 + arm64), codesign, version 0.2.5, Assets.car, SHA256SUMS; Linux tarball and AppImage OK. Site and README caught up in #381.
 
 - **v0.2.4 released: PR and issue news for agents, and dev servers end with their tab.** #375 and #376 merged, then version PR #377 and tag v0.2.4 (published 09:36 UTC). verify-release.sh passed: universal app (x86_64 + arm64), codesign, version 0.2.4, Assets.car, SHA256SUMS; Linux tarball and AppImage OK.
 - **A Claude question with preview boxes no longer reads as gone.** Owner: "So I get that the option is no longer there ... but not really true". Root cause: when the options carry a `preview`, Claude draws the options in a narrow left column beside the preview box, so "1. A: stat tiles (Recommended)" wrapped over two rows; the joined rows put the box's text between the two halves, the label no longer matched, and the card refused every answer with "no longer on its screen". Now each row is also read on its own: the text after `1.` up to a column gap or box border counts when the label starts with it as whole words. Tests: a new `question_screen` test (fails without the fix), plus a Gone case for a cut word; clippy and fmt clean; 6 git tests fail only inside a Tidewatch agent tab (its push guard). Not verified: a live pick on a preview menu.
