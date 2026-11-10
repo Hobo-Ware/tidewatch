@@ -1,15 +1,15 @@
 //! The messages Tidewatch holds for the agent, drawn as one card at the bottom of the chat: a line
 //! that says why they wait, then one row each with the text and Edit, Delete and Send now (and
-//! Up and Down while more than one waits). Edit opens the row as a small field where Enter saves
+//! Up and Down while more than one waits). Edit opens the row as the shared composer where Enter saves
 //! and Esc leaves the message as it was. It only draws; the caller carries out what it asks for.
 
 use egui::{
-    Align, Align2, Id, Key, Layout, Modifiers, Rect, RichText, ScrollArea, TextEdit, Ui, UiBuilder,
-    pos2, vec2,
+    Align, Align2, Id, Key, Layout, Modifiers, Rect, ScrollArea, Ui, UiBuilder, pos2, vec2,
 };
 
 use crate::brand;
-use crate::reader_view::{INSET, ellipsized, field_frame, paint_item};
+use crate::composer::{self, Draft, Mode, Spec};
+use crate::reader_view::{INSET, ellipsized, paint_item};
 use crate::screen_kit::{
     Glyph, Size, TEXT_BODY, TEXT_TAG, body, button_width, glyph_button, quiet_button,
 };
@@ -189,36 +189,35 @@ fn edit_row(
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect.shrink2(vec2(0.0, 4.0))));
     let field_h = EDIT_H - 8.0 - Size::Compact.height() - GAP;
     let field_id = edit_id(id);
-    if std::mem::take(focus) {
-        child.memory_mut(|memory| memory.request_focus(field_id));
-    }
-    let focused = child.memory(|memory| memory.has_focus(field_id));
-    let save_key = focused
-        && (child.input(|input| input.events.iter().any(crate::agent_ready::plain_enter))
-            || child.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Enter)));
-    let cancel_key =
-        focused && child.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
+    let had_focus = child.memory(|memory| memory.had_focus_last_frame(field_id));
+    let blank_enter = had_focus
+        && buffer.trim().is_empty()
+        && child.input(|input| input.events.iter().any(crate::agent_ready::plain_enter));
+    let mut sent = None;
     child.allocate_ui(vec2(width, field_h), |ui| {
-        field_frame(ui, |ui| {
-            ui.add(
-                TextEdit::multiline(buffer)
-                    .id(field_id)
-                    .frame(egui::Frame::NONE)
-                    .desired_rows(2)
-                    .desired_width(f32::INFINITY)
-                    .return_key(egui::KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                    .font(egui::FontId::proportional(TEXT_BODY))
-                    .text_color(brand::TEXT)
-                    .hint_text(RichText::new("Edit the message").color(brand::FAINT)),
-            )
-        });
+        let spec = Spec {
+            id: field_id,
+            hint: "Edit the message",
+            enabled: true,
+            commands: &[],
+            ghost: None,
+            mode: Mode::Answer,
+            stop: false,
+            held: 0,
+            files: None,
+        };
+        sent = composer::show(ui, Draft { text: buffer, focus, recall: None }, &spec).sent;
     });
+    let cancel_key =
+        had_focus && child.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
     child.add_space(GAP);
     child.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = GAP;
-        let save = quiet_button(ui, "Save", true, Size::Compact).clicked() || save_key;
+        let save = quiet_button(ui, "Save", true, Size::Compact).clicked();
         let cancel = quiet_button(ui, "Cancel", true, Size::Compact).clicked() || cancel_key;
-        if save {
+        if let Some(text) = sent {
+            out.push(Out::Save(id, text));
+        } else if save || blank_enter {
             out.push(Out::Save(id, buffer.clone()));
         } else if cancel {
             out.push(Out::Cancel);
