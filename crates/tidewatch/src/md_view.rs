@@ -343,10 +343,10 @@ fn table(ui: &mut Ui, aligns: &[Alignment], head: &[Inline], rows: &[Vec<Inline>
                         .spacing(Vec2::ZERO)
                         .with_row_color(|row, _| (row == 0).then_some(brand::ITEM))
                         .show(ui, |ui| {
-                            cells(ui, aligns, head, true);
+                            cells(ui, aligns, head, 0, true);
                             ui.end_row();
-                            for row in rows {
-                                cells(ui, aligns, row, false);
+                            for (index, row) in rows.iter().enumerate() {
+                                cells(ui, aligns, row, index + 1, false);
                                 ui.end_row();
                             }
                         });
@@ -355,14 +355,14 @@ fn table(ui: &mut Ui, aligns: &[Alignment], head: &[Inline], rows: &[Vec<Inline>
     });
 }
 
-fn cells(ui: &mut Ui, aligns: &[Alignment], row: &[Inline], header: bool) {
+fn cells(ui: &mut Ui, aligns: &[Alignment], row: &[Inline], row_index: usize, header: bool) {
     for (column, cell) in row.iter().enumerate() {
         let side = match aligns.get(column) {
             Some(Alignment::Right) => Align::Max,
             Some(Alignment::Center) => Align::Center,
             _ => Align::Min,
         };
-        ui.push_id(column, |ui| {
+        ui.push_id((row_index, column), |ui| {
             Frame::new().inner_margin(CELL).show(ui, |ui| {
                 ui.with_layout(Layout::top_down(side), |ui| {
                     let color = ink(ui);
@@ -687,5 +687,42 @@ mod tests {
         };
         assert_eq!(opened(on_link), ["https://x.dev/docs"]);
         assert_eq!(opened(off_link).len(), 0);
+    }
+
+    #[test]
+    fn a_click_on_a_link_in_any_table_row_opens_that_row_link() {
+        let md = "| PR | What |\n| --- | --- |\n| [#1](https://x.dev/pull/1) | one |\n\
+                  | [#2](https://x.dev/pull/2) | two |\n| [#3](https://x.dev/pull/3) | three |";
+        let probe = draw(md);
+        for n in 1..=3 {
+            let label = format!("#{n}");
+            let galley = probe
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    Shape::Text(shape) if shape.galley.text() == label => {
+                        Some((shape.pos, shape.galley.clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} not drawn"));
+            let point = galley.0 + galley.1.size() / 2.0;
+            let opened: Vec<String> = run_frames(
+                md,
+                vec![
+                    vec![Event::PointerMoved(point)],
+                    vec![button(point, true)],
+                    vec![button(point, false)],
+                ],
+            )
+            .iter()
+            .flat_map(|out| out.platform_output.commands.iter())
+            .filter_map(|command| match command {
+                OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+                _ => None,
+            })
+            .collect();
+            assert_eq!(opened, [format!("https://x.dev/pull/{n}")], "row {n}");
+        }
     }
 }
