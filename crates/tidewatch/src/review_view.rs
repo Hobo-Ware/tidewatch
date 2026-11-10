@@ -5,15 +5,19 @@
 
 use egui::text::LayoutJob;
 use egui::{
-    Align, Id, Key, KeyboardShortcut, Layout, Modifiers, Rect, RichText, ScrollArea, Sense,
-    TextEdit, TextFormat, Ui, UiBuilder, pos2, vec2,
+    Align, Id, Key, KeyboardShortcut, Layout, Modifiers, Rect, ScrollArea, Sense, TextFormat, Ui,
+    UiBuilder, pos2, vec2,
 };
 
 use crate::brand;
 use crate::commands::Platform;
-use crate::reader_view::{INSET, ellipsized, field_frame, paint_item};
+use crate::composer::{self, Draft as ComposerDraft, Mode, Spec};
+use crate::reader_view::{INSET, ellipsized, paint_item};
 use crate::review::{Draft, DraftNote, ReviewFacts, SendState};
-use crate::screen_kit::{Size, body, danger_button, heading, mono, primary_button, quiet_button};
+use crate::screen_kit::{
+    Size, body, button_width, danger_button, heading, mono, primary_button, quiet_button,
+};
+use crate::tokens;
 
 const PAD_X: f32 = 14.0;
 const PAD_Y: f32 = 10.0;
@@ -21,7 +25,8 @@ const HEAD_H: f32 = 24.0;
 const FILE_H: f32 = 22.0;
 const ROW_H: f32 = 20.0;
 const LIST_MAX_H: f32 = 124.0;
-const FIELD_H: f32 = 40.0;
+const FIELD_H: f32 = composer::BOX_H;
+const TAKE_BACK: &str = "Take it back";
 const HINT_H: f32 = 18.0;
 const GAP: f32 = 8.0;
 const LINE_W: f32 = 46.0;
@@ -142,7 +147,7 @@ pub(crate) fn show(
     if held && asked {
         actions.push(ReviewAction::CancelHeld);
     } else if sendable && (asked || keyed) {
-        actions.push(ReviewAction::Send(std::mem::take(&mut state.message)));
+        actions.push(ReviewAction::Send(tokens::sendable(&std::mem::take(&mut state.message))));
     }
     let ink =
         if matches!(facts.send, SendState::Refused(_)) { brand::ORANGE } else { brand::FAINT };
@@ -242,30 +247,38 @@ fn field_row(
     held: bool,
 ) -> bool {
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-    let mut clicked = false;
-    field_frame(&mut child, |ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            clicked = if held {
-                quiet_button(ui, "Take it back", true, Size::Compact).clicked()
-            } else {
-                let enabled = matches!(facts.send, SendState::Ready | SendState::WhenIdle);
-                primary_button(ui, &send_label(facts.profile), enabled, Size::Compact).clicked()
-            };
-            ui.add(
-                TextEdit::singleline(&mut state.message)
-                    .id_salt("review-message")
-                    .interactive(!held)
-                    .frame(egui::Frame::NONE)
-                    .hint_text(
-                        RichText::new("Add a message to the review (optional)").color(brand::FAINT),
-                    )
-                    .desired_width(f32::INFINITY)
-                    .font(body(14.0))
-                    .text_color(brand::TEXT),
-            )
-        })
-        .inner
-    });
+    let button_w = if held {
+        button_width(&child, TAKE_BACK, Size::Compact)
+    } else {
+        button_width(&child, &send_label(facts.profile), Size::Compact)
+    };
+    let (message, button) = rect.split_left_right_at_x(rect.right() - button_w - GAP);
+    let mut buttons = child
+        .new_child(UiBuilder::new().max_rect(button).layout(Layout::right_to_left(Align::Center)));
+    let clicked = if held {
+        quiet_button(&mut buttons, TAKE_BACK, true, Size::Compact).clicked()
+    } else {
+        let enabled = matches!(facts.send, SendState::Ready | SendState::WhenIdle);
+        primary_button(&mut buttons, &send_label(facts.profile), enabled, Size::Compact).clicked()
+    };
+    let mut focus = false;
+    let spec = Spec {
+        id: Id::new("review-message"),
+        hint: "Add a message to the review (optional)",
+        enabled: !held,
+        commands: &[],
+        ghost: None,
+        mode: Mode::Field { height: composer::BOX_H },
+        stop: false,
+        held: 0,
+        files: None,
+    };
+    let mut boxed = child.new_child(UiBuilder::new().max_rect(message));
+    composer::show(
+        &mut boxed,
+        ComposerDraft { text: &mut state.message, focus: &mut focus, recall: None },
+        &spec,
+    );
     clicked
 }
 
@@ -457,6 +470,35 @@ mod tests {
             let want = if sends { vec![ReviewAction::Send("go".into())] } else { vec![] };
             assert_eq!(actions, want, "{send:?}");
         }
+    }
+
+    #[test]
+    fn the_message_is_the_shared_composer_so_a_picture_goes_out_as_its_path() {
+        let mut bench = Bench::new(SendState::Ready);
+        let mut text = String::from("see ");
+        tokens::insert(&mut text, 4, &tokens::Target::File("/s/a b.png".into()));
+        bench.state.message = text;
+        let (_, field_y) = bench.rows();
+        let wanted = ReviewAction::Send("see '/s/a b.png'".into());
+        assert!(bench.click_along(field_y, &wanted));
+    }
+
+    #[test]
+    fn typing_in_the_message_and_command_enter_sends_exactly_what_was_typed() {
+        let mut bench = Bench::new(SendState::Ready);
+        let (_, field_y) = bench.rows();
+        bench.click(pos2(40.0, field_y));
+        bench.frame(vec![Event::Text("go now".into())]);
+        bench.frame(vec![]);
+        assert_eq!(bench.state.message, "go now");
+        let cmd_enter = Event::Key {
+            key: Key::Enter,
+            physical_key: Some(Key::Enter),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        };
+        assert_eq!(bench.frame(vec![cmd_enter]), vec![ReviewAction::Send("go now".into())]);
     }
 
     #[test]

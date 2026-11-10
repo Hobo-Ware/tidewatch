@@ -463,13 +463,8 @@ pub(crate) fn ellipsized(
     painter.layout_job(job)
 }
 
-/// A text input in the field look: ITEM fill, 1 px line, teal while it has the keyboard.
-pub(crate) fn field_frame(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> Response) -> Response {
-    field_frame_on(ui, brand::ITEM, false, add)
-}
-
-/// `field_frame` on another fill and, with `ring`, a faint teal ring around it while it has the
-/// keyboard.
+/// A text input in the field look on `fill`: 1 px line, teal while it has the keyboard, and with
+/// `ring` a faint teal ring around it.
 pub(crate) fn field_frame_on(
     ui: &mut Ui,
     fill: Color32,
@@ -4409,6 +4404,51 @@ mod tests {
         frames.run(&rows, Turn::Running, vec![key_press(egui::Key::Enter)]);
         settle(&mut frames, &rows);
         assert_eq!(frames.state.line.len(), 0);
+    }
+
+    #[test]
+    fn a_held_edit_is_the_shared_composer_so_a_list_line_continues_and_a_picture_saves_as_its_path()
+    {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        let id = frames.state.line.hold("- first", 0).unwrap();
+        frames.state.focus_reply = false;
+        frames.state.begin_edit_held(id);
+        settle(&mut frames, &rows);
+        frames.run(&rows, Turn::Running, vec![key_press(egui::Key::Enter)]);
+        settle(&mut frames, &rows);
+        assert_eq!(frames.state.editing_held(), Some(id), "Enter on a list line is not a save");
+        assert_eq!(
+            frames.state.held_edit.as_ref().map(|(_, text)| text.as_str()),
+            Some("- first\n- ")
+        );
+
+        let mut text = String::from("see ");
+        tokens::insert(&mut text, 4, &tokens::Target::File(PathBuf::from("/s/a b.png")));
+        frames.state.held_edit = Some((id, text));
+        settle(&mut frames, &rows);
+        frames.run(&rows, Turn::Running, vec![key_press(egui::Key::Enter)]);
+        settle(&mut frames, &rows);
+        assert_eq!(frames.state.line.text_of(id), Some("see '/s/a b.png'"));
+        assert_eq!(frames.state.editing_held(), None);
+    }
+
+    #[test]
+    fn escape_in_a_held_edit_leaves_the_message_as_it_was() {
+        let rows = turn_rows();
+        let mut frames = Frames::new();
+        frames.working = true;
+        let id = frames.state.line.hold("first", 0).unwrap();
+        frames.state.focus_reply = false;
+        frames.state.begin_edit_held(id);
+        settle(&mut frames, &rows);
+        frames.state.held_edit = Some((id, "reworded".into()));
+        settle(&mut frames, &rows);
+        frames.run(&rows, Turn::Running, vec![key_press(egui::Key::Escape)]);
+        settle(&mut frames, &rows);
+        assert_eq!(frames.state.line.text_of(id), Some("first"));
+        assert_eq!(frames.state.editing_held(), None);
     }
 
     #[test]
