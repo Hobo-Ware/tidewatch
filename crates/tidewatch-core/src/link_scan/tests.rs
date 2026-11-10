@@ -87,20 +87,37 @@ fn all_three_artifact_shapes_are_found() {
 }
 
 #[test]
-fn only_the_agents_own_messages_are_read() {
+fn the_agent_and_the_owner_are_read_and_system_lines_are_not() {
     let url = "https://claude.ai/artifact/abc";
-    let entries = [
-        said(Role::User, url, Some(1)),
-        said(Role::Tool, url, Some(2)),
+    let quiet = [
         said(Role::System, url, Some(3)),
         said(Role::Command, url, Some(4)),
         said(Role::CommandOutput, url, Some(5)),
         said(Role::Compacted, url, Some(6)),
     ];
-    assert_eq!(found(&entries, 0), Vec::new());
-    let mut mixed = entries.to_vec();
-    mixed.push(said(Role::Assistant, url, Some(7)));
-    assert_eq!(found(&mixed, 0).len(), 1);
+    assert_eq!(found(&quiet, 0), Vec::new());
+    for role in [Role::Assistant, Role::User] {
+        assert_eq!(found(&[said(role, &format!("see {url}"), Some(7))], 0).len(), 1, "{role:?}");
+    }
+}
+
+#[test]
+fn tool_output_counts_only_a_line_that_is_one_link() {
+    let cases = [
+        (
+            "To github.com:o/r.git\nhttps://github.com/o/r/pull/12\n",
+            vec!["https://github.com/o/r/pull/12"],
+        ),
+        ("  https://github.com/o/r/issues/7  ", vec!["https://github.com/o/r/issues/7"]),
+        ("src/refs.ts:24: href: 'https://github.com/o/android/pull/155',", vec![]),
+        ("{\"url\":\"https://github.com/o/r/pull/9\"}", vec![]),
+        ("see https://github.com/o/r/pull/3 for more", vec![]),
+    ];
+    for (text, want) in cases {
+        let urls: Vec<String> =
+            found(&[said(Role::Tool, text, Some(1))], 0).into_iter().map(|link| link.url).collect();
+        assert_eq!(urls, want, "{text:?}");
+    }
 }
 
 #[test]

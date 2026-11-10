@@ -1,20 +1,26 @@
 //! The links Tidewatch finds on its own in what an agent wrote in the chat: claude.ai artifacts and
 //! GitHub pull requests and issues (pure). A markdown link gives its text as the title, a bare link
-//! a plain fallback. Only the agent's own messages are read, never the user's.
+//! a plain fallback. The agent's and the owner's messages are read whole; tool output only for a
+//! line that is one link and nothing else, as `gh pr create` and `gh issue create` print it.
 
 use crate::link_board::{Link, LinkBoard, LinkState, MAX_TITLE_CHARS, Status, TitleFrom, one_line};
 use crate::transcript::{Entry, Role};
 
 const ARTIFACT_PATHS: [&str; 3] = ["artifact/", "code/artifact/", "public/artifacts/"];
 
-/// The links in the agent's messages among `entries`, one per address. An entry without a time is
+/// The links said or printed among `entries`, one per address. An entry without a time is
 /// stamped `now_ms`.
 #[must_use]
 pub fn found(entries: &[Entry], now_ms: i64) -> Vec<Link> {
     let mut board = LinkBoard::default();
-    for entry in entries.iter().filter(|entry| entry.role == Role::Assistant) {
+    for entry in entries {
         let seen = entry.ts.unwrap_or(now_ms);
-        for (url, text, fallback) in scan(&entry.text) {
+        let said = match entry.role {
+            Role::Assistant | Role::User => scan(&entry.text),
+            Role::Tool => entry.text.lines().filter_map(lone_link).collect(),
+            _ => Vec::new(),
+        };
+        for (url, text, fallback) in said {
             let (title, title_from) = match text {
                 Some(text) => (text, TitleFrom::Seen),
                 None => (fallback, TitleFrom::Guess),
@@ -37,6 +43,14 @@ pub fn found(entries: &[Entry], now_ms: i64) -> Vec<Link> {
 #[must_use]
 pub fn pull_requests(text: &str) -> Vec<String> {
     scan(text).into_iter().map(|(url, ..)| url).filter(|url| url.contains("/pull/")).collect()
+}
+
+fn lone_link(line: &str) -> Option<(String, Option<String>, String)> {
+    let line = line.trim();
+    if !line.starts_with("http") || line.contains(char::is_whitespace) {
+        return None;
+    }
+    scan(line).into_iter().next()
 }
 
 fn scan(text: &str) -> Vec<(String, Option<String>, String)> {
