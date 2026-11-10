@@ -9,6 +9,10 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
+## 2026-11-11
+
+- **Links in a Reader table open again, and the Links card catches the links it used to miss.** Owner: "I would expect the PR links highlighted in green to be clickable", "in longer sessions sometimes certain issues or PR links are missing". Root cause 1: every cell in one table column had the same id (`push_id(column)`), so the link click areas of every row collided and none opened; each cell now gets `(row, column)`. Root cause 2, from the owner's real session (54 card links, 6 missing): all 6 were only in tool output or in the owner's own messages, and `link_scan` read only the agent's text. Now the owner's messages are read too, and in tool output a line that is one link alone (what `gh pr create` and `gh issue create` print); grep hits and JSON in tool output stay out. Tests: a headless click on each of three table rows (failed before), a table test for tool output lines; 3530 app tests pass, 6 git tests fail only inside a Tidewatch agent tab (its push guard); clippy and fmt clean. Open: a bare `#2900` in prose is still plain text.
+
 ## 2026-11-09
 
 - **v0.2.5 released: preview-box question menus answer again.** #379 merged, then version PR #380 and tag v0.2.5 (published 14:39 UTC). verify-release.sh passed: universal app (x86_64 + arm64), codesign, version 0.2.5, Assets.car, SHA256SUMS; Linux tarball and AppImage OK. Site and README caught up in #381.

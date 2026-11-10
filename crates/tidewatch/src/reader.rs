@@ -775,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    fn the_agents_own_links_are_taken_once_and_the_users_never() {
+    fn the_links_of_the_agent_and_the_owner_are_taken_once() {
         let mut reader = Reader::for_agent("claude", None, PathBuf::from("/w"));
         let said = |role, text: &str| Entry {
             role,
@@ -788,9 +788,8 @@ mod tests {
             said(Role::User, "look at https://claude.ai/artifact/mine"),
             said(Role::Assistant, "board: https://claude.ai/artifact/abc"),
         ]);
-        let links = reader.take_links();
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].url, "https://claude.ai/artifact/abc");
+        let urls: Vec<String> = reader.take_links().into_iter().map(|link| link.url).collect();
+        assert_eq!(urls, ["https://claude.ai/artifact/mine", "https://claude.ai/artifact/abc"]);
         assert_eq!(reader.take_links().len(), 0, "taken once");
     }
 
