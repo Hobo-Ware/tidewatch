@@ -16,6 +16,7 @@ use crate::at_files;
 use crate::at_files_view;
 use crate::brand;
 use crate::bullets;
+use crate::composer_md::{self, Look, Shown, Tint};
 use crate::emoji_paint;
 use crate::emoji_pick::{self, Hit, MAX_ROWS, Query, Usage};
 use crate::emoji_view;
@@ -102,7 +103,13 @@ fn row_height(ui: &Ui) -> f32 {
     ui.painter().layout_no_wrap(String::new(), text_font(), brand::TEXT).size().y
 }
 
-fn measure(ui: &Ui, text: &str, box_w: f32, (cap, mode, stop): (f32, Mode, bool)) -> Measure {
+fn measure(
+    ui: &Ui,
+    text: &str,
+    box_w: f32,
+    (cap, mode, stop): (f32, Mode, bool),
+    shown: &Shown,
+) -> Measure {
     let send_w = if mode.has_button() { button_width(ui, SEND, Size::Regular) } else { 0.0 };
     let stop_w = if mode.has_button() && stop {
         button_width(ui, STOP, Size::Regular) + STOP_GAP
@@ -111,7 +118,9 @@ fn measure(ui: &Ui, text: &str, box_w: f32, (cap, mode, stop): (f32, Mode, bool)
     };
     let right = if mode.has_button() { send_edge() + send_w + stop_w + SEND_GAP } else { PAD_X };
     let wrap = box_w - PAD_X - right;
-    let typed = bullets::layout(ui, text, &text_font(), brand::TEXT, (wrap, &None));
+    let font = text_font();
+    let look = Look { font: &font, ink: brand::TEXT, tint: &None, shown };
+    let typed = bullets::layout(ui, text, wrap, &look);
     let cap = match mode {
         Mode::Reply | Mode::Answer => cap,
         Mode::Field { height } => height,
@@ -131,19 +140,19 @@ pub(crate) fn height(ui: &Ui, text: &str, column: Rect) -> f32 {
 /// [`height`] for a box that also holds a Stop button, which narrows its text.
 pub(crate) fn height_with_stop(ui: &Ui, text: &str, column: Rect, stop: bool) -> f32 {
     let cap = (column.height() * SHARE).max(BOX_H);
-    measure(ui, text, column.width() - 2.0 * INSET, (cap, Mode::Reply, stop)).fit.box_h
+    measure(ui, text, column.width() - 2.0 * INSET, (cap, Mode::Reply, stop), &None).fit.box_h
         + 2.0 * GAP_Y
 }
 
 /// The height of a [`Mode::Answer`] box `width` wide that grows to `cap` and then scrolls, for a
 /// card that holds the box inside its own row.
 pub(crate) fn answer_box_height(ui: &Ui, text: &str, (width, cap): (f32, f32)) -> f32 {
-    measure(ui, text, width, (cap.max(BOX_H), Mode::Answer, false)).fit.box_h
+    measure(ui, text, width, (cap.max(BOX_H), Mode::Answer, false), &None).fit.box_h
 }
 
 /// The height a field takes in a column `width` wide when it is asked for `height`.
 pub(crate) fn field_height(ui: &Ui, text: &str, (width, height): (f32, f32)) -> f32 {
-    measure(ui, text, width, (height, Mode::Field { height }, false)).fit.box_h
+    measure(ui, text, width, (height, Mode::Field { height }, false), &None).fit.box_h
 }
 
 pub(crate) struct Draft<'a> {
@@ -181,6 +190,33 @@ pub(crate) struct Spec<'a> {
 fn collapsed_cursor(ui: &Ui, id: Id) -> Option<usize> {
     let range = TextEdit::load_state(ui.ctx(), id)?.cursor.char_range()?;
     (range.primary == range.secondary).then_some(range.primary.index.0)
+}
+
+fn cursor_lines(ui: &Ui, id: Id, text: &str) -> Shown {
+    let range = TextEdit::load_state(ui.ctx(), id)?.cursor.char_range()?;
+    Some(composer_md::shown_for(text, (range.primary.index.0, range.secondary.index.0)))
+}
+
+fn paint_blocks(
+    ui: &Ui,
+    edit: &egui::text_edit::TextEditOutput,
+    backdrop: egui::layers::ShapeIdx,
+    (view, shown): (Rect, &Shown),
+) {
+    let blocks = composer_md::blocks(&edit.galley, edit.galley_pos, shown);
+    let pad = composer_md::code_pad();
+    let fills = blocks.codes.iter().map(|&(top, bottom)| {
+        let rect = Rect::from_min_max(
+            pos2(edit.galley_pos.x - pad, top),
+            pos2(view.right().max(edit.galley_pos.x), bottom),
+        );
+        Shape::rect_filled(rect, CornerRadius::same(4), brand::ITEM)
+    });
+    ui.painter().set(backdrop, Shape::Vec(fills.collect()));
+    for (x, top, bottom) in blocks.bars {
+        let bar = Rect::from_min_max(pos2(x, top), pos2(x + composer_md::bar_width(), bottom));
+        ui.painter().rect_filled(bar, CornerRadius::same(2), brand::FAINT);
+    }
 }
 
 fn byte_of(text: &str, at: usize) -> usize {
@@ -387,7 +423,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         token_keys(ui, id, text);
     }
     let at_tint = at_before.as_ref().filter(|_| enabled && focused && !at_rows_before.is_empty());
-    let tint: bullets::Tint = at_tint
+    let tint: Tint = at_tint
         .or(before.as_ref().filter(|_| {
             enabled && focused && !emoji_hits(ui, &emoji_menu, before.as_ref()).is_empty()
         }))
@@ -431,8 +467,9 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         }
     }
     let enter = enter || command_enter;
+    let lit: Shown = if enabled && focused { cursor_lines(ui, id, text) } else { None };
     ui.add_enabled_ui(enabled, |ui| {
-        let measured = measure(ui, text, room.width(), (room.height(), mode, stop));
+        let measured = measure(ui, text, room.width(), (room.height(), mode, stop), &lit);
         let Fit { box_h, pad_y, .. } = measured.fit;
         let boxed = Rect::from_min_size(room.min, vec2(room.width(), box_h));
         let background = ui.painter().add(Shape::Noop);
@@ -467,8 +504,10 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         ui.data_mut(|data| data.insert_temp(height_id, shown));
         let resized = before.is_some_and(|before| (before - shown).abs() > 0.5);
         let top_pad = pad_y - OPTICAL_LIFT;
+        let font = text_font();
         let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-            bullets::layout(ui, buf.as_str(), &text_font(), brand::TEXT, (wrap, &tint))
+            let look = Look { font: &font, ink: brand::TEXT, tint: &tint, shown: &lit };
+            bullets::layout(ui, buf.as_str(), wrap, &look)
         };
         let placeholder = if ghost.is_some() { brand::MUTED } else { brand::FAINT };
         ui.visuals_mut().weak_text_color = Some(placeholder);
@@ -488,6 +527,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                 })
                 .show(ui, |ui| {
                     ui.add_space(top_pad);
+                    let backdrop = ui.painter().add(Shape::Noop);
                     let edit = TextEdit::multiline(text)
                         .id(id)
                         .frame(Frame::NONE)
@@ -502,7 +542,8 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                             Key::Enter,
                         ))
                         .show(ui);
-                    bullets::paint_markers(ui, &edit.galley, edit.galley_pos, &text_font());
+                    bullets::paint_markers(ui, &edit.galley, edit.galley_pos, (&font, &lit));
+                    paint_blocks(ui, &edit, backdrop, (view, &lit));
                     ui.add_space(pad_y + OPTICAL_LIFT);
                     emoji_paint::paint(ui, id.with("emoji"), edit.galley_pos, &edit.galley);
                     token_view::paint(
@@ -610,6 +651,13 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
             }
             let cursor =
                 edit.cursor_range.filter(|r| r.primary == r.secondary).map(|r| r.primary.index.0);
+            let shown_now: Shown = edit
+                .cursor_range
+                .filter(|_| enabled && has_focus)
+                .map(|r| composer_md::shown_for(text, (r.primary.index.0, r.secondary.index.0)));
+            if shown_now != lit {
+                ui.ctx().request_repaint();
+            }
             if edit.response.changed()
                 && let Some(at) = cursor
                 && let Some(closed) = emoji_pick::closed_before(text, byte_of(text, at))
@@ -1835,5 +1883,70 @@ mod tests {
         let widest = seen.text_rows(&text).iter().map(egui::Rect::right).fold(0.0, f32::max);
         assert!(widest > seen.box_rect.right() - 90.0, "{widest} in {:?}", seen.box_rect);
         assert!(widest <= seen.box_rect.right() - PAD_X, "{widest} in {:?}", seen.box_rect);
+    }
+
+    fn mark_is_hidden(seen: &Seen, whole: &str, mark: &str) -> bool {
+        let galley = seen
+            .shapes
+            .iter()
+            .find_map(|shape| match shape {
+                Shape::Text(t) if t.galley.text() == whole => Some(t.galley.clone()),
+                _ => None,
+            })
+            .expect("the text was painted");
+        let section = galley
+            .job
+            .sections
+            .iter()
+            .find(|section| {
+                &galley.job.text[section.byte_range.start.0..section.byte_range.end.0] == mark
+            })
+            .expect("the mark has a section");
+        section.format.font_id.size < 1.0 && section.format.color == egui::Color32::TRANSPARENT
+    }
+
+    fn put_cursor(rig: &Rig, at: usize) {
+        let id = Id::new("reply-box");
+        let mut state = TextEdit::load_state(&rig.ctx, id).unwrap_or_default();
+        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
+        state.store(&rig.ctx, id);
+    }
+
+    #[test]
+    fn a_quote_marker_shows_on_the_cursor_line_and_hides_once_the_cursor_leaves_it() {
+        let mut rig = Rig::new();
+        rig.text = "> quote\nplain".to_owned();
+        put_cursor(&rig, 3);
+        let on = rig.settle(vec![]);
+        assert!(!mark_is_hidden(&on, "> quote\nplain", "> "), "the cursor is on the quote line");
+        put_cursor(&rig, 11);
+        let off = rig.settle(vec![]);
+        assert!(mark_is_hidden(&off, "> quote\nplain", "> "), "the cursor is on the next line");
+        assert_eq!(rig.text, "> quote\nplain");
+        put_cursor(&rig, 1);
+        let back = rig.settle(vec![]);
+        assert!(!mark_is_hidden(&back, "> quote\nplain", "> "));
+    }
+
+    #[test]
+    fn the_marks_of_a_box_without_the_keyboard_are_all_hidden() {
+        let mut rig = Rig::new();
+        rig.text = "**bold**".to_owned();
+        put_cursor(&rig, 2);
+        assert!(!mark_is_hidden(&rig.settle(vec![]), "**bold**", "**"));
+        rig.focus = false;
+        rig.ctx.memory_mut(|memory| memory.surrender_focus(Id::new("reply-box")));
+        assert!(mark_is_hidden(&rig.settle(vec![]), "**bold**", "**"));
+    }
+
+    #[test]
+    fn typed_markdown_is_sent_exactly_as_typed() {
+        let mut rig = Rig::new();
+        let text = "# Title\n> quote **bold** `code`\n- [ ] task";
+        rig.text = text.to_owned();
+        put_cursor(&rig, text.chars().count());
+        rig.settle(vec![]);
+        let seen = rig.frame(vec![chord(Key::Enter, Modifiers::COMMAND)]);
+        assert_eq!(seen.sent.as_deref(), Some(text));
     }
 }

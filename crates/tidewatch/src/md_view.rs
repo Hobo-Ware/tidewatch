@@ -28,11 +28,11 @@ pub(crate) const MARKER_EDGE: f32 = 8.0;
 const BULLET_R: f32 = 3.0;
 const BOX: f32 = 15.0;
 const LIFT: f32 = 2.0;
-const QUOTE_INDENT: f32 = 16.0;
-const QUOTE_BAR: f32 = 3.0;
-const CODE_EM: f32 = 0.88;
+pub(crate) const QUOTE_INDENT: f32 = 16.0;
+pub(crate) const QUOTE_BAR: f32 = 3.0;
+pub(crate) const CODE_EM: f32 = 0.88;
 const NOTE_EM: f32 = 0.72;
-const HEADING_EM: [f32; 6] = [1.7, 1.45, 1.25, 1.1, 1.0, 0.94];
+pub(crate) const HEADING_EM: [f32; 6] = [1.7, 1.45, 1.25, 1.1, 1.0, 0.94];
 const CELL: Margin = Margin { left: 10, right: 10, top: 6, bottom: 6 };
 const TABLE_RADIUS: u8 = 6;
 

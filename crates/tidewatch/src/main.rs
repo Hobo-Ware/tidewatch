@@ -52,6 +52,7 @@ mod comment_strip;
 mod commit_files;
 mod commit_search;
 mod composer;
+mod composer_md;
 mod delivery_card;
 mod delivery_view;
 mod dev_agent;

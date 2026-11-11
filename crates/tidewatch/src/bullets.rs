@@ -12,6 +12,7 @@ use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::text::{CCursor, CCursorRange};
 use egui::{Color32, FontId, Galley, Pos2, Ui, pos2};
 
+use crate::composer_md::{self, Block, Look, Parsed, Shown};
 use crate::emoji_text;
 use crate::md_view::{INDENT, LINE, MARKER_EDGE, Marker, paint_marker};
 
@@ -91,43 +92,33 @@ pub(crate) fn text_edge(level: usize) -> f32 {
     INDENT * (level as f32 + 1.0)
 }
 
-/// A run of the text, as byte positions of the real text, drawn in another colour.
-pub(crate) type Tint = Option<(Range<usize>, Color32)>;
-
-fn append_tinted(job: &mut LayoutJob, (text, start): (&str, usize), look: (&TextFormat, &Tint)) {
-    let (plain, tint) = look;
-    let inside = tint.as_ref().and_then(|(range, color)| {
-        let (lo, hi) = (
-            range.start.max(start) - start,
-            range.end.min(start + text.len()).saturating_sub(start),
-        );
-        (lo < hi && text.is_char_boundary(lo) && text.is_char_boundary(hi))
-            .then_some((lo, hi, *color))
-    });
-    match inside {
-        Some((lo, hi, color)) => {
-            job.append(&text[..lo], 0.0, plain.clone());
-            job.append(&text[lo..hi], 0.0, TextFormat { color, ..plain.clone() });
-            job.append(&text[hi..], 0.0, plain.clone());
-        }
-        None => job.append(text, 0.0, plain.clone()),
-    }
-}
-
-/// The job for `text`, which starts at byte `start` of the real text, with a `tint`ed run in its own
-/// colour.
+/// The job for `text`, which starts at byte `start` of the real text, styled by its markdown.
 pub(crate) fn job(
+    ui: &Ui,
     (text, start): (&str, usize),
-    font: &FontId,
-    ink: Color32,
     wrap: f32,
-    tint: &Tint,
+    (look, parsed): (&Look, &Parsed),
 ) -> LayoutJob {
-    let plain = TextFormat::simple(font.clone(), ink);
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap;
-    append_tinted(&mut job, (text, start), (&plain, tint));
+    composer_md::append(ui, &mut job, (text, start), look, parsed);
+    if job.sections.is_empty() {
+        job.append("", 0.0, TextFormat::simple(look.font.clone(), look.ink));
+    }
     job
+}
+
+/// The list item of every line, but none inside a fenced code block.
+fn listed(text: &str, parsed: &Parsed) -> Vec<Option<Item>> {
+    items(text)
+        .into_iter()
+        .enumerate()
+        .map(|(line, item)| {
+            item.filter(|_| {
+                !matches!(parsed.line(line).map(|line| line.block), Some(Block::Code { .. }))
+            })
+        })
+        .collect()
 }
 
 fn indented(ui: &Ui, galley: &Galley, (chars, edge): (usize, f32), font: &FontId) -> Arc<Galley> {
@@ -147,33 +138,44 @@ fn indented(ui: &Ui, galley: &Galley, (chars, edge): (usize, f32), font: &FontId
     Arc::new(hung)
 }
 
-/// Lays `text` out with each list item's text at its level's edge and its wrapped rows under it.
-pub(crate) fn layout(
-    ui: &Ui,
-    text: &str,
-    font: &FontId,
-    ink: Color32,
-    (wrap, tint): (f32, &Tint),
-) -> Arc<Galley> {
-    let whole = emoji_text::slot_job(ui.ctx(), job((text, 0), font, ink, wrap, tint));
-    if !has_items(text) {
+/// Lays `text` out with each list item's text at its level's edge and its wrapped rows under it, and
+/// a block quote's text one indent in with its marks hidden off the cursor's lines.
+pub(crate) fn layout(ui: &Ui, text: &str, wrap: f32, look: &Look) -> Arc<Galley> {
+    let parsed = composer_md::parse(text);
+    let whole = emoji_text::slot_job(ui.ctx(), job(ui, (text, 0), wrap, (look, &parsed)));
+    let found = listed(text, &parsed);
+    if !found.iter().any(Option::is_some) && !parsed.has_quotes() {
         return ui.painter().layout_job(whole);
     }
+    let font = look.font;
     let mut start = 0;
     let galleys: Vec<Arc<Galley>> = text
         .split('\n')
-        .zip(items(text))
-        .map(|(line, item)| {
+        .zip(found)
+        .enumerate()
+        .map(|(index, (line, item))| {
             let at = start;
             start += line.len() + 1;
-            let Some(item) = item else {
-                return laid_out(ui, job((line, at), font, ink, wrap, tint));
-            };
-            let edge = text_edge(item.level);
-            let prefix = item.prefix();
-            let width = (wrap - edge).max(font.size);
-            let body = laid_out(ui, job((&line[prefix..], at + prefix), font, ink, width, tint));
-            indented(ui, &body, (line[..prefix].chars().count(), edge), font)
+            if let Some(item) = item {
+                let edge = text_edge(item.level);
+                let prefix = item.prefix();
+                let width = (wrap - edge).max(font.size);
+                let body =
+                    laid_out(ui, job(ui, (&line[prefix..], at + prefix), width, (look, &parsed)));
+                return indented(ui, &body, (line[..prefix].chars().count(), edge), font);
+            }
+            match parsed.line(index).map(|line| line.block) {
+                Some(Block::Quote { depth, prefix }) if !look.shows(index) => {
+                    let edge = composer_md::quote_edge(depth);
+                    let width = (wrap - edge).max(font.size);
+                    let body = laid_out(
+                        ui,
+                        job(ui, (&line[prefix..], at + prefix), width, (look, &parsed)),
+                    );
+                    indented(ui, &body, (line[..prefix].chars().count(), edge), font)
+                }
+                _ => laid_out(ui, job(ui, (line, at), wrap, (look, &parsed))),
+            }
         })
         .collect();
     let merged = Galley::concat(Arc::new(whole), &galleys, ui.ctx().pixels_per_point());
@@ -186,20 +188,31 @@ fn laid_out(ui: &Ui, job: LayoutJob) -> Arc<Galley> {
     ui.painter().layout_job(emoji_text::slot_job(ui.ctx(), job))
 }
 
-pub(crate) fn paint_markers(ui: &Ui, galley: &Galley, origin: Pos2, font: &FontId) {
+pub(crate) fn paint_markers(
+    ui: &Ui,
+    galley: &Galley,
+    origin: Pos2,
+    (font, shown): (&FontId, &Shown),
+) {
     let text = galley.text();
-    if !has_items(text) {
+    let parsed = composer_md::parse(text);
+    let found = listed(text, &parsed);
+    if !found.iter().any(Option::is_some) {
         return;
     }
     let lines: Vec<&str> = text.split('\n').collect();
-    let found = items(text);
     let (mut line, mut first_row) = (0, true);
     for placed in &galley.rows {
         if first_row && let Some(Some(item)) = found.get(line) {
             let label = &lines[line][item.indent..item.indent + item.marker];
-            let marker = match item.kind {
-                Kind::Bullet => Marker::Bullet(item.level),
-                Kind::Number => Marker::Number(label),
+            let task = parsed.line(line).and_then(|info| info.task.as_ref()).filter(|task| {
+                !composer_md::shows(shown, line)
+                    && task.marker.start == parsed.line_start(line) + item.prefix()
+            });
+            let marker = match (task, item.kind) {
+                (Some(task), _) => Marker::Task(task.done),
+                (None, Kind::Bullet) => Marker::Bullet(item.level),
+                (None, Kind::Number) => Marker::Number(label),
             };
             let edge =
                 pos2(origin.x + text_edge(item.level) - MARKER_EDGE, origin.y + placed.pos.y);
@@ -348,8 +361,15 @@ mod tests {
         out.expect("the frame ran")
     }
 
+    fn built_job(text: &str, tint: &composer_md::Tint) -> LayoutJob {
+        with_ui(|ui| {
+            let look = Look { font: &font(), ink: INK, tint, shown: &None };
+            job(ui, (text, 0), 300.0, (&look, &composer_md::parse(text)))
+        })
+    }
+
     fn laid(ui: &Ui, text: &str, wrap: f32) -> Arc<Galley> {
-        layout(ui, text, &font(), INK, (wrap, &None))
+        layout(ui, text, wrap, &Look { font: &font(), ink: INK, tint: &None, shown: &None })
     }
 
     fn levels(text: &str) -> Vec<Option<(Kind, usize)>> {
@@ -441,7 +461,7 @@ mod tests {
         ];
         for (text, range, want) in cases {
             let tint = Some((range, TEAL));
-            let built = job((text, 0), &font(), INK, 300.0, &tint);
+            let built = built_job(text, &tint);
             assert_eq!(built.text, text);
             let tinted: Vec<&str> = built
                 .sections
@@ -456,7 +476,7 @@ mod tests {
     #[test]
     fn a_tint_outside_the_text_changes_nothing() {
         let tint = Some((40..50, TEAL));
-        assert_eq!(job(("short", 0), &font(), INK, 300.0, &tint).sections.len(), 1);
+        assert_eq!(built_job("short", &tint).sections.len(), 1);
     }
 
     #[test]
@@ -464,7 +484,12 @@ mod tests {
         with_ui(|ui| {
             let text = "a\n    - go :smi";
             let tint = Some((13..17, TEAL));
-            let galley = layout(ui, text, &font(), INK, (300.0, &tint));
+            let galley = layout(
+                ui,
+                text,
+                300.0,
+                &Look { font: &font(), ink: INK, tint: &tint, shown: &None },
+            );
             assert_eq!(galley.text(), text);
             let rows: Vec<Color32> = galley
                 .rows
