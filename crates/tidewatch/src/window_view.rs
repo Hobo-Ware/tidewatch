@@ -4,7 +4,7 @@
 use egui::{
     Align, CornerRadius, Event, Layout, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder, vec2,
 };
-use tidewatch_core::prefs::{Panels, QUAKE_HEIGHT_RANGE, WindowPrefs};
+use tidewatch_core::prefs::{Appearance, Panels, QUAKE_HEIGHT_RANGE, WindowPrefs};
 use tidewatch_core::ui_zoom;
 
 use crate::brand;
@@ -57,6 +57,9 @@ pub(crate) fn section(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<W
         }
         if let Some(panels) = panels_row(ui, editor.panels()) {
             applied = Some(editor.set_panels(panels));
+        }
+        if let Some(appearance) = appearance_row(ui, editor.appearance()) {
+            applied = Some(editor.set_appearance(appearance));
         }
         if let Some(zoom) = zoom_row(ui, editor.ui_zoom()) {
             applied = Some(editor.set_ui_zoom(zoom));
@@ -134,6 +137,24 @@ fn panels_row(ui: &mut Ui, current: Panels) -> Option<Panels> {
             settings_ui::pick(ui, "panels", &labels, active)
                 .map(|index| options[index].0)
                 .filter(|panels| *panels != current)
+        },
+    )
+}
+
+fn appearance_row(ui: &mut Ui, current: Appearance) -> Option<Appearance> {
+    let options =
+        [(Appearance::System, "System"), (Appearance::Dark, "Dark"), (Appearance::Light, "Light")];
+    let labels = options.map(|(_, label)| label);
+    let active = options.iter().position(|(appearance, _)| *appearance == current);
+    settings_ui::row(
+        ui,
+        "Appearance",
+        "System follows your Mac's Dark Mode and switches when it does.",
+        Control::new(settings_ui::inline_width(ui, &labels), 28.0),
+        |ui| {
+            settings_ui::pick(ui, "appearance", &labels, active)
+                .map(|index| options[index].0)
+                .filter(|appearance| *appearance != current)
         },
     )
 }

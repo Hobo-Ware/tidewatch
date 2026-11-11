@@ -56,7 +56,6 @@ const FOLDED_PAD: f32 = 14.0;
 const FOLDED_GAP: f32 = 12.0;
 const FOLDED_MIN_TEXT: f32 = 96.0;
 const FOLD_W: f32 = 28.0;
-const ROW_INK: Color32 = Color32::from_rgb(0x4a, 0x52, 0x63);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fold {
@@ -258,7 +257,7 @@ fn layout_option(painter: &Painter, option: &QuestionOption, text_w: f32) -> Opt
 }
 
 fn paint_mark(painter: &Painter, at: Pos2, mark: Mark, selected: bool) {
-    let line = if selected { brand::teal() } else { ROW_INK };
+    let line = if selected { brand::teal() } else { brand::row_ink() };
     match mark {
         Mark::Radio => {
             painter.circle_stroke(at, 7.75, Stroke::new(1.5, line));

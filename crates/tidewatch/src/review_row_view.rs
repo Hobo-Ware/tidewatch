@@ -9,7 +9,6 @@ use egui::{
 };
 
 use crate::brand;
-use crate::reader_chat_view::USER_LINE;
 use crate::review::{ReviewFacts, SentNote, SentReview, Standing};
 use crate::review_view::ReviewAction;
 use crate::screen_kit::TEXT_TITLE;
@@ -51,7 +50,7 @@ pub(crate) fn show(
     let profile = facts.map_or("The agent", |facts| facts.profile);
     Frame::new()
         .fill(brand::teal_nav())
-        .stroke(Stroke::new(1.0, USER_LINE))
+        .stroke(Stroke::new(1.0, brand::user_line()))
         .corner_radius(RADIUS)
         .inner_margin(Margin::symmetric(18, 16))
         .show(ui, |ui| {

@@ -187,11 +187,7 @@ fn button(ui: &mut Ui, seq: u64, tool: Tool, rect: Rect, text: &str) -> Option<B
     }
     let hovered = response.hovered() || response.has_focus();
     if hovered {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(BUTTON_RADIUS),
-            Color32::from_white_alpha(16),
-        );
+        ui.painter().rect_filled(rect, CornerRadius::same(BUTTON_RADIUS), brand::hover_wash());
     }
     let ink = if hovered || copied { brand::teal_text() } else { brand::muted() };
     let glyph = Rect::from_center_size(rect.center(), vec2(ICON, ICON));

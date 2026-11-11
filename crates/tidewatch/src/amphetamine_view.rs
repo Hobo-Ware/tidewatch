@@ -40,7 +40,6 @@ const NOTICE_W: f32 = 450.0;
 const TOAST_BOTTOM: f32 = 34.0;
 const TOAST_PAD: egui::Vec2 = vec2(14.0, 8.0);
 const BREATH_S: f64 = 2.4;
-const GRADIENT_END: Color32 = Color32::from_rgb(0x15, 0x39, 0x3a);
 const PIP_W: f32 = 3.0;
 const PIP_GAP: f32 = 2.5;
 const PIP_H: f32 = 10.0;
@@ -265,7 +264,7 @@ fn paint_pill(
         color: brand::teal().gamma_multiply(0.22 * breath * amount as f32),
     };
     painter.add(glow.as_shape(rect, radius));
-    painter.add(gradient(rect, brand::teal_nav(), GRADIENT_END));
+    painter.add(gradient(rect, brand::teal_nav(), brand::gradient_end()));
     painter.rect_stroke(
         rect,
         radius,
@@ -600,7 +599,7 @@ pub(crate) fn notice(
                     ui.painter().rect(
                         glyph,
                         CornerRadius::same(8),
-                        Color32::from_rgb(0x14, 0x19, 0x1f),
+                        brand::glyph_fill(),
                         Stroke::new(1.0, brand::item_line()),
                         StrokeKind::Inside,
                     );

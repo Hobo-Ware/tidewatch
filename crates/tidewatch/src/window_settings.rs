@@ -3,7 +3,7 @@
 //! once and applied when it parses; the height follows the slider while it moves and is applied
 //! when it settles. Pure state; `window_view` draws it.
 
-use tidewatch_core::prefs::{Panels, WindowPrefs};
+use tidewatch_core::prefs::{Appearance, Panels, WindowPrefs};
 
 use crate::hotkey::{self, Problem};
 
@@ -40,6 +40,10 @@ impl Editor {
         self.saved.ui_zoom
     }
 
+    pub(crate) fn appearance(&self) -> Appearance {
+        self.saved.appearance
+    }
+
     /// What is wrong with the text in the field, if anything.
     pub(crate) fn problem(&self) -> Option<Problem> {
         hotkey::parse(&self.hotkey).err()
@@ -70,6 +74,11 @@ impl Editor {
         }
         self.saved.height_pct = height;
         Some(self.saved.clone())
+    }
+
+    pub(crate) fn set_appearance(&mut self, appearance: Appearance) -> WindowPrefs {
+        self.saved.appearance = appearance;
+        self.saved.clone()
     }
 
     pub(crate) fn set_ui_zoom(&mut self, zoom: f32) -> WindowPrefs {
@@ -172,6 +181,15 @@ mod tests {
         let below = editor.set_panels(Panels::Below);
         assert_eq!(below, WindowPrefs { panels: Panels::Below, ..WindowPrefs::default() });
         assert_eq!(editor.panels(), Panels::Below);
+    }
+
+    #[test]
+    fn the_appearance_choice_returns_the_whole_window_settings_with_only_itself_changed() {
+        let mut editor = editor();
+        assert_eq!(editor.appearance(), Appearance::System);
+        let light = editor.set_appearance(Appearance::Light);
+        assert_eq!(light, WindowPrefs { appearance: Appearance::Light, ..WindowPrefs::default() });
+        assert_eq!(editor.appearance(), Appearance::Light);
     }
 
     #[test]

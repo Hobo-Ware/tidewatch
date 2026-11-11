@@ -25,7 +25,6 @@ const CAPTION_BELOW: f32 = 2.0;
 const QUOTE_RADIUS: u8 = 10;
 const THUMB_W: f32 = 44.0;
 const THUMB_H: f32 = 32.0;
-const IMAGE_CHIP_LINE: Color32 = Color32::from_rgb(0x2f, 0x4a, 0x4a);
 const QUOTE_PAD: Margin = Margin { left: 16, right: 16, top: 14, bottom: 14 };
 const QUOTE_GAP: f32 = 12.0;
 const QUOTE_MARK: f32 = 18.0;
@@ -348,7 +347,7 @@ fn image_chip(ui: &mut Ui, label: &str) {
         painter.rect_stroke(
             rect,
             CornerRadius::same(10),
-            Stroke::new(1.0, IMAGE_CHIP_LINE),
+            Stroke::new(1.0, brand::image_chip_line()),
             StrokeKind::Inside,
         );
         let thumb = Rect::from_min_size(rect.min + vec2(6.0, 6.0), vec2(THUMB_W, THUMB_H));
@@ -882,7 +881,7 @@ mod tests {
         for _ in 0..2 {
             let out = ctx.run_ui(raw.clone(), |ui| {
                 ui.set_width(400.0);
-                show(ui, "> from me", false, Look::USER);
+                show(ui, "> from me", false, Look::user());
             });
             seen = labels(&out);
         }
