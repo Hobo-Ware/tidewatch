@@ -23,7 +23,7 @@ use tidewatch_core::prefs::{Prefs, ResumeAgents};
 use tidewatch_core::prepare::Prepared;
 use tidewatch_core::restore::{RealDisk, TabAction, TabPlan, WindowPlan};
 use tidewatch_core::resume_mode::Resume;
-use tidewatch_core::session::{SavedAgentTab, SavedTab};
+use tidewatch_core::session::{SavedAgentTab, SavedSplit, SavedTab};
 use tidewatch_core::trust_apply::Grant;
 use tidewatch_core::worktree::Leftover;
 
@@ -94,6 +94,15 @@ pub(crate) struct Report {
     pub(crate) leftovers: Option<Vec<Leftover>>,
     /// Focus mode as saved, when the window was still untouched.
     pub(crate) focus: Option<bool>,
+    /// A main tab to split as it was saved: the tab, the shape and the folder its new shells open in.
+    pub(crate) splits: Vec<MainSplit>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct MainSplit {
+    pub(crate) tab: u64,
+    pub(crate) shape: SavedSplit,
+    pub(crate) dir: PathBuf,
 }
 
 pub(crate) struct Host {
@@ -243,6 +252,7 @@ impl Host {
                         report.toasts.extend(applied.toasts);
                         report.notice = join_notices(report.notice.take(), applied.notice);
                         report.focus = report.focus.or(applied.focus);
+                        report.splits.extend(applied.splits);
                     }
                 }
                 Done::Reopened(done) => reopened(*done, tabs, spawn, now, &mut report.toasts),
@@ -309,6 +319,13 @@ impl Host {
             report.focus = Some(plan.focus_mode);
         }
         report.notice = plan.toast();
+        report.splits.extend(
+            plan.main_splits.clone().zip(tabs.main_id(group)).map(|(shape, tab)| MainSplit {
+                tab,
+                shape,
+                dir: plan.dir.clone(),
+            }),
+        );
         report
     }
 

@@ -675,6 +675,7 @@ pub(crate) fn window_plan(
             taken_over_from: Some(session.cwd.clone()),
         }],
         skipped: Vec::new(),
+        main_splits: None,
     })
 }
 

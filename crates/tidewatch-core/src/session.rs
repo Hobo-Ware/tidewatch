@@ -36,6 +36,33 @@ pub struct SavedWindow {
     pub tabs: Vec<SavedTab>,
     #[serde(default, rename = "park", skip_serializing_if = "Vec::is_empty")]
     pub parked: Vec<SavedPark>,
+    /// How the main tab's terminal was split. Absent for one pane, and in a file saved before splits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_splits: Option<SavedSplit>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedAxis {
+    /// Side by side.
+    Row,
+    /// Stacked.
+    Column,
+}
+
+/// The shape of a split terminal: panes and where their dividers were. Each pane starts a fresh
+/// shell on restore, so nothing of a pane's content is saved.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SavedSplit {
+    Pane,
+    Split {
+        axis: SavedAxis,
+        /// Where the divider sits, in thousandths of the first child's share.
+        permille: u16,
+        a: Box<SavedSplit>,
+        b: Box<SavedSplit>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -271,6 +298,7 @@ mod tests {
             focus_mode: false,
             tabs: tabs.collect(),
             parked: Vec::new(),
+            main_splits: None,
         }
     }
 
@@ -393,7 +421,40 @@ mod tests {
                 }),
             ],
             parked: Vec::new(),
+            main_splits: None,
         }
+    }
+
+    fn three_panes() -> SavedSplit {
+        SavedSplit::Split {
+            axis: SavedAxis::Row,
+            permille: 500,
+            a: Box::new(SavedSplit::Pane),
+            b: Box::new(SavedSplit::Split {
+                axis: SavedAxis::Column,
+                permille: 300,
+                a: Box::new(SavedSplit::Pane),
+                b: Box::new(SavedSplit::Pane),
+            }),
+        }
+    }
+
+    #[test]
+    fn the_split_of_the_main_tab_round_trips_through_the_file() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = TidewatchPaths::new(home.path());
+        let split = SavedWindow { main_splits: Some(three_panes()), ..window() };
+        let session = Session { windows: vec![split] };
+        session.save(&paths).unwrap();
+        assert_eq!(Session::load(&paths), session);
+    }
+
+    #[test]
+    fn a_window_saved_before_splits_loads_as_one_pane_and_writes_no_split() {
+        let old = "[[window]]\ndir = \"/a\"\n[[window.tab]]\nkind = \"main\"\n";
+        let loaded: Session = toml::from_str(old).unwrap();
+        assert_eq!(loaded.windows[0].main_splits, None);
+        assert!(!toml::to_string(&loaded).unwrap().contains("main_splits"));
     }
 
     #[test]
@@ -410,6 +471,7 @@ mod tests {
                     focus_mode: false,
                     tabs: vec![SavedTab::Main],
                     parked: Vec::new(),
+                    main_splits: None,
                 },
             ],
         };

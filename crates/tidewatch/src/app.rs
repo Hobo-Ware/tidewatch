@@ -45,6 +45,7 @@ mod subagents;
 mod tabs;
 mod takeover;
 mod terminal;
+mod terminal_split;
 mod workflow;
 mod workspaces;
 
@@ -132,6 +133,7 @@ use crate::session_glue::Saver;
 use crate::settings::Settings;
 use crate::shell::{self, Shell};
 use crate::slash_glue;
+use crate::split::Splits;
 use crate::subagents_glue;
 use crate::sync_glue;
 use crate::tab_view::TabView;
@@ -162,6 +164,7 @@ pub(crate) struct Tidewatch {
     bell: BellFlash,
     paths: Option<TidewatchPaths>,
     tabs: Tabs<Pane<PtyTerm>>,
+    main_splits: HashMap<u64, Splits<PtyTerm>>,
     jobs: Jobs<Done>,
     closing: Option<Closing>,
     leftovers: leftover_glue::Host,
@@ -301,13 +304,23 @@ impl Tidewatch {
         }
         let adopted = incoming.map(|incoming| take_over(&cc.egui_ctx, incoming, &mut shell));
         let hooks_port = adopted.as_ref().and_then(|adopted| adopted.hook_port);
-        let (tabs, credentials, notes, focus, kept_services) = match adopted {
-            Some(adopted) => {
-                (adopted.tabs, adopted.credentials, adopted.notes, adopted.focus, adopted.services)
-            }
-            None => {
-                (fresh_tabs(&cc.egui_ctx, &workspaces), Vec::new(), Vec::new(), false, Vec::new())
-            }
+        let (tabs, credentials, notes, focus, kept_services, main_splits) = match adopted {
+            Some(adopted) => (
+                adopted.tabs,
+                adopted.credentials,
+                adopted.notes,
+                adopted.focus,
+                adopted.services,
+                adopted.main_splits,
+            ),
+            None => (
+                fresh_tabs(&cc.egui_ctx, &workspaces),
+                Vec::new(),
+                Vec::new(),
+                false,
+                Vec::new(),
+                HashMap::new(),
+            ),
         };
         let recent = welcome.then(|| recent_repos(paths.as_ref()));
         let (hooks, hooks_kept) = match hooks_port {
@@ -429,6 +442,7 @@ impl Tidewatch {
             pending_pastes: VecDeque::new(),
             bell: BellFlash::default(),
             tabs,
+            main_splits,
             jobs: Jobs::new(),
             closing: None,
             leftovers: leftover_glue::Host::new(paths.clone()),
@@ -580,6 +594,7 @@ struct Adopted {
     notes: Vec<String>,
     focus: bool,
     hook_port: Option<u16>,
+    main_splits: HashMap<u64, Splits<PtyTerm>>,
 }
 
 /// A screenshot, background or fake-gh run starts no forwarder, so it never makes a webhook on a
@@ -644,6 +659,15 @@ fn take_over(
     }
     shell.claim_from_old_window();
     let handover = incoming.session();
+    let main_splits = handover
+        .splits
+        .iter()
+        .filter_map(|entry| {
+            let tab = tabs.main_id(entry.group)?;
+            let dir = &handover.groups.get(entry.group)?.dir;
+            Some((tab, Splits::from_saved(&entry.shape, || spawn_shell(ctx, dir))?))
+        })
+        .collect();
     Adopted {
         tabs,
         credentials,
@@ -651,6 +675,7 @@ fn take_over(
         focus: handover.focus,
         hook_port: handover.hook_port,
         services,
+        main_splits,
     }
 }
 
@@ -702,7 +727,7 @@ impl eframe::App for Tidewatch {
         }
         self.saver.flush(
             self.restore.settled(),
-            workspaces::window_views(&self.workspaces, self.focus),
+            workspaces::window_views(&self.workspaces, self.focus, &self.tabs, &self.main_splits),
             &self.tabs,
         );
         self.amphetamine.shutdown();

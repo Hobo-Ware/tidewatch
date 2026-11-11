@@ -9,7 +9,7 @@ use super::Tidewatch;
 use crate::flow_glue;
 use crate::pty::{spawn_agent, spawn_shell_noted, spawn_typed};
 use crate::reader_glue;
-use crate::restore_glue::{Env, Spawn};
+use crate::restore_glue::{Env, MainSplit, Spawn};
 use crate::wake::request_wake;
 
 impl Tidewatch {
@@ -48,6 +48,9 @@ impl Tidewatch {
         }
         if let Some(focus) = report.focus {
             self.focus = focus;
+        }
+        for MainSplit { tab, shape, dir } in report.splits {
+            self.restore_main_splits(tab, &shape, &dir, ctx);
         }
     }
 

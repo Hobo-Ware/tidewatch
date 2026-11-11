@@ -90,7 +90,7 @@ mod tests {
     const DIR: &str = "/work/web";
 
     fn view(focus: bool) -> WindowView<'static> {
-        WindowView { group: 0, dir: Path::new(DIR), other: false, focus }
+        WindowView { group: 0, dir: Path::new(DIR), other: false, focus, splits: None }
     }
 
     fn views(focus: bool) -> std::option::IntoIter<WindowView<'static>> {
@@ -181,7 +181,13 @@ mod tests {
         let both = || {
             [
                 view(false),
-                WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false },
+                WindowView {
+                    group: api,
+                    dir: Path::new("/work/api"),
+                    other: false,
+                    focus: false,
+                    splits: None,
+                },
             ]
             .into_iter()
         };
@@ -212,8 +218,13 @@ mod tests {
         let mut saver = Saver::new(Some(&paths), true, slow());
         let mut tabs = Tabs::new(Pane::shell(0));
         let api = tabs.add_group(Pane::shell(10));
-        let api_view =
-            WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false };
+        let api_view = WindowView {
+            group: api,
+            dir: Path::new("/work/api"),
+            other: false,
+            focus: false,
+            splits: None,
+        };
         let worktree = Worktree {
             repo: PathBuf::from("/work/api"),
             path: PathBuf::from("/home/.tidewatch/api-abc123/calm-comet"),

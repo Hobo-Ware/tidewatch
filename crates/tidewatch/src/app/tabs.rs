@@ -237,6 +237,7 @@ impl Tidewatch {
         self.comments.forget(id);
         self.meeseeks.forget(id);
         self.done_check.forget(id);
+        self.main_splits.remove(&id);
     }
 
     pub(super) fn answer_close(&mut self, answer: Answer, ctx: &egui::Context) {
@@ -361,6 +362,7 @@ impl Tidewatch {
                 self.run_repo_command(super::repos::RepoCommand::Open, ctx);
             }
             Action::New => self.new_tab(ctx),
+            Action::CloseActive if self.close_main_pane() => {}
             Action::CloseActive => self.close_tab(self.tabs.active(), ctx),
             Action::Close(index) => self.close_tab(index, ctx),
             Action::Change(index) => self.open_change_index(index, ctx),

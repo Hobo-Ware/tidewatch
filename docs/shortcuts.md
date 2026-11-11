@@ -14,6 +14,12 @@ On Linux a plain Ctrl chord would reach the shell, so Linux uses Ctrl+Shift or A
 | Move tab left | `Cmd+Shift+Left` | `Ctrl+Shift+PageUp` |
 | Move tab right | `Cmd+Shift+Right` | `Ctrl+Shift+PageDown` |
 | Park tab | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+| Split pane right | `Cmd+D` | `Ctrl+Shift+D` |
+| Split pane down | `Cmd+Shift+D` | `Ctrl+Alt+D` |
+| Focus pane left | `Cmd+Alt+Left` | `Alt+Shift+Left` |
+| Focus pane right | `Cmd+Alt+Right` | `Alt+Shift+Right` |
+| Focus pane up | `Cmd+Alt+Up` | `Alt+Shift+Up` |
+| Focus pane down | `Cmd+Alt+Down` | `Alt+Shift+Down` |
 | Next repo | `Cmd+Ctrl+]` | `Alt+]` |
 | Previous repo | `Cmd+Ctrl+[` | `Alt+[` |
 

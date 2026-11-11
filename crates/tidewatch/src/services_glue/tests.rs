@@ -442,6 +442,7 @@ fn services_travel_behind_the_tabs_and_pair_with_their_entries_by_position() {
             entry(&repo, "db", true),
             entry(&repo, "api", true),
         ],
+        splits: Vec::new(),
     };
     let text = serde_json::to_string(&handover).unwrap();
     let handover: Handover = serde_json::from_str(&text).unwrap();

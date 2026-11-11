@@ -13,6 +13,7 @@ use crate::new_tab::{Kind, NewTab};
 use crate::pane::{Body, Pane};
 use crate::reader::Shown;
 use crate::reader_glue;
+use crate::split::Splits;
 use stdusk_core::paste::prepare;
 use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::terminal_view::paste_into;
@@ -52,6 +53,18 @@ pub(crate) fn appended(reply: &str, text: &str) -> String {
     } else {
         format!("{reply} {text}")
     }
+}
+
+/// The shell a picture pasted on a tab goes to: the focused pane when the tab is split.
+fn focused_shell<'a>(
+    body: &'a mut Body<PtyTerm>,
+    splits: Option<&'a mut Splits<PtyTerm>>,
+) -> Option<&'a mut PtyTerm> {
+    let Body::Shell(main) = body else { return None };
+    Some(match splits {
+        Some(splits) => splits.focused_term_mut(main),
+        None => main,
+    })
 }
 
 fn type_dropped(term: &mut PtyTerm, paths: &[PathBuf]) {
@@ -158,15 +171,15 @@ impl Tidewatch {
             Delivery::Nothing => {}
             Delivery::Failed(message) => self.show_toast(message, ctx),
             Delivery::CtrlV => {
-                if let Some(Body::Shell(term)) = self.tab_body_mut(tab) {
+                if let Some(term) = self.picture_shell_mut(tab) {
                     term.send(ctrl_v());
                 }
             }
             Delivery::Text(text) => match target {
                 Target::Terminal(_) => {
                     let rules = paste_rules(&self.terminal_config);
-                    if let (Some(Body::Shell(term)), Some(text)) =
-                        (self.tab_body_mut(tab), prepare(&text, rules))
+                    if let (Some(term), Some(text)) =
+                        (self.picture_shell_mut(tab), prepare(&text, rules))
                     {
                         paste_into(term, &text);
                     }
@@ -212,8 +225,9 @@ impl Tidewatch {
         self.attach_files(ctx, tab, paths);
     }
 
-    fn tab_body_mut(&mut self, tab: u64) -> Option<&mut Body<PtyTerm>> {
-        self.tabs.get_mut(tab).map(|tab| &mut tab.pane.body)
+    fn picture_shell_mut(&mut self, tab: u64) -> Option<&mut PtyTerm> {
+        let body = &mut self.tabs.get_mut(tab)?.pane.body;
+        focused_shell(body, self.main_splits.get_mut(&tab))
     }
 }
 
@@ -474,6 +488,39 @@ mod tests {
 
     fn screen_text(term: &PtyTerm) -> String {
         crate::job_glue::screen_rows(&term.grid_snapshot()).join("\n")
+    }
+
+    fn screens(body: &mut Body<PtyTerm>, splits: &mut Splits<PtyTerm>) -> (String, String) {
+        let Body::Shell(main) = body else { unreachable!("built as a shell") };
+        let other = splits.term_mut(main, 1).map(|term| screen_text(term)).unwrap_or_default();
+        (screen_text(main), other)
+    }
+
+    fn wait_until(mut what: impl FnMut() -> bool) {
+        let started = std::time::Instant::now();
+        while !what() {
+            assert!(started.elapsed() < std::time::Duration::from_secs(10), "never arrived");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_picture_pasted_on_a_split_tab_goes_to_the_focused_pane() {
+        use stdusk_core::pane::SplitDir;
+        let mut body = Body::Shell(echoing_terminal());
+        let mut splits = Splits::single();
+        assert!(splits.split(SplitDir::Row, echoing_terminal()));
+
+        splits.focus(1);
+        paste_into(focused_shell(&mut body, Some(&mut splits)).unwrap(), "/pastes/right.png");
+        wait_until(|| screens(&mut body, &mut splits).1.contains("/pastes/right.png"));
+
+        splits.focus(crate::split::MAIN);
+        paste_into(focused_shell(&mut body, Some(&mut splits)).unwrap(), "/pastes/main.png");
+        wait_until(|| screens(&mut body, &mut splits).0.contains("/pastes/main.png"));
+
+        let (main, right) = screens(&mut body, &mut splits);
+        assert!(!main.contains("right.png") && !right.contains("main.png"), "{main}|{right}");
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 use egui::FontId;
 use stdusk_core::config::TerminalConfig;
+use stdusk_core::pane::Side;
 use stdusk_core::paste::PasteRules;
 use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::mouse::GridGeom;
@@ -13,7 +14,7 @@ use stdusk_egui::terminal_view::{
 use stdusk_egui::ui::GridStyle;
 
 use super::frame::FrameIntent;
-use super::{FONT_SIZE, Tidewatch, wall_ms};
+use super::{FONT_SIZE, Tidewatch, terminal_split, wall_ms};
 use crate::brand;
 use crate::commands::Command;
 use crate::mascot::{self, Pose};
@@ -67,24 +68,82 @@ pub(super) fn show_shell(
     modal_open: bool,
     injected_wheel: &[egui::Event],
 ) -> TerminalOutput {
+    show_shell_in(
+        ui,
+        term,
+        grid,
+        config,
+        (keys_free, modal_open),
+        (&[], Focus::Manage),
+        injected_wheel,
+    )
+}
+
+/// `show_shell` for one pane of several: `pane` names its widgets apart from the others', and
+/// `focus` is whether it manages egui's keyboard focus.
+pub(super) fn show_shell_in(
+    ui: &mut egui::Ui,
+    term: &mut PtyTerm,
+    grid: &TerminalGrid,
+    config: &TerminalConfig,
+    (keys_free, modal_open): (bool, bool),
+    (pane, focus): (&[Side], Focus),
+    injected_wheel: &[egui::Event],
+) -> TerminalOutput {
     let mods = ui.input(|i| i.modifiers);
     TerminalView {
-        id_src: &[],
+        id_src: pane,
         grid: grid.geom(),
         font: &grid.font,
         bold_font: grid.bold.as_ref(),
-        style: GridStyle::from_config(config, mods, keys_free),
+        style: pane_style(config, mods, keys_free, focus),
         search_marks: &[],
-        options: TerminalOptions::from_config(config, Focus::Manage),
+        options: TerminalOptions::from_config(config, focus),
         gate: view_gate(keys_free, modal_open),
         injected_wheel,
     }
     .show(ui, term)
 }
 
+/// A pane that does not manage the keyboard is an unfocused one of a split: it fades and keeps a
+/// still cursor, as in stdusk.
+pub(super) fn pane_style(
+    config: &TerminalConfig,
+    mods: egui::Modifiers,
+    keys_free: bool,
+    focus: Focus,
+) -> GridStyle {
+    GridStyle { dimmed: focus == Focus::Off, ..GridStyle::from_config(config, mods, keys_free) }
+}
+
 impl TerminalGrid {
     pub(super) fn resize(&self, term: &mut PtyTerm) {
         term.resize(self.cols, self.rows);
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixed(rect: egui::Rect) -> Self {
+        let (cell_w, cell_h) = (8.0, 16.0);
+        let (cols, rows) = layout::grid_dims(rect, cell_w, cell_h);
+        Self { rect, cols, rows, cell_w, cell_h, font: FontId::monospace(14.0), bold: None }
+    }
+
+    pub(super) fn rect(&self) -> egui::Rect {
+        self.rect
+    }
+
+    /// The same cells and fonts over `rect`, one pane of the area.
+    pub(super) fn within(&self, rect: egui::Rect) -> Self {
+        let (cols, rows) = layout::grid_dims(rect, self.cell_w, self.cell_h);
+        Self {
+            rect,
+            cols,
+            rows,
+            cell_w: self.cell_w,
+            cell_h: self.cell_h,
+            font: self.font.clone(),
+            bold: self.bold.clone(),
+        }
     }
 
     fn geom(&self) -> GridGeom {
@@ -124,32 +183,42 @@ impl Tidewatch {
         let Pane { body, agent, .. } = self.tabs.active_pane_mut();
         match body {
             Body::Shell(term) => {
-                term.resize(grid.cols, grid.rows);
+                let splits = self.main_splits.get_mut(&active_id);
+                if splits.is_none() {
+                    term.resize(grid.cols, grid.rows);
+                }
                 if !reader_on {
                     let keys_free = !frame.keys.modal_open && !frame.keys.typing_in_a_panel;
-                    let out = show_shell(
-                        ui,
-                        term,
-                        grid,
-                        &self.terminal_config,
-                        keys_free,
-                        frame.keys.modal_open,
-                        &dev_wheel,
-                    );
-                    for text in out.confirm_paste.iter().cloned() {
+                    let gates = (keys_free, frame.keys.modal_open);
+                    let config = &self.terminal_config;
+                    let out = match splits {
+                        Some(splits) => {
+                            terminal_split::show(ui, splits, term, grid, config, gates, &dev_wheel)
+                        }
+                        None => Some(show_shell(
+                            ui,
+                            term,
+                            grid,
+                            config,
+                            keys_free,
+                            frame.keys.modal_open,
+                            &dev_wheel,
+                        )),
+                    };
+                    for text in out.iter().flat_map(|out| out.confirm_paste.iter().cloned()) {
                         self.pending_pastes.push_back((active_id, text));
                     }
-                    if out.bell_rang {
+                    if out.as_ref().is_some_and(|out| out.bell_rang) {
                         self.bell.ring(now);
                     }
-                    mouse_pasted = out.mouse_pasted;
-                    if out.sent_input()
+                    mouse_pasted = out.as_ref().and_then(|out| out.mouse_pasted);
+                    if out.as_ref().is_some_and(TerminalOutput::sent_input)
                         && let Some(agent) = agent
                     {
                         agent.resume_note = None;
                         agent.base_note = None;
                     }
-                    copied = out.copied.is_some();
+                    copied = out.is_some_and(|out| out.copied.is_some());
                 }
                 if let (Some(name), Some(exit)) = (agent_name, term.exited()) {
                     exit_notice(ui, area, &exit_notice_text(name, exit.code));
@@ -185,6 +254,7 @@ impl Tidewatch {
             Body::Removing => status_message(ui, area, "Removing worktree...", brand::MUTED),
             Body::Failed(message) => status_message(ui, area, message, brand::RED),
         }
+        self.drop_if_single(active_id);
         self.bell.paint(ui, area, now);
         if copied {
             self.show_toast("Copied", ui.ctx());
@@ -200,10 +270,13 @@ impl Tidewatch {
         let Some((tab, text)) = self.pending_pastes.pop_front() else { return };
         match paste_confirm::show(ctx, &text, true) {
             Verdict::Paste => {
-                if let Some(Body::Shell(term)) =
+                if let Some(Body::Shell(main)) =
                     self.tabs.get_mut(tab).map(|tab| &mut tab.pane.body)
                 {
-                    paste_into(term, &text);
+                    match self.main_splits.get_mut(&tab) {
+                        Some(splits) => paste_into(splits.focused_term_mut(main), &text),
+                        None => paste_into(main, &text),
+                    }
                 }
             }
             Verdict::Cancel => {}
@@ -403,6 +476,15 @@ mod tests {
 
     use super::*;
     use crate::screen_kit::{esc_left_a_widget, remember_focus};
+
+    #[test]
+    fn only_the_pane_managing_the_keyboard_has_the_live_cursor() {
+        let config = TerminalConfig { cursor_blink: true, ..terminal_config(false) };
+        let look = |focus| pane_style(&config, Modifiers::NONE, true, focus);
+        let (focused, other) = (look(Focus::Manage), look(Focus::Off));
+        assert!(!focused.dimmed && focused.blink);
+        assert!(other.dimmed);
+    }
 
     fn spawn(script: &str) -> PtyTerm {
         let opts = SpawnOpts {

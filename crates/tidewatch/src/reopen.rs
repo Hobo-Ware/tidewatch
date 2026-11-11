@@ -62,6 +62,7 @@ pub(crate) fn saved_window(
         focus_mode: false,
         tabs: vec![tab],
         parked: Vec::new(),
+        main_splits: None,
     })
 }
 

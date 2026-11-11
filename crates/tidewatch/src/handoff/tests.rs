@@ -433,6 +433,26 @@ fn parking_and_never_park_cross_the_handover_and_an_old_layout_has_neither() {
 }
 
 #[test]
+fn a_split_main_tab_crosses_the_handover_as_a_shape_and_an_old_layout_has_none() {
+    use tidewatch_core::session::{SavedAxis, SavedSplit};
+    let (mut handover, _) = handover_of(&window());
+    let plain = serde_json::to_string(&handover).unwrap();
+    assert!(!plain.contains("split"), "{plain}");
+    assert_eq!(serde_json::from_str::<Handover>(&plain).unwrap().splits, []);
+
+    let shape = SavedSplit::Split {
+        axis: SavedAxis::Row,
+        permille: 350,
+        a: Box::new(SavedSplit::Pane),
+        b: Box::new(SavedSplit::Pane),
+    };
+    handover.splits = vec![crate::handoff::GroupSplit { group: 0, shape }];
+    let text = serde_json::to_string(&handover).unwrap();
+    let back: Handover = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, handover);
+}
+
+#[test]
 fn a_window_from_before_the_prompt_flag_cannot_say_where_its_agents_are_so_they_wait_for_a_hook() {
     let mut w = window();
     let agent = w.tabs.agent_mut(w.agent_tab).unwrap();

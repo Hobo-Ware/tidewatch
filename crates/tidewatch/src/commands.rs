@@ -8,6 +8,7 @@ mod terminal_keys;
 mod tests;
 
 use egui::{Key, Modifiers};
+use stdusk_core::pane::Dir;
 
 #[cfg(test)]
 pub(crate) use rows::markdown;
@@ -63,6 +64,9 @@ pub(crate) enum Command {
     MoveTabLeft,
     MoveTabRight,
     ParkTab,
+    SplitRight,
+    SplitDown,
+    FocusPane(Dir),
     NextRepo,
     PrevRepo,
     Overview,
@@ -99,7 +103,10 @@ impl Command {
             Self::ParkTab => Some(Action::ParkActive),
             Self::NextRepo => Some(Action::NextGroup),
             Self::PrevRepo => Some(Action::PrevGroup),
-            Self::Overview
+            Self::SplitRight
+            | Self::SplitDown
+            | Self::FocusPane(_)
+            | Self::Overview
             | Self::Focus
             | Self::ZoomIn
             | Self::ZoomOut
@@ -156,8 +163,14 @@ impl Command {
     }
 
     pub(crate) fn in_palette(self) -> bool {
-        !matches!(self, Self::SelectTab(_) | Self::OpenRepo | Self::Palette | Self::Confirm)
-            && !self.in_file_view_only()
+        !matches!(
+            self,
+            Self::SelectTab(_)
+                | Self::FocusPane(_)
+                | Self::OpenRepo
+                | Self::Palette
+                | Self::Confirm
+        ) && !self.in_file_view_only()
     }
 
     /// Another name the palette finds the command by, shown only when it was the match.
@@ -210,6 +223,14 @@ const fn alt(key: Key) -> Chord {
 
 const fn cmd_ctrl(key: Key) -> Chord {
     Chord { mods: CMD | CTRL, key }
+}
+
+const fn cmd_alt(key: Key) -> Chord {
+    Chord { mods: CMD | ALT, key }
+}
+
+const fn ctrl_alt(key: Key) -> Chord {
+    Chord { mods: CTRL | ALT, key }
 }
 
 impl Chord {
@@ -337,7 +358,7 @@ const fn tab(id: &'static str, title: &'static str, index: usize, key: Key) -> E
     entry(id, title, Group::Tabs, Command::SelectTab(index), (cmd(key), alt(key)))
 }
 
-pub(crate) const TABLE: [Entry; 37] = [
+pub(crate) const TABLE: [Entry; 43] = [
     entry("new-tab", "New tab", Group::Tabs, Command::NewTab, (cmd(Key::T), ctrl(Key::T).shift())),
     entry(
         "close-tab",
@@ -375,6 +396,48 @@ pub(crate) const TABLE: [Entry; 37] = [
         Group::Tabs,
         Command::ParkTab,
         (cmd(Key::K).shift(), ctrl(Key::K).shift()),
+    ),
+    entry(
+        "split-right",
+        "Split pane right",
+        Group::Tabs,
+        Command::SplitRight,
+        (cmd(Key::D), ctrl(Key::D).shift()),
+    ),
+    entry(
+        "split-down",
+        "Split pane down",
+        Group::Tabs,
+        Command::SplitDown,
+        (cmd(Key::D).shift(), ctrl_alt(Key::D)),
+    ),
+    entry(
+        "pane-left",
+        "Focus pane left",
+        Group::Tabs,
+        Command::FocusPane(Dir::Left),
+        (cmd_alt(Key::ArrowLeft), alt(Key::ArrowLeft).shift()),
+    ),
+    entry(
+        "pane-right",
+        "Focus pane right",
+        Group::Tabs,
+        Command::FocusPane(Dir::Right),
+        (cmd_alt(Key::ArrowRight), alt(Key::ArrowRight).shift()),
+    ),
+    entry(
+        "pane-up",
+        "Focus pane up",
+        Group::Tabs,
+        Command::FocusPane(Dir::Up),
+        (cmd_alt(Key::ArrowUp), alt(Key::ArrowUp).shift()),
+    ),
+    entry(
+        "pane-down",
+        "Focus pane down",
+        Group::Tabs,
+        Command::FocusPane(Dir::Down),
+        (cmd_alt(Key::ArrowDown), alt(Key::ArrowDown).shift()),
     ),
     entry(
         "next-repo",
@@ -649,9 +712,11 @@ impl Gate {
             | Command::NextFile
             | Command::PrevCommit
             | Command::NextCommit => self.focus == Focus::FileView && !modal && !self.overview,
-            Command::MoveTabLeft | Command::MoveTabRight => {
-                !modal && !self.overview && self.focus != Focus::TextField
-            }
+            Command::MoveTabLeft
+            | Command::MoveTabRight
+            | Command::SplitRight
+            | Command::SplitDown
+            | Command::FocusPane(_) => !modal && !self.overview && self.focus != Focus::TextField,
             Command::NewTab
             | Command::SelectTab(_)
             | Command::NextRepo

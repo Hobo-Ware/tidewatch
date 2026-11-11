@@ -83,6 +83,7 @@ fn session_for(dir: &Path, worktree: &Worktree) -> Session {
                 }),
             ],
             parked: Vec::new(),
+            main_splits: None,
         }],
     }
 }

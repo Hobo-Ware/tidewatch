@@ -89,6 +89,7 @@ impl Fixture {
             focus_mode: focus,
             tabs,
             parked: Vec::new(),
+            main_splits: None,
         };
         Session { windows: vec![window] }.save(&self.paths).unwrap();
     }
@@ -116,6 +117,7 @@ impl Fixture {
         }
         self.report.notice = report.notice.or_else(|| self.report.notice.take());
         self.report.focus = report.focus.or(self.report.focus);
+        self.report.splits.extend(report.splits);
     }
 
     fn begin(&mut self) {
@@ -205,6 +207,7 @@ fn a_poofed_summary_tab_comes_back_as_a_summary_with_its_park_mark_and_saves_aga
             since_ms: 9,
             keep: false,
         }],
+        main_splits: None,
     };
     Session { windows: vec![window] }.save(&f.paths).unwrap();
     f.begin();
@@ -214,8 +217,34 @@ fn a_poofed_summary_tab_comes_back_as_a_summary_with_its_park_mark_and_saves_aga
     let tab = &f.tabs.items()[2];
     assert!(tab.pane.agent.is_none() && tab.pane.worktree.is_none());
     assert_eq!(tab.park, Some(Park { why: crate::park::Why::Idle, since_ms: 9 }));
-    let view = WindowView { group: 0, dir: &f.repo, other: false, focus: false };
+    let view = WindowView { group: 0, dir: &f.repo, other: false, focus: false, splits: None };
     assert_eq!(saved_window(&view, &f.tabs).tabs[2], poofed);
+}
+
+#[test]
+fn the_split_of_the_main_tab_is_handed_to_the_app_with_the_tab_and_the_folder() {
+    use tidewatch_core::session::{SavedAxis, SavedSplit};
+    let mut f = Fixture::new(false);
+    let shape = SavedSplit::Split {
+        axis: SavedAxis::Row,
+        permille: 620,
+        a: Box::new(SavedSplit::Pane),
+        b: Box::new(SavedSplit::Pane),
+    };
+    let window = SavedWindow {
+        dir: f.repo.clone(),
+        other: false,
+        active: 0,
+        focus_mode: false,
+        tabs: vec![SavedTab::Main],
+        parked: Vec::new(),
+        main_splits: Some(shape.clone()),
+    };
+    Session { windows: vec![window] }.save(&f.paths).unwrap();
+    f.begin();
+    f.until_settled();
+    let main = f.tabs.main_id(0).unwrap();
+    assert_eq!(f.report.splits, [MainSplit { tab: main, shape, dir: f.repo.clone() }]);
 }
 
 #[test]
@@ -234,6 +263,7 @@ fn parked_and_never_park_marks_come_back_on_the_tabs_they_were_saved_with() {
             SavedPark { tab: 1, why: Some(crate::park::Why::Idle), since_ms: 9, keep: false },
             SavedPark { tab: 2, why: None, since_ms: 0, keep: true },
         ],
+        main_splits: None,
     };
     Session { windows: vec![window] }.save(&f.paths).unwrap();
     f.begin();
@@ -588,6 +618,7 @@ fn saved_window(dir: &Path, focus_mode: bool, tabs: Vec<SavedTab>) -> SavedWindo
         focus_mode,
         tabs,
         parked: Vec::new(),
+        main_splits: None,
     }
 }
 
