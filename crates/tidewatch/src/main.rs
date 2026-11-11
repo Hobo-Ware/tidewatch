@@ -27,6 +27,8 @@ mod avatar_glue;
 mod avatar_redraw;
 mod away_model;
 mod brand;
+mod broadcast;
+mod broadcast_view;
 mod bubble_toolbar;
 mod budget_glue;
 mod bullets;

@@ -68,3 +68,6 @@ Kept current by the test in `tidewatch-core/src/sent.rs`.
 - `away`: the owner turned away mode on or off.
 - `keep going`: the fallback nudge while the owner is away and the agent stopped with open
   steps and no wake-up set.
+- `to all`: the owner wrote one message and sent it to every ticked agent from the palette's
+  Message all agents sheet. The owner's own words through the reply box's path, so it is not
+  automatic and does not count in the budget; the tag only labels the bubble.

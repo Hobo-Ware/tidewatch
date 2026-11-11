@@ -13,6 +13,9 @@ use crate::tabs::Action;
 
 impl Tidewatch {
     pub(super) fn toggle_palette(&mut self) {
+        if self.close_broadcast() {
+            return;
+        }
         if self.palette.take().is_none() {
             self.open_palette("");
         }
@@ -90,6 +93,7 @@ impl Tidewatch {
             }
             Target::Repo(group) => self.dispatch(Action::ShowGroup(group), ctx),
             Target::ChangeTab => self.open_change_active(ctx),
+            Target::MessageAll => self.open_broadcast(),
             Target::OpenRepo => self.run_repo_command(RepoCommand::Open, ctx),
             Target::CloseRepo => self.run_repo_command(RepoCommand::Close, ctx),
             Target::Profile(id) => self.open_new_tab_dialog(ctx, Some(&id)),

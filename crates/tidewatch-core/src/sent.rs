@@ -40,10 +40,11 @@ pub mod because {
     pub const KEEP_GOING: &str =
         "you are away and the agent stopped with open steps and no wake-up set";
     pub const PR_ENDED: &str = "the pull request was merged or closed";
+    pub const BROADCAST: &str = "you sent it to all your agents at once";
 
     pub const NAMED: [&str; 1] = ["Auto"];
 
-    pub const ALL: [&str; 22] = [
+    pub const ALL: [&str; 23] = [
         AUTO_CHECKS,
         AUTO_REVIEWS,
         AUTO_CONFLICTS,
@@ -66,6 +67,7 @@ pub mod because {
         AWAY_OFF,
         KEEP_GOING,
         PR_ENDED,
+        BROADCAST,
     ];
 }
 
@@ -87,6 +89,7 @@ pub enum Reason {
     BackgroundJob,
     Away,
     KeepGoing,
+    Broadcast,
 }
 
 impl Reason {
@@ -107,6 +110,7 @@ impl Reason {
             Self::BackgroundJob => "background job",
             Self::Away => "away",
             Self::KeepGoing => "keep going",
+            Self::Broadcast => "to all",
         }
     }
 
@@ -128,7 +132,8 @@ impl Reason {
             | Self::Workflow
             | Self::BackgroundJob
             | Self::Away
-            | Self::KeepGoing => None,
+            | Self::KeepGoing
+            | Self::Broadcast => None,
         }
     }
 
@@ -502,6 +507,7 @@ mod tests {
             Reason::BackgroundJob,
             Reason::Away,
             Reason::KeepGoing,
+            Reason::Broadcast,
         ];
         for reason in reasons {
             let line = format!("- `{}`:", reason.tag());
@@ -526,6 +532,7 @@ mod tests {
             Reason::BackgroundJob,
             Reason::Away,
             Reason::KeepGoing,
+            Reason::Broadcast,
         ]
         .map(Reason::tag);
         for shown in because::ALL.into_iter().chain(tags) {

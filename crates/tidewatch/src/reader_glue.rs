@@ -12,6 +12,7 @@ use tidewatch_core::clock::now_ms;
 use tidewatch_core::paths::{home_dir, sent_file_beside};
 use tidewatch_core::question::{self, Reply};
 use tidewatch_core::question_words;
+use tidewatch_core::sent::{self, Record, because};
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::transcript::Source;
 
@@ -677,6 +678,42 @@ fn reply(
         return Some(LINE_FULL_TOAST.to_owned());
     }
     blocked.map(|blocked| blocked.hint().to_owned())
+}
+
+/// The owner's one message to each of `targets`, each copy through `reply` exactly as if typed in
+/// that tab's own box, then marked in the tab's record as sent to all. Returns how many tabs took
+/// it: a tab whose line was full gets its copy back in its box and is not counted.
+pub(crate) fn reply_all(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    targets: &[u64],
+    text: &str,
+    at: (&Context, f64),
+) -> usize {
+    targets.iter().filter(|tab| reply_marked(tabs, flow, **tab, text, at)).count()
+}
+
+fn reply_marked(
+    tabs: &mut Tabs<Pane<PtyTerm>>,
+    flow: &mut Flow,
+    tab: u64,
+    text: &str,
+    at: (&Context, f64),
+) -> bool {
+    if reply(tabs, flow, tab, text, at).as_deref() == Some(LINE_FULL_TOAST) {
+        return false;
+    }
+    let Some(agent) = tabs.agent_mut(tab) else { return false };
+    let record = Record {
+        typed: true,
+        hand: true,
+        ..Record::new(sent::Reason::Broadcast, because::BROADCAST, text, None)
+    };
+    if let Some(notes) = &agent.run.notes_file {
+        let _ = sent::append(&sent_file_beside(notes), &record);
+    }
+    agent.reader.tidewatch_said(record);
+    true
 }
 
 /// Types the first held message of each tab when the one send line lets it go.
@@ -1720,6 +1757,87 @@ mod tests {
 
     fn release(tabs: &mut Tabs<Pane<PtyTerm>>, flow: &mut Flow, now: f64) -> Vec<String> {
         release_lines(tabs, flow, &Context::default(), now)
+    }
+
+    fn two_agents(
+        first: AgentStatus,
+        second: AgentStatus,
+    ) -> (Tabs<Pane<PtyTerm>>, [u64; 2], Flow) {
+        let (mut tabs, one, flow) = agent_in(first);
+        let mut run = AgentRun::setting_up("claude".into(), 0.0);
+        run.set_status(second);
+        let agent = AgentTab::new("Builder".into(), run);
+        let pane = Pane { body: Body::Shell(idle_pty()), worktree: None, agent: Some(agent) };
+        let two = tabs.push("agent".into(), pane);
+        (tabs, [one, two], flow)
+    }
+
+    fn records_of(tabs: &mut Tabs<Pane<PtyTerm>>, id: u64) -> Vec<Record> {
+        tabs.agent_mut(id).unwrap().reader.rows.sent_records().to_vec()
+    }
+
+    const PICTURED: &str = "match this /tmp/tw/pastes/shot.png and rebase";
+
+    #[test]
+    fn a_broadcast_goes_through_each_ticked_tabs_reply_path_with_the_same_text() {
+        let (mut tabs, [idle, busy], mut flow) =
+            two_agents(AgentStatus::Done, AgentStatus::Working);
+        let ctx = Context::default();
+        let went = reply_all(&mut tabs, &mut flow, &[idle, busy], PICTURED, (&ctx, 1.0));
+        assert_eq!(went, 2);
+        assert_eq!(queued(&mut tabs, idle), 1, "an idle tab is typed into at once");
+        assert_eq!(held(&mut tabs, idle), Vec::<String>::new());
+        assert_eq!(held(&mut tabs, busy), [PICTURED], "a busy tab waits for its turn to end");
+        assert_eq!(queued(&mut tabs, busy), 0, "nothing was pasted into it yet");
+        assert!(flow.enter_pending(idle));
+        assert!(!flow.enter_pending(busy));
+    }
+
+    #[test]
+    fn a_broadcast_leaves_a_tab_that_was_not_ticked_alone() {
+        let (mut tabs, [first, second], mut flow) =
+            two_agents(AgentStatus::Done, AgentStatus::Done);
+        let ctx = Context::default();
+        assert_eq!(reply_all(&mut tabs, &mut flow, &[first], "go", (&ctx, 1.0)), 1);
+        assert_eq!(queued(&mut tabs, second), 0);
+        assert_eq!(records_of(&mut tabs, second), []);
+        assert_eq!(flow.outbox.spoke(second), 0);
+        assert_eq!(flow.outbox.spoke(first), 1, "the owner wrote, so the auto budget resets");
+    }
+
+    #[test]
+    fn each_copy_is_recorded_as_sent_to_all_in_the_owners_voice() {
+        let (mut tabs, [idle, busy], mut flow) =
+            two_agents(AgentStatus::Done, AgentStatus::Working);
+        let ctx = Context::default();
+        reply_all(&mut tabs, &mut flow, &[idle, busy], PICTURED, (&ctx, 1.0));
+        for id in [idle, busy] {
+            let records = records_of(&mut tabs, id);
+            assert_eq!(records.len(), 1);
+            let record = &records[0];
+            assert_eq!(
+                (record.reason, record.text.as_str(), record.hand, record.typed),
+                (sent::Reason::Broadcast, PICTURED, true, true)
+            );
+            assert_eq!(record.footer(), "Because you sent it to all your agents at once");
+            assert!(!record.quiet());
+            assert_eq!(record.switch(), None);
+        }
+    }
+
+    #[test]
+    fn a_tab_with_a_full_line_gets_its_copy_back_and_is_not_counted_or_recorded() {
+        let (mut tabs, [full, open], mut flow) =
+            two_agents(AgentStatus::Working, AgentStatus::Working);
+        for n in 0..crate::send_line::MAX_HELD {
+            say(&mut tabs, &mut flow, full, &format!("m{n}"), 1.0);
+        }
+        let ctx = Context::default();
+        let went = reply_all(&mut tabs, &mut flow, &[full, open], "one for all", (&ctx, 2.0));
+        assert_eq!(went, 1);
+        assert_eq!(tabs.agent_mut(full).unwrap().reader.view.reply, "one for all");
+        assert_eq!(records_of(&mut tabs, full), []);
+        assert_eq!(records_of(&mut tabs, open).len(), 1);
     }
 
     #[test]
