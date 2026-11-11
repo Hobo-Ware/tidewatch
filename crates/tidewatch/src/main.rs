@@ -251,6 +251,7 @@ mod single_instance;
 mod slash;
 mod slash_glue;
 mod slash_view;
+mod split;
 mod status_bar;
 mod status_view;
 mod statusline;

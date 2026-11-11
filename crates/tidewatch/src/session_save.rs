@@ -19,6 +19,7 @@ use tidewatch_core::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow};
 use crate::pane::{AgentTab, Body, Pane};
 use crate::park::Park;
 use crate::repo::Workspace;
+use crate::split::Layout;
 use crate::tabs::{Tab, Tabs};
 
 /// What one workspace of the window says: its tab group, its folder, whether that is the Other
@@ -29,6 +30,7 @@ pub(crate) struct WindowView<'a> {
     pub(crate) dir: &'a Path,
     pub(crate) other: bool,
     pub(crate) focus: bool,
+    pub(crate) splits: Option<&'a Layout>,
 }
 
 impl<'a> WindowView<'a> {
@@ -38,7 +40,16 @@ impl<'a> WindowView<'a> {
             dir: workspace.dir(),
             other: matches!(workspace, Workspace::Other { .. }),
             focus,
+            splits: None,
         }
+    }
+
+    pub(crate) fn with_splits(self, splits: Option<&'a Layout>) -> Self {
+        Self { splits, ..self }
+    }
+
+    fn split_shape(&self) -> Option<&'a Layout> {
+        self.splits.filter(|layout| !layout.is_single())
     }
 }
 
@@ -204,6 +215,7 @@ pub(crate) fn saved_window<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> SavedW
         focus_mode: view.focus,
         tabs: saved,
         parked,
+        main_splits: view.split_shape().map(Layout::to_saved),
     }
 }
 
@@ -213,6 +225,7 @@ pub(crate) fn signature<T>(view: &WindowView, tabs: &Tabs<Pane<T>>) -> u64 {
     view.dir.hash(&mut hasher);
     view.other.hash(&mut hasher);
     view.focus.hash(&mut hasher);
+    view.split_shape().hash(&mut hasher);
     let mut active = 0;
     for (upto_active, parking, tab) in kept(tabs, view) {
         active += usize::from(upto_active);
@@ -245,7 +258,7 @@ mod tests {
     const DIR: &str = "/work/web";
 
     fn view(focus: bool) -> WindowView<'static> {
-        WindowView { group: 0, dir: Path::new(DIR), other: false, focus }
+        WindowView { group: 0, dir: Path::new(DIR), other: false, focus, splits: None }
     }
 
     fn worktree(name: &str) -> Worktree {
@@ -280,6 +293,38 @@ mod tests {
         Tabs::new(Pane::shell(0))
     }
 
+    fn split_in_two() -> Layout {
+        let mut layout = Layout::single();
+        layout.split_focused(stdusk_core::pane::SplitDir::Row);
+        layout
+    }
+
+    #[test]
+    fn a_split_main_tab_saves_its_shape_and_a_single_pane_saves_none() {
+        let tabs = tabs();
+        let layout = split_in_two();
+        let single = Layout::single();
+        let cases = [(None, None), (Some(&single), None), (Some(&layout), Some(layout.to_saved()))];
+        for (splits, want) in cases {
+            assert_eq!(saved_window(&view(false).with_splits(splits), &tabs).main_splits, want);
+        }
+    }
+
+    #[test]
+    fn the_signature_follows_the_split_of_the_main_tab() {
+        let tabs = tabs();
+        let mut layout = split_in_two();
+        let plain = signature(&view(false), &tabs);
+        let single = signature(&view(false).with_splits(Some(&Layout::single())), &tabs);
+        let split = signature(&view(false).with_splits(Some(&layout)), &tabs);
+        assert_eq!(plain, single);
+        assert_ne!(plain, split);
+        let divider = layout
+            .dividers(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(900.0, 500.0)));
+        layout.drag(&divider[0].path, 0.7);
+        assert_ne!(split, signature(&view(false).with_splits(Some(&layout)), &tabs));
+    }
+
     #[test]
     fn a_window_view_says_whether_the_folder_is_a_repo_or_the_other_group() {
         let repo =
@@ -303,6 +348,7 @@ mod tests {
                 focus_mode: false,
                 tabs: vec![SavedTab::Main],
                 parked: Vec::new(),
+                main_splits: None,
             }
         );
     }
@@ -466,7 +512,13 @@ mod tests {
         let mut tabs = tabs();
         tabs.push("shell".into(), pane(Body::Shell(1), None, None));
         tabs.push("Builder".into(), pane(Body::Shell(2), None, Some(agent(Some("abc")))));
-        let other = WindowView { group: 0, dir: Path::new("/scratch"), other: true, focus: false };
+        let other = WindowView {
+            group: 0,
+            dir: Path::new("/scratch"),
+            other: true,
+            focus: false,
+            splits: None,
+        };
         let saved = saved_window(&other, &tabs);
         assert!(saved.other);
         assert_eq!(saved.tabs[1], SavedTab::Shell { dir: PathBuf::from("/scratch"), branch: None });
@@ -669,8 +721,13 @@ mod tests {
         tabs.push_in(api, "c".into(), pane(Body::Shell(3), Some(worktree("c")), None));
         tabs.select_id(b);
         let web = saved_window(&view(false), &tabs);
-        let other =
-            WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false };
+        let other = WindowView {
+            group: api,
+            dir: Path::new("/work/api"),
+            other: false,
+            focus: false,
+            splits: None,
+        };
         let api = saved_window(&other, &tabs);
         assert_eq!((web.tabs.len(), web.active), (2, 1));
         assert_eq!((api.dir.as_path(), api.tabs.len(), api.active), (Path::new("/work/api"), 3, 1));
@@ -682,8 +739,13 @@ mod tests {
     fn a_tab_in_another_group_moves_only_that_groups_signature() {
         let mut tabs = tabs();
         let api = tabs.add_group(Pane::shell(10));
-        let other =
-            WindowView { group: api, dir: Path::new("/work/api"), other: false, focus: false };
+        let other = WindowView {
+            group: api,
+            dir: Path::new("/work/api"),
+            other: false,
+            focus: false,
+            splits: None,
+        };
         let (web_before, api_before) = (signature(&view(false), &tabs), signature(&other, &tabs));
         tabs.push_in(api, "b".into(), pane(Body::Shell(2), Some(worktree("b")), None));
         assert_eq!(signature(&view(false), &tabs), web_before);

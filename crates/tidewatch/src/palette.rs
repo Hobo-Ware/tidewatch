@@ -364,6 +364,8 @@ mod tests {
                 "Move tab left",
                 "Move tab right",
                 "Park tab",
+                "Split pane right",
+                "Split pane down",
                 "Overview",
                 "Focus mode",
                 "Interface bigger",
@@ -442,10 +444,10 @@ mod tests {
         let linux = items(&sources(), Platform::Linux);
         assert_eq!(mac[0].keys, "Cmd+T");
         assert_eq!(linux[0].keys, "Ctrl+Shift+T");
-        assert_eq!(mac[18].keys, "Cmd+2");
-        assert_eq!(linux[18].keys, "Alt+2");
-        assert_eq!((mac[20].label.as_str(), mac[20].keys.as_str()), ("Open repo...", "Cmd+O"));
-        assert_eq!(linux[20].keys, "Ctrl+Shift+O");
+        assert_eq!(mac[20].keys, "Cmd+2");
+        assert_eq!(linux[20].keys, "Alt+2");
+        assert_eq!((mac[22].label.as_str(), mac[22].keys.as_str()), ("Open repo...", "Cmd+O"));
+        assert_eq!(linux[22].keys, "Ctrl+Shift+O");
     }
 
     #[test]

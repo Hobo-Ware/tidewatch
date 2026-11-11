@@ -191,6 +191,8 @@ fn the_palette_lists_what_a_person_would_look_for() {
             "move-tab-left",
             "move-tab-right",
             "park-tab",
+            "split-right",
+            "split-down",
             "next-repo",
             "prev-repo",
             "overview",
@@ -222,6 +224,36 @@ fn the_find_commit_chord_is_cmd_f_and_ctrl_shift_f() {
     assert_eq!(Command::FindCommit.keys_on(Platform::Linux), "Ctrl+Shift+F");
     assert_eq!(command_of("find-commit"), Some(Command::FindCommit));
     assert!(Command::FindCommit.in_palette());
+}
+
+#[test]
+fn the_split_and_pane_focus_chords_run_their_commands() {
+    let cases = [
+        ("split-right", Command::SplitRight, "Cmd+D", "Ctrl+Shift+D"),
+        ("split-down", Command::SplitDown, "Cmd+Shift+D", "Ctrl+Alt+D"),
+        ("pane-left", Command::FocusPane(Dir::Left), "Cmd+Alt+Left", "Alt+Shift+Left"),
+        ("pane-right", Command::FocusPane(Dir::Right), "Cmd+Alt+Right", "Alt+Shift+Right"),
+        ("pane-up", Command::FocusPane(Dir::Up), "Cmd+Alt+Up", "Alt+Shift+Up"),
+        ("pane-down", Command::FocusPane(Dir::Down), "Cmd+Alt+Down", "Alt+Shift+Down"),
+    ];
+    for (id, command, mac, linux) in cases {
+        assert_eq!(command_of(id), Some(command), "{id}");
+        assert_eq!(command.action(), None, "{id}");
+        for (platform, keys) in [(Platform::Mac, mac), (Platform::Linux, linux)] {
+            assert_eq!(command.keys_on(platform), keys, "{id} {platform:?}");
+            let chord = entry_of(command).unwrap().chord(platform).unwrap();
+            let got = pressed_with(platform, press(platform, chord), |_| true);
+            assert_eq!(got, [command], "{id} {platform:?}");
+        }
+    }
+}
+
+#[test]
+fn the_pane_focus_chords_are_not_in_the_palette_but_the_splits_are() {
+    assert!(Command::SplitRight.in_palette() && Command::SplitDown.in_palette());
+    for dir in [Dir::Left, Dir::Right, Dir::Up, Dir::Down] {
+        assert!(!Command::FocusPane(dir).in_palette(), "{dir:?}");
+    }
 }
 
 #[test]
@@ -373,6 +405,29 @@ mod gate {
                 "{platform:?}"
             );
             assert_eq!(pressed_with(platform, events, wanted(NONE)), [Command::FindCommit]);
+        }
+    }
+
+    #[test]
+    fn splitting_and_pane_focus_wait_for_a_text_field_and_every_overlay() {
+        let commands = [
+            Command::SplitRight,
+            Command::SplitDown,
+            Command::FocusPane(Dir::Left),
+            Command::FocusPane(Dir::Down),
+        ];
+        let blocked = [
+            Gate { dialog: Dialog::Other, ..NONE },
+            Gate { settings: true, ..NONE },
+            Gate { palette: true, ..NONE },
+            Gate { overview: true, ..NONE },
+            Gate { focus: Focus::TextField, ..NONE },
+        ];
+        for command in commands {
+            assert!(NONE.allows(command), "{command:?}");
+            for gate in blocked {
+                assert!(!gate.allows(command), "{command:?} {gate:?}");
+            }
         }
     }
 

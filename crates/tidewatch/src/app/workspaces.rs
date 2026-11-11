@@ -1,7 +1,10 @@
 //! The repos of the window: which one is on show, what the session file and the next launch are
 //! told about them, and opening another one when a launch hands over its folder.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use stdusk_core::terminal::PtyTerm;
 
 use tidewatch_core::last_workspace::Remembered;
 
@@ -11,17 +14,20 @@ use crate::pty::spawn_shell;
 use crate::repo::Workspace;
 use crate::session_save::WindowView;
 use crate::single_instance::workspace_key;
+use crate::split::Splits;
 use crate::tabs::{Action, Tabs};
 
 /// One view per repo of the window, for the session file.
-pub(super) fn window_views(
-    workspaces: &[Workspace],
+pub(super) fn window_views<'a, T>(
+    workspaces: &'a [Workspace],
     focus: bool,
-) -> impl Iterator<Item = WindowView<'_>> + Clone {
-    workspaces
-        .iter()
-        .enumerate()
-        .map(move |(group, workspace)| WindowView::of(group, workspace, focus))
+    tabs: &'a Tabs<Pane<T>>,
+    splits: &'a HashMap<u64, Splits<PtyTerm>>,
+) -> impl Iterator<Item = WindowView<'a>> + Clone {
+    workspaces.iter().enumerate().map(move |(group, workspace)| {
+        let layout = tabs.main_id(group).and_then(|id| splits.get(&id)).map(Splits::layout);
+        WindowView::of(group, workspace, focus).with_splits(layout)
+    })
 }
 
 /// What a launch with no path reopens: the repo on show, then the others that have tabs open

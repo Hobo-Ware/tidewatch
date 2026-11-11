@@ -33,7 +33,7 @@ use crate::permission_mode::last_claude_level;
 use crate::prefs::ResumeAgents;
 use crate::profiles::{Profile, Profiles};
 use crate::resume_mode::{Ended, Resume, decide};
-use crate::session::{SavedAgentTab, SavedPark, SavedTab, SavedWindow, Session};
+use crate::session::{SavedAgentTab, SavedPark, SavedSplit, SavedTab, SavedWindow, Session};
 use crate::tools::Tools;
 use crate::transcript::Source;
 use crate::transcript_locate::Locator;
@@ -231,6 +231,8 @@ pub struct WindowPlan {
     /// The tabs to reopen, in their saved order.
     pub tabs: Vec<TabPlan>,
     pub skipped: Vec<Skipped>,
+    /// How the main tab's terminal was split, when the window's main tab comes back.
+    pub main_splits: Option<SavedSplit>,
 }
 
 impl WindowPlan {
@@ -332,6 +334,7 @@ fn plan_one(
         active,
         tabs,
         skipped,
+        main_splits: window.main_splits.clone().filter(|_| window_missing.is_none()),
     }
 }
 
@@ -685,6 +688,7 @@ mod tests {
             focus_mode: false,
             tabs,
             parked: Vec::new(),
+            main_splits: None,
         }
     }
 
@@ -850,6 +854,23 @@ mod tests {
         let other = SavedWindow { other: true, tabs: vec![SavedTab::Main], ..window(Vec::new()) };
         let plan = plan_with(&other, &everything_installed(), &disk);
         assert_eq!(plan.skipped, [Skipped { label: "main".into(), reason: Reason::FolderMissing }]);
+    }
+
+    #[test]
+    fn the_plan_carries_the_split_of_the_main_tab_when_its_repo_is_there() {
+        let split = SavedSplit::Split {
+            axis: crate::session::SavedAxis::Column,
+            permille: 400,
+            a: Box::new(SavedSplit::Pane),
+            b: Box::new(SavedSplit::Pane),
+        };
+        let saved = SavedWindow { main_splits: Some(split.clone()), ..window(all_four_tabs()) };
+        let here = plan_with(&saved, &everything_installed(), &disk_for_all());
+        assert_eq!(here.main_splits, Some(split));
+        let gone = plan_with(&saved, &everything_installed(), &FakeDisk::default());
+        assert_eq!(gone.main_splits, None);
+        let plain = plan_with(&window(all_four_tabs()), &everything_installed(), &disk_for_all());
+        assert_eq!(plain.main_splits, None);
     }
 
     #[test]

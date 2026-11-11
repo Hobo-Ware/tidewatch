@@ -85,6 +85,7 @@ fn window(dir: &Path, tabs: Vec<SavedTab>) -> SavedWindow {
         focus_mode: true,
         tabs,
         parked: Vec::new(),
+        main_splits: None,
     }
 }
 

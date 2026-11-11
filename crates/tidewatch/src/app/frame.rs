@@ -1,6 +1,7 @@
 //! One frame in steps: finished jobs, background work, shortcuts, and what the drawn frame asked for.
 
 use egui::{Key, Modifiers};
+use stdusk_core::pane::SplitDir;
 
 use tidewatch_core::ui_zoom::Direction;
 
@@ -253,6 +254,9 @@ impl Tidewatch {
                     self.dispatch(action, ctx);
                 }
             }
+            Command::SplitRight => self.split_main(SplitDir::Row, ctx),
+            Command::SplitDown => self.split_main(SplitDir::Column, ctx),
+            Command::FocusPane(dir) => self.focus_main_pane(dir),
             Command::Overview => self.toggle_overview(),
             Command::Focus => self.toggle_focus(ctx),
             Command::ZoomIn => self.step_zoom(Direction::Bigger, ctx),
@@ -309,7 +313,12 @@ impl Tidewatch {
         }
         self.saver.tick(
             self.restore.settled(),
-            super::workspaces::window_views(&self.workspaces, self.focus),
+            super::workspaces::window_views(
+                &self.workspaces,
+                self.focus,
+                &self.tabs,
+                &self.main_splits,
+            ),
             &self.tabs,
         );
         if let Some(shot) = &mut self.screenshot {

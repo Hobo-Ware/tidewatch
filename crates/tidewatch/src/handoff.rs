@@ -23,6 +23,7 @@ use tidewatch_core::listener::Credential;
 use tidewatch_core::meeseeks::{Meeseeks, Phase};
 use tidewatch_core::meeseeks_log::Poofed;
 use tidewatch_core::service_supervisor::Carry;
+use tidewatch_core::session::SavedSplit;
 use tidewatch_core::status::{AgentStatus, Reason};
 use tidewatch_core::worktree::Worktree;
 
@@ -88,6 +89,16 @@ pub(crate) struct Handover {
     /// The repo services, after every tab: the ptys of the live ones travel behind the tabs' own.
     #[serde(default, rename = "service", skip_serializing_if = "Vec::is_empty")]
     pub(crate) services: Vec<ServiceEntry>,
+    /// How each split main tab was laid out. Only the main pane's pty travels: the replacement
+    /// opens a fresh shell in every other pane.
+    #[serde(default, rename = "split", skip_serializing_if = "Vec::is_empty")]
+    pub(crate) splits: Vec<GroupSplit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct GroupSplit {
+    pub(crate) group: usize,
+    pub(crate) shape: SavedSplit,
 }
 
 /// One repo service as the old window left it: where it stood, and whether a pty travels with it.
@@ -272,6 +283,7 @@ pub(crate) fn plan<T>(
         welcome: facts.welcome,
         hook_port: facts.hook_port,
         services: Vec::new(),
+        splits: Vec::new(),
     };
     (handover, order)
 }

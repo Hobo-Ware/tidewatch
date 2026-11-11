@@ -7,6 +7,7 @@ use super::Tidewatch;
 use crate::jobs::Jobs;
 use crate::repo_close::{RepoClose, Step};
 use crate::session_save::{WindowView, saved_window};
+use crate::split::Splits;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RepoCommand {
@@ -92,7 +93,9 @@ impl Tidewatch {
     }
 
     fn finish_repo_close(&mut self, group: usize) {
-        let view = WindowView::of(group, &self.workspaces[group], self.focus);
+        let layout =
+            self.tabs.main_id(group).and_then(|id| self.main_splits.get(&id)).map(Splits::layout);
+        let view = WindowView::of(group, &self.workspaces[group], self.focus).with_splits(layout);
         let window = saved_window(&view, &self.tabs);
         let gone = self.tabs.remove_group(group);
         if gone.is_empty() {

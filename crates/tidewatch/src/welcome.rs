@@ -98,6 +98,7 @@ mod tests {
             focus_mode: false,
             tabs,
             parked: Vec::new(),
+            main_splits: None,
         }
     }
 

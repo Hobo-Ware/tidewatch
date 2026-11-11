@@ -135,6 +135,7 @@ mod tests {
             focus_mode: false,
             tabs: vec![SavedTab::Main],
             parked: Vec::new(),
+            main_splits: None,
         }
     }
 

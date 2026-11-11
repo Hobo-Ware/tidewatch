@@ -69,6 +69,7 @@ impl Tidewatch {
         let (mut handover, order) =
             handoff::plan(&self.tabs, &facts, &|id| self.hooks.credential_of(id));
         handover.services = self.services.entries();
+        handover.splits = self.split_entries();
         spawn_successor(socket).map_err(|e| format!("the new window cannot start ({e})"))?;
         let stream = accept_within(listener, LAUNCH_TIMEOUT)
             .map_err(|e| format!("the new window did not connect ({e})"))?;

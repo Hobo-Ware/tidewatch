@@ -173,6 +173,7 @@ fn only_main(workspace: &Workspace) -> SavedWindow {
         focus_mode: false,
         tabs: vec![SavedTab::Main],
         parked: Vec::new(),
+        main_splits: None,
     }
 }
 
