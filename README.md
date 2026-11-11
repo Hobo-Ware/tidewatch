@@ -11,7 +11,7 @@ Esc or the Terminal chip takes you back. Built by [HoboWare](https://github.com/
 [Kelp](https://github.com/Hobo-Ware/kelp) (graph, diff, review) and
 [stdusk](https://github.com/Hobo-Ware/stdusk) (terminal, tabs, quake window).
 
-Status: v0.1.49. Showcase page: [tidewatch.hoboware.dev](https://tidewatch.hoboware.dev).
+Status: v0.3.0. Showcase page: [tidewatch.hoboware.dev](https://tidewatch.hoboware.dev).
 
 ## What it does
 
