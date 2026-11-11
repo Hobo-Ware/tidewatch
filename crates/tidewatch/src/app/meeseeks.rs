@@ -173,7 +173,7 @@ impl Tidewatch {
         }
         for (tab, title) in told {
             if self.meeseeks.first_struggle(tab) {
-                self.show_toast(format!("{title} is struggling"), ctx);
+                self.show_toast_about(tab, format!("{title} is struggling"), ctx);
             }
         }
         if let Some(left) = soonest {

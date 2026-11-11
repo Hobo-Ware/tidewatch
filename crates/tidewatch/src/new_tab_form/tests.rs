@@ -217,6 +217,7 @@ fn closed_row(id: &str, title: &str, busy: bool) -> ClosedRow {
         branch: format!("agent/{title}"),
         closed: "closed 2h ago".to_owned(),
         busy,
+        avatar: None,
     }
 }
 

@@ -20,6 +20,14 @@ fn closed(session: Option<&str>, age_secs: u64) -> Closed {
         label: String::new(),
         chosen_name: None,
         summary: None,
+        avatar: None,
+    }
+}
+
+fn face() -> Avatar {
+    Avatar {
+        svg: "<svg viewBox='0 0 64 64'><circle cx='32' cy='32' r='20' fill='teal'/></svg>".into(),
+        reason: "a teal dot".into(),
     }
 }
 
@@ -109,6 +117,7 @@ fn a_removal_entry_and_a_kept_worktree_both_become_a_line() {
         label: "fix-login".into(),
         chosen_name: Some("fix-login".into()),
         summary: Some("Fix the login redirect".into()),
+        avatar: Some(face()),
     };
     let entry = Entry {
         at: 77,
@@ -131,8 +140,10 @@ fn a_removal_entry_and_a_kept_worktree_both_become_a_line() {
         (removed.title.as_str(), removed.level, removed.branch_kept),
         ("Fix login", Level::Auto, false)
     );
+    assert_eq!(removed.avatar, Some(face()));
     let kept = Closed::kept(&tab, &removed.worktree(), Some("abc".into()), None);
     assert!(kept.branch_kept);
+    assert_eq!(kept.avatar, Some(face()));
     assert_eq!(kept.worktree(), removed.worktree());
 }
 
@@ -168,4 +179,18 @@ fn a_line_keeps_the_label_the_name_and_the_summary_and_an_older_line_shows_its_t
     assert!(!text.contains("label") && !text.contains("summary"), "{text}");
     let back: Closed = serde_json::from_str(&text).unwrap();
     assert_eq!(back.shown(), "heron");
+}
+
+#[test]
+fn a_line_keeps_the_avatar_and_an_older_line_without_one_still_loads() {
+    let mut worn = closed(Some("s1"), 0);
+    worn.avatar = Some(face());
+    let text = serde_json::to_string(&worn).unwrap();
+    let back: Closed = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.avatar, Some(face()));
+    let old = closed(Some("s2"), 0);
+    let text = serde_json::to_string(&old).unwrap();
+    assert!(!text.contains("avatar"), "{text}");
+    let back: Closed = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.avatar, None);
 }

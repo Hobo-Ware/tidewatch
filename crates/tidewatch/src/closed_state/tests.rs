@@ -1,4 +1,5 @@
 use tidewatch_core::agents::Level;
+use tidewatch_core::avatar::Avatar;
 
 use super::*;
 
@@ -21,6 +22,7 @@ fn record(session: Option<&str>, title: &str, age: u64) -> Closed {
         label: String::new(),
         chosen_name: None,
         summary: None,
+        avatar: None,
     }
 }
 
@@ -109,4 +111,14 @@ fn a_reopen_takes_the_newest_record_once_until_it_is_finished() {
 #[test]
 fn the_fake_list_has_three_rows() {
     assert_eq!(fake_rows().len(), 3);
+}
+
+#[test]
+fn a_row_carries_the_avatar_its_tab_wore_and_an_older_record_has_none() {
+    let art = Avatar { svg: "<svg/>".into(), reason: "a dot".into() };
+    let mut worn = record(Some("a"), "heron", 60);
+    worn.avatar = Some(art.clone());
+    let rows = loaded(vec![worn, record(Some("b"), "otter", 120)]).rows(web(), NOW, &|_| false);
+    let got: Vec<_> = rows.iter().map(|r| r.avatar.clone()).collect();
+    assert_eq!(got, [Some(art), None]);
 }

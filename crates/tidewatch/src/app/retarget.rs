@@ -129,7 +129,8 @@ impl Tidewatch {
         for tab in self.retarget.waiting.take_expired(now, &self.retarget.busy) {
             if self.tabs.index_of(tab).is_some() {
                 let title = self.tab_label(tab);
-                self.show_toast(
+                self.show_toast_about(
+                    tab,
                     format!("{title} was not switched: its turn had not ended after an hour"),
                     ctx,
                 );

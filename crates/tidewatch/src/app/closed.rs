@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use tidewatch_core::avatar::Avatar;
 use tidewatch_core::clock::now_secs;
 use tidewatch_core::closed_tabs::Tab;
 use tidewatch_core::restore::RealDisk;
@@ -30,6 +31,7 @@ impl Tidewatch {
             label: tab_title::of_agent(agent, &tab.title).1,
             chosen_name: agent.chosen_name.clone(),
             summary: agent.run.goal().map(str::to_owned),
+            avatar: self.avatar_live.get(id).map(|avatar| Avatar::clone(avatar)),
         })
     }
 

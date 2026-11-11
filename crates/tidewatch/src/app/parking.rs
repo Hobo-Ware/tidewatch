@@ -168,20 +168,22 @@ impl Tidewatch {
     pub(super) fn park_tab(&mut self, index: usize, ctx: &egui::Context) {
         let Some(tab) = self.tabs.items().get(index) else { return };
         let refusal = if tab.pinned {
-            Some("The main tab stays in the strip.".to_owned())
+            Some(("The main tab stays in the strip.".to_owned(), None))
         } else if matches!(tab.pane.body, Body::Draft(_)) {
-            Some("Start or close the new tab first.".to_owned())
+            Some(("Start or close the new tab first.".to_owned(), None))
         } else if needs_you(&tab.pane) {
             let label = crate::tab_title::label(tab.pane.agent.as_ref(), &tab.title);
-            Some(format!("{label} needs you, so it stays in the strip."))
+            Some((format!("{label} needs you, so it stays in the strip."), Some(tab.id)))
         } else {
             None
         };
-        if let Some(text) = refusal {
-            self.show_toast(text, ctx);
-            return;
+        match refusal {
+            Some((text, Some(id))) => self.show_toast_about(id, text, ctx),
+            Some((text, None)) => self.show_toast(text, ctx),
+            None => {
+                self.tabs.park_index(index, Why::Manual, wall_ms() as u64);
+            }
         }
-        self.tabs.park_index(index, Why::Manual, wall_ms() as u64);
     }
 
     pub(super) fn dispatch_parking(&mut self, action: Action, ctx: &egui::Context) -> bool {
