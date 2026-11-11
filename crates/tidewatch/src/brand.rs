@@ -3,102 +3,139 @@
 use egui::{Color32, Stroke};
 use stdusk_egui::colors::{self, Chrome, Theme};
 
-pub(crate) const GROUND: Color32 = Color32::from_rgb(0x10, 0x13, 0x1a);
-pub(crate) const SIDEBAR: Color32 = Color32::from_rgb(0x0d, 0x10, 0x16);
-pub(crate) const SIDEBAR_LINE: Color32 = Color32::from_rgb(0x1f, 0x24, 0x30);
-pub(crate) const CARD: Color32 = Color32::from_rgb(0x16, 0x1b, 0x24);
-pub(crate) const CARD_LINE: Color32 = Color32::from_rgb(0x22, 0x29, 0x37);
-pub(crate) const ITEM: Color32 = Color32::from_rgb(0x1a, 0x20, 0x29);
-pub(crate) const ITEM_LINE: Color32 = Color32::from_rgb(0x26, 0x2e, 0x3b);
-pub(crate) const FACE_PLATE: Color32 = CARD_LINE;
-pub(crate) const FACE_RING: Color32 = ANSWER_LINE;
-pub(crate) const BAR: Color32 = Color32::from_rgb(0x12, 0x16, 0x1e);
-pub(crate) const ANSWER_LINE: Color32 = Color32::from_rgb(0x33, 0x3c, 0x4b);
-pub(crate) const FIELD_LINE: Color32 = Color32::from_rgb(0x2f, 0x37, 0x47);
-pub(crate) const SEGMENT: Color32 = Color32::from_rgb(0x0f, 0x12, 0x19);
-pub(crate) const SEGMENT_LINE: Color32 = Color32::from_rgb(0x26, 0x2d, 0x39);
-pub(crate) const SEGMENT_ON: Color32 = Color32::from_rgb(0x1f, 0x2a, 0x31);
-pub(crate) const BUTTON: Color32 = Color32::from_rgb(0x1d, 0x22, 0x30);
-pub(crate) const KEY_EDGE: Color32 = Color32::from_rgb(0x0b, 0x0e, 0x13);
-pub(crate) const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe8, 0xec);
-pub(crate) const SOFT: Color32 = Color32::from_rgb(0xa7, 0xb0, 0xbf);
-pub(crate) const STEP_TEXT: Color32 = Color32::from_rgb(0xc4, 0xca, 0xd4);
-pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
-pub(crate) const FAINT: Color32 = Color32::from_rgb(0x6b, 0x73, 0x83);
-pub(crate) const TEAL: Color32 = Color32::from_rgb(0x2d, 0xd4, 0xbf);
-pub(crate) const TEAL_TEXT: Color32 = Color32::from_rgb(0x5e, 0xea, 0xd4);
-pub(crate) const TEAL_NAV: Color32 = Color32::from_rgb(0x16, 0x25, 0x2b);
-pub(crate) const GREEN: Color32 = Color32::from_rgb(0x8f, 0xd1, 0x6a);
-pub(crate) const ORANGE: Color32 = Color32::from_rgb(0xfb, 0x92, 0x3c);
-pub(crate) const ORANGE_SOFT: Color32 = Color32::from_rgb(0xd6, 0xa7, 0x7a);
-pub(crate) const BLUE: Color32 = Color32::from_rgb(0x60, 0xa5, 0xfa);
-pub(crate) const BLUE_TEXT: Color32 = Color32::from_rgb(0x93, 0xc5, 0xfd);
-pub(crate) const AMBER: Color32 = Color32::from_rgb(0xfb, 0xbf, 0x24);
-pub(crate) const RED: Color32 = Color32::from_rgb(0xf8, 0x71, 0x71);
-pub(crate) const RED_LINE: Color32 = Color32::from_rgb(0x3a, 0x25, 0x30);
-pub(crate) const RED_FILL: Color32 = Color32::from_rgb(0x24, 0x17, 0x1e);
+macro_rules! inks {
+    ($($name:ident = $r:literal $g:literal $b:literal;)*) => {
+        $(pub(crate) fn $name() -> Color32 {
+            Color32::from_rgb($r, $g, $b)
+        })*
+    };
+}
 
-pub(crate) const NEEDS_FILL: Color32 = Color32::from_rgb(0x16, 0x13, 0x0f);
-pub(crate) const VIOLET_TEXT: Color32 = Color32::from_rgb(0xc4, 0xb5, 0xfd);
-pub(crate) const VIOLET: Color32 = Color32::from_rgb(0x7c, 0x6b, 0xd6);
-pub(crate) const VIOLET_FILL: Color32 = Color32::from_rgb(0x22, 0x1d, 0x3d);
-pub(crate) const VIOLET_LINE: Color32 = Color32::from_rgb(0x3b, 0x34, 0x66);
-pub(crate) const REPO_INKS: [Color32; 7] = [
-    Color32::from_rgb(0xf4, 0x72, 0xb6),
-    BLUE,
-    Color32::from_rgb(0xa3, 0xe6, 0x35),
-    AMBER,
-    Color32::from_rgb(0xc0, 0x84, 0xfc),
-    Color32::from_rgb(0x22, 0xd3, 0xee),
-    Color32::from_rgb(0xfb, 0x71, 0x85),
-];
+inks! {
+    ground = 0x10 0x13 0x1a;
+    sidebar = 0x0d 0x10 0x16;
+    sidebar_line = 0x1f 0x24 0x30;
+    card = 0x16 0x1b 0x24;
+    card_line = 0x22 0x29 0x37;
+    item = 0x1a 0x20 0x29;
+    item_line = 0x26 0x2e 0x3b;
+    bar = 0x12 0x16 0x1e;
+    answer_line = 0x33 0x3c 0x4b;
+    field_line = 0x2f 0x37 0x47;
+    segment = 0x0f 0x12 0x19;
+    segment_line = 0x26 0x2d 0x39;
+    segment_on = 0x1f 0x2a 0x31;
+    button = 0x1d 0x22 0x30;
+    key_edge = 0x0b 0x0e 0x13;
+    text = 0xe6 0xe8 0xec;
+    soft = 0xa7 0xb0 0xbf;
+    step_text = 0xc4 0xca 0xd4;
+    muted = 0x8b 0x93 0xa3;
+    faint = 0x6b 0x73 0x83;
+    teal = 0x2d 0xd4 0xbf;
+    teal_text = 0x5e 0xea 0xd4;
+    teal_nav = 0x16 0x25 0x2b;
+    green = 0x8f 0xd1 0x6a;
+    orange = 0xfb 0x92 0x3c;
+    orange_soft = 0xd6 0xa7 0x7a;
+    blue = 0x60 0xa5 0xfa;
+    blue_text = 0x93 0xc5 0xfd;
+    amber = 0xfb 0xbf 0x24;
+    red = 0xf8 0x71 0x71;
+    red_line = 0x3a 0x25 0x30;
+    red_fill = 0x24 0x17 0x1e;
+    needs_fill = 0x16 0x13 0x0f;
+    violet_text = 0xc4 0xb5 0xfd;
+    violet = 0x7c 0x6b 0xd6;
+    violet_fill = 0x22 0x1d 0x3d;
+    violet_line = 0x3b 0x34 0x66;
+    struggle_fill = 0x1c 0x16 0x10;
+    struggle_line = 0x4a 0x34 0x18;
+    sunken = 0x0f 0x14 0x1c;
+    done = 0xb2 0xe6 0x8a;
+    failed = 0xef 0x44 0x44;
+}
 
-pub(crate) const STRUGGLE_FILL: Color32 = Color32::from_rgb(0x1c, 0x16, 0x10);
-pub(crate) const STRUGGLE_LINE: Color32 = Color32::from_rgb(0x4a, 0x34, 0x18);
-pub(crate) const SUNKEN: Color32 = Color32::from_rgb(0x0f, 0x14, 0x1c);
+pub(crate) fn face_plate() -> Color32 {
+    card_line()
+}
+
+pub(crate) fn face_ring() -> Color32 {
+    answer_line()
+}
+
+pub(crate) fn repo_inks() -> [Color32; 7] {
+    [
+        Color32::from_rgb(0xf4, 0x72, 0xb6),
+        blue(),
+        Color32::from_rgb(0xa3, 0xe6, 0x35),
+        amber(),
+        Color32::from_rgb(0xc0, 0x84, 0xfc),
+        Color32::from_rgb(0x22, 0xd3, 0xee),
+        Color32::from_rgb(0xfb, 0x71, 0x85),
+    ]
+}
 
 /// Each CLI's badge, as its fill and its letter's ink: the one place a hue outside the palette lives.
-pub(crate) const CLAUDE_BADGE: (Color32, Color32) = (Color32::from_rgb(0x3b, 0x24, 0x18), ORANGE);
-pub(crate) const CODEX_BADGE: (Color32, Color32) = (Color32::from_rgb(0x1e, 0x2a, 0x22), GREEN);
-pub(crate) const GEMINI_BADGE: (Color32, Color32) =
-    (Color32::from_rgb(0x1c, 0x27, 0x40), Color32::from_rgb(0x7a, 0xa2, 0xf7));
-pub(crate) const COPILOT_BADGE: (Color32, Color32) =
-    (Color32::from_rgb(0x2a, 0x23, 0x33), Color32::from_rgb(0xc4, 0xb5, 0xfd));
+pub(crate) fn claude_badge() -> (Color32, Color32) {
+    (Color32::from_rgb(0x3b, 0x24, 0x18), orange())
+}
+
+pub(crate) fn codex_badge() -> (Color32, Color32) {
+    (Color32::from_rgb(0x1e, 0x2a, 0x22), green())
+}
+
+pub(crate) fn gemini_badge() -> (Color32, Color32) {
+    (Color32::from_rgb(0x1c, 0x27, 0x40), Color32::from_rgb(0x7a, 0xa2, 0xf7))
+}
+
+pub(crate) fn copilot_badge() -> (Color32, Color32) {
+    (Color32::from_rgb(0x2a, 0x23, 0x33), Color32::from_rgb(0xc4, 0xb5, 0xfd))
+}
 
 /// Agent status inks. They differ in lightness as well as hue, darkest to lightest failed, needs
 /// you, working, done, so a color-blind reader still tells them apart.
-pub(crate) const WORKING: Color32 = TEAL;
-pub(crate) const NEEDS: Color32 = AMBER;
-pub(crate) const WAITING: Color32 = BLUE;
-pub(crate) const BLOCKED: Color32 = RED;
-pub(crate) const DONE: Color32 = Color32::from_rgb(0xb2, 0xe6, 0x8a);
-pub(crate) const FAILED: Color32 = Color32::from_rgb(0xef, 0x44, 0x44);
+pub(crate) fn working() -> Color32 {
+    teal()
+}
+
+pub(crate) fn needs() -> Color32 {
+    amber()
+}
+
+pub(crate) fn waiting() -> Color32 {
+    blue()
+}
+
+pub(crate) fn blocked() -> Color32 {
+    red()
+}
 
 pub(crate) fn link_rest() -> Color32 {
-    TEAL_TEXT.gamma_multiply(0.55)
+    teal_text().gamma_multiply(0.55)
 }
 
 pub(crate) fn theme() -> Theme {
     let mut theme = colors::one_half_dark();
-    theme.bg = GROUND;
-    theme.fg = TEXT;
-    theme.cursor = TEAL;
+    theme.bg = ground();
+    theme.fg = text();
+    theme.cursor = teal();
     theme
 }
 
 pub(crate) fn chrome() -> Chrome {
-    Chrome { accent: Some(TEAL), red: Some(RED), green: Some(GREEN), yellow: None }
+    Chrome { accent: Some(teal()), red: Some(red()), green: Some(green()), yellow: None }
 }
 
 /// Teal selection, links and active widgets on top of what stdusk derived from the theme.
 pub(crate) fn tint_visuals(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         let v = &mut style.visuals;
-        v.selection.bg_fill = TEAL.gamma_multiply(0.3);
-        v.selection.stroke = Stroke::new(1.0, TEAL);
-        v.hyperlink_color = TEAL_TEXT;
-        v.widgets.hovered.bg_stroke = Stroke::new(1.0, TEAL.gamma_multiply(0.5));
-        v.widgets.active.bg_stroke = Stroke::new(1.0, TEAL);
+        v.selection.bg_fill = teal().gamma_multiply(0.3);
+        v.selection.stroke = Stroke::new(1.0, teal());
+        v.hyperlink_color = teal_text();
+        v.widgets.hovered.bg_stroke = Stroke::new(1.0, teal().gamma_multiply(0.5));
+        v.widgets.active.bg_stroke = Stroke::new(1.0, teal());
         style.spacing.scroll = scroll_style();
         style.interaction.selectable_labels = true;
     });
@@ -161,18 +198,18 @@ mod tests {
 
     #[test]
     fn status_inks_differ_in_lightness_and_read_on_the_ground() {
-        let ramp = [FAILED, WORKING, DONE];
+        let ramp = [failed(), working(), done()];
         for pair in ramp.windows(2) {
             assert!(contrast(pair[0], pair[1]) >= 1.2, "{:?} against {:?}", pair[0], pair[1]);
         }
-        for ink in [FAILED, NEEDS, WAITING, BLOCKED, WORKING, DONE] {
-            assert!(contrast(ink, GROUND) >= 4.5, "{ink:?} on the ground");
+        for ink in [failed(), needs(), waiting(), blocked(), working(), done()] {
+            assert!(contrast(ink, ground()) >= 4.5, "{ink:?} on the ground");
         }
     }
 
     #[test]
     fn the_five_state_inks_are_told_apart_by_hue() {
-        let inks = [WORKING, NEEDS, WAITING, BLOCKED, DONE];
+        let inks = [working(), needs(), waiting(), blocked(), done()];
         for (i, a) in inks.iter().enumerate() {
             for b in &inks[i + 1..] {
                 assert!(apart(*a, *b) >= 25.0, "{a:?} and {b:?}");
@@ -183,13 +220,13 @@ mod tests {
     #[test]
     fn the_agent_icon_colors_are_the_brand_inks_they_are_named_for() {
         let named = [
-            ("teal", TEAL),
-            ("blue", BLUE),
-            ("green", GREEN),
-            ("amber", AMBER),
-            ("orange", ORANGE),
-            ("red", RED),
-            ("purple", VIOLET_TEXT),
+            ("teal", teal()),
+            ("blue", blue()),
+            ("green", green()),
+            ("amber", amber()),
+            ("orange", orange()),
+            ("red", red()),
+            ("purple", violet_text()),
         ];
         for (name, ink) in named {
             let hex = format!("#{:02x}{:02x}{:02x}", ink.r(), ink.g(), ink.b());
@@ -200,8 +237,8 @@ mod tests {
     #[test]
     fn the_theme_makes_stdusk_read_teal_for_its_accent() {
         let theme = theme();
-        assert_eq!((theme.bg, theme.ansi), (GROUND, colors::one_half_dark().ansi));
-        assert_eq!(chrome().accent, Some(TEAL));
+        assert_eq!((theme.bg, theme.ansi), (ground(), colors::one_half_dark().ansi));
+        assert_eq!(chrome().accent, Some(teal()));
     }
 
     #[test]
@@ -209,9 +246,9 @@ mod tests {
         let ctx = egui::Context::default();
         tint_visuals(&ctx);
         let v = ctx.global_style().visuals.clone();
-        assert_eq!(v.selection.stroke.color, TEAL);
-        assert_eq!(v.hyperlink_color, TEAL_TEXT);
-        assert_eq!(v.widgets.active.bg_stroke.color, TEAL);
+        assert_eq!(v.selection.stroke.color, teal());
+        assert_eq!(v.hyperlink_color, teal_text());
+        assert_eq!(v.widgets.active.bg_stroke.color, teal());
     }
 
     #[test]

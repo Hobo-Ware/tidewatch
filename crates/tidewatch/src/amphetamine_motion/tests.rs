@@ -34,9 +34,9 @@ fn off_is_an_asleep_outline_and_hover_wakes_it_and_pops_the_eyes() {
         (1.0, 0.0, 0.0, 0.0, 0.0)
     );
     assert_eq!((off.rock_deg, off.specks), (0.0, 0.0));
-    assert_eq!((off.rim, off.fill, off.sleep), (brand::TEAL_TEXT, brand::GROUND, 1.0));
+    assert_eq!((off.rim, off.fill, off.sleep), (brand::teal_text(), brand::ground(), 1.0));
     let hover = tablet(Look::Off, 1.0);
-    assert_eq!((hover.rim, hover.fill, hover.sleep), (brand::TEAL_TEXT, brand::TEAL_NAV, 0.0));
+    assert_eq!((hover.rim, hover.fill, hover.sleep), (brand::teal_text(), brand::teal_nav(), 0.0));
     assert_eq!(hover.eyes, 1.0);
     let pending = tablet(Look::Pending, 0.0);
     assert_eq!((pending.eyes, pending.sleep), (1.0, 0.0));
@@ -59,7 +59,7 @@ fn activation_follows_the_spec_timeline() {
     assert_eq!(at(50.0).rough_fill, 0.0);
     assert_eq!((at(399.0).smooth_rim, at(800.0).smooth_rim), (1.0, 0.0));
     assert_eq!((at(900.0).specks, at(1250.0).specks), (0.0, 1.0));
-    assert_eq!((at(0.0).fill, at(0.0).rim), (brand::TEAL, brand::TEAL_TEXT));
+    assert_eq!((at(0.0).fill, at(0.0).rim), (brand::teal(), brand::teal_text()));
 }
 
 #[test]
@@ -67,12 +67,12 @@ fn turning_off_retracts_the_rim_in_400_ms_and_falls_back_to_the_off_colors() {
     let at = |ms: f64| tablet(Look::Stopping { age: ms / 1000.0 }, 0.0);
     let start = at(0.0);
     assert_eq!((start.rough_draw, start.wink, start.smooth_rim), (1.0, 1.0, 0.0));
-    assert_eq!(start.fill, brand::TEAL);
+    assert_eq!(start.fill, brand::teal());
     let end = at(400.0);
     assert_eq!((end.rough_draw, end.rough_fill, end.smooth_rim, end.specks), (0.0, 0.0, 1.0, 0.0));
     assert_eq!(
         (end.fill, end.rim, end.rock_deg, end.glow),
-        (tablet(Look::Off, 0.0).fill, brand::TEAL_TEXT, 0.0, 0.0)
+        (tablet(Look::Off, 0.0).fill, brand::teal_text(), 0.0, 0.0)
     );
     assert_eq!((start.sleep, end.sleep), (0.0, 1.0), "it falls asleep as it turns off");
     assert_eq!(end.eyes, 0.0);
@@ -232,7 +232,7 @@ fn the_specks_use_the_five_spec_sizes_and_alternate_teal_and_off_white() {
     let sizes: std::collections::BTreeSet<u32> =
         SIZES.iter().map(|s| (s * 10.0).round() as u32).collect();
     assert_eq!(sizes.into_iter().collect::<Vec<_>>(), [9, 10, 12, 14, 17]);
-    assert_eq!(ink(0), brand::TEAL_TEXT);
+    assert_eq!(ink(0), brand::teal_text());
     assert_eq!(ink(1), OFF_WHITE);
     assert_eq!(CHALK.len(), 11);
 }

@@ -103,7 +103,7 @@ fn label_of(agent: &AgentTab, ready: bool, tone: Tone) -> &'static str {
 
 fn dot_color(line: &Line) -> Color32 {
     if line.ready {
-        return brand::TEAL;
+        return brand::teal();
     }
     status_view::color(line.tone).unwrap_or_else(colors::dim)
 }
@@ -149,7 +149,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, line: &Line, popover: Popover) -> Ou
         painter.galley(pos2(*x, y - galley.size().y / 2.0), galley, color);
         *x += width + 10.0;
     };
-    text(&mut x, line.label, 14.0, brand::TEXT);
+    text(&mut x, line.label, 14.0, brand::text());
     let change = who_chip(ui, &painter, pos2(x, y), &line.who, text_right - 8.0);
     Out { choice: switch.clicked.map(|index| choices[index]), change, remote }
 }
@@ -160,7 +160,7 @@ fn who_chip(ui: &Ui, painter: &egui::Painter, at: egui::Pos2, text: &str, right:
     if text.is_empty() {
         return false;
     }
-    let galley = painter.layout_no_wrap(text.to_owned(), body(Size::Compact.font()), brand::SOFT);
+    let galley = painter.layout_no_wrap(text.to_owned(), body(Size::Compact.font()), brand::soft());
     let width = (galley.size().x + 2.0 * CHIP_PAD + CHEVRON_W).min((right - at.x).max(0.0));
     let rect = Rect::from_min_size(
         pos2(at.x, at.y - Size::Compact.height() / 2.0),
@@ -170,14 +170,14 @@ fn who_chip(ui: &Ui, painter: &egui::Painter, at: egui::Pos2, text: &str, right:
         .interact(rect, ui.id().with("who-chip"), egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text("Change this tab");
-    let line = if response.hovered() { brand::FAINT } else { brand::FIELD_LINE };
+    let line = if response.hovered() { brand::faint() } else { brand::field_line() };
     painter.rect_stroke(
         rect,
         egui::CornerRadius::same(Size::Compact.radius()),
         egui::Stroke::new(1.0, line),
         egui::StrokeKind::Inside,
     );
-    let ink = if response.hovered() { brand::TEXT } else { brand::SOFT };
+    let ink = if response.hovered() { brand::text() } else { brand::soft() };
     let text_at = pos2(rect.left() + CHIP_PAD, rect.center().y - galley.size().y / 2.0);
     painter.galley(text_at, galley, ink);
     let chevron = pos2(rect.right() - CHIP_PAD - CHEVRON_W / 2.0 + 2.0, rect.center().y);

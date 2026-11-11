@@ -40,8 +40,8 @@ fn every_kind_has_its_own_ink_from_the_brand() {
     for (at, color) in inks.iter().enumerate() {
         assert_eq!(inks.iter().filter(|other| *other == color).count(), 1, "{at}");
     }
-    assert_eq!(ink(Kind::Artifact), brand::VIOLET_TEXT);
-    assert_eq!(ink(Kind::Pr), brand::TEAL);
+    assert_eq!(ink(Kind::Artifact), brand::violet_text());
+    assert_eq!(ink(Kind::Pr), brand::teal());
 }
 
 #[test]

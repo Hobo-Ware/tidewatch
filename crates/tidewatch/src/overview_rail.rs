@@ -60,7 +60,7 @@ fn coming_up(ui: &mut Ui, width: f32, days: &[Day]) -> Option<usize> {
     section_head(
         &painter,
         rect,
-        &Head { title: "Coming up", caption: "", count: &count, dot: None, ink: brand::TEXT },
+        &Head { title: "Coming up", caption: "", count: &count, dot: None, ink: brand::text() },
     );
     let mut y = rect.top() + SECTION_PAD + SECTION_HEAD_H + HEAD_GAP;
     let mut clicked = None;
@@ -72,7 +72,7 @@ fn coming_up(ui: &mut Ui, width: f32, days: &[Day]) -> Option<usize> {
             month_header(&painter, rect, y, month);
             y += MONTH_H;
         }
-        let ink = if day.today { brand::TEAL_TEXT } else { brand::MUTED };
+        let ink = if day.today { brand::teal_text() } else { brand::muted() };
         painter.text(
             pos2(rect.left() + SECTION_PAD, y + DAY_H / 2.0),
             Align2::LEFT_CENTER,
@@ -104,22 +104,22 @@ fn month_header(painter: &Painter, rect: Rect, y: f32, month: &str) {
     let left = rect.left() + SECTION_PAD;
     let mid = y + MONTH_H / 2.0;
     let name =
-        painter.text(pos2(left, mid), Align2::LEFT_CENTER, month, body(TEXT_TAG), brand::MUTED);
+        painter.text(pos2(left, mid), Align2::LEFT_CENTER, month, body(TEXT_TAG), brand::muted());
     painter.hline(
         (name.right() + 8.0)..=(rect.right() - SECTION_PAD),
         mid,
-        egui::Stroke::new(1.0, brand::ITEM_LINE),
+        egui::Stroke::new(1.0, brand::item_line()),
     );
 }
 
 fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
     let resp = ui.interact(rect, ui.id().with(("agenda-row", item.row)), Sense::click());
     if resp.hovered() {
-        painter.rect_filled(rect, CornerRadius::same(8), brand::ITEM);
+        painter.rect_filled(rect, CornerRadius::same(8), brand::item());
     }
     let parked = item.mark == Mark::Parked;
     let left = rect.left() + 6.0;
-    let dot = if parked { brand::FAINT } else { brand::TEAL };
+    let dot = if parked { brand::faint() } else { brand::teal() };
     painter.circle_filled(pos2(left + DOT / 2.0, rect.top() + 14.0), DOT / 2.0, dot);
     let text_x = left + TEXT_X;
     let mut room = rect.right() - 6.0 - text_x;
@@ -132,7 +132,7 @@ fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
         ));
         room -= w + 8.0;
     }
-    let ink = if parked { brand::MUTED } else { brand::TEXT };
+    let ink = if parked { brand::muted() } else { brand::text() };
     let tag = item.about.then(|| tag_width(painter, ABOUT));
     let title_room = tag.map_or(room, |tag| room - tag - TAG_GAP);
     let title = ellipsized(painter, &item.what, FontId::proportional(13.0), ink, title_room);
@@ -143,8 +143,8 @@ fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
             painter,
             (text_x + title_w + TAG_GAP, rect.top() + 14.0),
             ABOUT,
-            brand::MUTED,
-            TagFill::Line(brand::ITEM_LINE),
+            brand::muted(),
+            TagFill::Line(brand::item_line()),
         );
     }
     let mid = rect.top() + 29.0;
@@ -157,10 +157,10 @@ fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
         painter,
         &tail,
         FontId::proportional(12.0),
-        brand::MUTED,
+        brand::muted(),
         (text_x + room - right - 6.0).max(1.0),
     );
-    painter.galley(pos2(right + 6.0, mid - tail.size().y / 2.0), tail, brand::MUTED);
+    painter.galley(pos2(right + 6.0, mid - tail.size().y / 2.0), tail, brand::muted());
     let clicked = button.is_some_and(|button| {
         in_rect(ui, button, |ui| primary_button(ui, "Decide", true, Size::Compact).clicked())
     });
@@ -183,7 +183,7 @@ fn poofed_today(ui: &mut Ui, width: f32, rows: &[PoofedRow], state: &mut State) 
     section_head(
         &painter,
         rect,
-        &Head { title: "Poofed today", caption: "", count: &count, dot: None, ink: brand::TEXT },
+        &Head { title: "Poofed today", caption: "", count: &count, dot: None, ink: brand::text() },
     );
     let mut y = rect.top() + SECTION_PAD + SECTION_HEAD_H + HEAD_GAP;
     let mut clicked = None;
@@ -198,18 +198,19 @@ fn poofed_today(ui: &mut Ui, width: f32, rows: &[PoofedRow], state: &mut State) 
             Sense::click(),
         );
         if resp.hovered() {
-            painter.rect_filled(line, CornerRadius::same(6), brand::ITEM);
+            painter.rect_filled(line, CornerRadius::same(6), brand::item());
         }
-        let outcome_ink = if row.outcome == "answered" { brand::MUTED } else { brand::TEAL_TEXT };
+        let outcome_ink =
+            if row.outcome == "answered" { brand::muted() } else { brand::teal_text() };
         let took =
-            painter.layout_no_wrap(row.took.clone(), FontId::proportional(12.0), brand::MUTED);
+            painter.layout_no_wrap(row.took.clone(), FontId::proportional(12.0), brand::muted());
         let outcome =
             painter.layout_no_wrap(row.outcome.clone(), FontId::proportional(12.0), outcome_ink);
         let right = line.right() - 6.0;
         painter.galley(
             pos2(right - took.size().x, line.center().y - took.size().y / 2.0),
             took.clone(),
-            brand::MUTED,
+            brand::muted(),
         );
         let outcome_x = right - took.size().x - 10.0 - outcome.size().x;
         painter.galley(
@@ -221,13 +222,13 @@ fn poofed_today(ui: &mut Ui, width: f32, rows: &[PoofedRow], state: &mut State) 
             &painter,
             &row.name,
             FontId::proportional(13.0),
-            brand::SOFT,
+            brand::soft(),
             (outcome_x - line.left() - 6.0 - 12.0).max(1.0),
         );
         painter.galley(
             pos2(line.left() + 6.0, line.center().y - name.size().y / 2.0),
             name,
-            brand::SOFT,
+            brand::soft(),
         );
         if resp
             .on_hover_cursor(egui::CursorIcon::PointingHand)

@@ -98,7 +98,7 @@ pub(super) fn show(
 
 fn outline_focused(ui: &egui::Ui, splits: &Splits<PtyTerm>) {
     if let Some(place) = splits.places().into_iter().find(|place| place.focused) {
-        let stroke = Stroke::new(1.0, brand::TEAL);
+        let stroke = Stroke::new(1.0, brand::teal());
         ui.painter().rect_stroke(place.rect, 0.0, stroke, StrokeKind::Inside);
     }
 }
@@ -118,7 +118,7 @@ fn show_divider(ui: &egui::Ui, divider: &Divider) -> Option<f32> {
     ui.painter().rect_filled(
         egui::Rect::from_center_size(divider.handle.center(), line),
         0.0,
-        brand::ANSWER_LINE,
+        brand::answer_line(),
     );
     if response.hovered() || response.dragged() {
         ui.ctx().set_cursor_icon(icon);

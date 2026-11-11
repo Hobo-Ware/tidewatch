@@ -80,17 +80,17 @@ fn form_body(
     ui.add_space(2.0);
     match verdict {
         Verdict::Idle => {
-            note(ui, "Paste a repo, clone address or pull request link.", brand::MUTED);
+            note(ui, "Paste a repo, clone address or pull request link.", brand::muted());
         }
-        Verdict::NotALink => note(ui, "That is not a link to a repo on GitHub.", brand::RED),
+        Verdict::NotALink => note(ui, "That is not a link to a repo on GitHub.", brand::red()),
         Verdict::Checking(repo) => {
-            note(ui, &format!("Looking for {} on this machine...", repo.slug()), brand::MUTED);
+            note(ui, &format!("Looking for {} on this machine...", repo.slug()), brand::muted());
         }
         Verdict::Ready(repo, Landing::Open(dir)) => {
             known_card(ui, &format!("{} is already at ", repo.slug()), &tilde(dir, home));
         }
         Verdict::Ready(_, Landing::Clone { .. }) => {}
-        Verdict::Ready(_, Landing::Refuse(why)) => note(ui, why, brand::RED),
+        Verdict::Ready(_, Landing::Refuse(why)) => note(ui, why, brand::red()),
     }
     let opens_known = matches!(verdict, Verdict::Ready(_, Landing::Open(_)));
     if open.repo().is_some() && !opens_known {
@@ -105,7 +105,7 @@ fn form_body(
                 &tilde(target, home),
                 &target.display().to_string(),
                 body(TEXT_TAG),
-                brand::MUTED,
+                brand::muted(),
             );
         }
     }
@@ -141,8 +141,8 @@ fn form_body(
 
 fn failed_body(ui: &mut Ui, message: &str) -> Option<Outcome> {
     let mut outcome = None;
-    ui.label(RichText::new("The clone did not finish.").font(body(14.0)).color(brand::TEXT));
-    ui.label(RichText::new(message).font(mono(TEXT_SECONDARY)).color(brand::RED));
+    ui.label(RichText::new("The clone did not finish.").font(body(14.0)).color(brand::text()));
+    ui.label(RichText::new(message).font(mono(TEXT_SECONDARY)).color(brand::red()));
     ui.add_space(6.0);
     footer_row(ui, &[], |ui| {
         if quiet_button(ui, "Back", true, Size::Regular).clicked() {
@@ -167,14 +167,14 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
         Align2::LEFT_TOP,
         format!("Cloning {}", cloning.repo.slug()),
         crate::screen_kit::heading(crate::screen_kit::TEXT_TITLE),
-        brand::TEXT,
+        brand::text(),
     );
     painter.text(
         inner.left_top() + vec2(0.0, 22.0),
         Align2::LEFT_TOP,
         fit_path(painter, "", &tilde(&cloning.target, home), &mono(TEXT_TAG), inner.width()),
         mono(TEXT_TAG),
-        brand::FAINT,
+        brand::faint(),
     );
     let shown = if line.is_empty() { "Starting git...".to_owned() } else { line };
     painter.text(
@@ -182,13 +182,13 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
         Align2::LEFT_TOP,
         shown.clone(),
         mono(TEXT_SECONDARY),
-        brand::SOFT,
+        brand::soft(),
     );
     let track = Rect::from_min_size(
         egui::pos2(inner.left(), inner.bottom() - BAR_H),
         vec2(inner.width(), BAR_H),
     );
-    painter.rect_filled(track, CornerRadius::same(2), brand::SEGMENT);
+    painter.rect_filled(track, CornerRadius::same(2), brand::segment());
     let fill = if let Some(fraction) = fraction_of(&shown) {
         Rect::from_min_size(track.min, vec2(track.width() * fraction, BAR_H))
     } else {
@@ -197,11 +197,11 @@ fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<O
         let x = track.left() + (track.width() - width) * (0.5 + 0.5 * (t * 2.0).sin());
         Rect::from_min_size(egui::pos2(x, track.top()), vec2(width, BAR_H))
     };
-    ui.painter().rect_filled(fill, CornerRadius::same(2), brand::TEAL);
+    ui.painter().rect_filled(fill, CornerRadius::same(2), brand::teal());
     ui.painter().rect_stroke(
         track,
         CornerRadius::same(2),
-        Stroke::new(1.0, brand::SEGMENT_LINE),
+        Stroke::new(1.0, brand::segment_line()),
         StrokeKind::Outside,
     );
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
@@ -229,7 +229,7 @@ fn known_card(ui: &mut Ui, prefix: &str, path: &str) {
         Align2::LEFT_CENTER,
         text,
         font,
-        brand::SOFT,
+        brand::soft(),
     );
 }
 

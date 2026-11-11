@@ -102,11 +102,11 @@ fn detail_job(plan: &Plan) -> LayoutJob {
         .and_then(|place| text.split_once(&place).map(|(a, b)| (a.to_owned(), place, b.to_owned())))
     {
         Some((before, place, after)) => {
-            job.append(&before, 0.0, prose(brand::MUTED));
-            job.append(&place, 0.0, TextFormat::simple(mono(12.0), brand::SOFT));
-            job.append(&after, 0.0, prose(brand::MUTED));
+            job.append(&before, 0.0, prose(brand::muted()));
+            job.append(&place, 0.0, TextFormat::simple(mono(12.0), brand::soft()));
+            job.append(&after, 0.0, prose(brand::muted()));
         }
-        None => job.append(&text, 0.0, prose(brand::MUTED)),
+        None => job.append(&text, 0.0, prose(brand::muted())),
     }
     job
 }
@@ -120,15 +120,15 @@ pub(crate) fn show(ctx: &egui::Context, confirm: &PostConfirm) -> Option<Answer>
             ui.label(detail_job(&confirm.plan));
             item_frame().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(&confirm.plan.body).size(13.0).color(brand::TEXT));
+                ui.label(RichText::new(&confirm.plan.body).size(13.0).color(brand::text()));
             });
             match &confirm.phase {
                 Phase::Asking => {}
                 Phase::Posting => {
-                    ui.label(RichText::new("Posting...").color(brand::MUTED));
+                    ui.label(RichText::new("Posting...").color(brand::muted()));
                 }
                 Phase::Failed(message) => {
-                    ui.label(RichText::new(message).color(brand::RED));
+                    ui.label(RichText::new(message).color(brand::red()));
                 }
             }
             ui.add_space(4.0);

@@ -73,7 +73,7 @@ pub(crate) fn placed_id() -> Id {
 }
 
 pub(crate) fn show(ui: &mut Ui, area: Rect, summary: &Summary) -> Option<Action> {
-    ui.painter().rect_filled(area, 0.0, brand::GROUND);
+    ui.painter().rect_filled(area, 0.0, brand::ground());
     let width = (area.width() - 2.0 * PAD).clamp(1.0, COLUMN_W);
     let left = area.center().x - width / 2.0;
     let column =
@@ -155,15 +155,15 @@ fn kicker(ui: &mut Ui, text: &str, ink: Color32) {
 
 fn prompt(ui: &mut Ui, width: f32, task: &str) -> Rect {
     Frame::new()
-        .fill(brand::SUNKEN)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .fill(brand::sunken())
+        .stroke(Stroke::new(1.0, brand::item_line()))
         .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(CARD_PAD)
         .show(ui, |ui| {
             ui.set_width(width - f32::from(CARD_PAD.left + CARD_PAD.right) - 2.0);
-            kicker(ui, "Prompt", brand::FAINT);
+            kicker(ui, "Prompt", brand::faint());
             ui.scope(|ui| {
-                ui.visuals_mut().override_text_color = Some(brand::SOFT);
+                ui.visuals_mut().override_text_color = Some(brand::soft());
                 ui.push_id("summary-prompt", |ui| {
                     markdown_in(ui, &user_markup::chat_markdown(task, &[]));
                 });
@@ -175,13 +175,13 @@ fn prompt(ui: &mut Ui, width: f32, task: &str) -> Rect {
 
 fn hero(ui: &mut Ui, width: f32, said: &str, read_only: bool) -> Rect {
     Frame::new()
-        .fill(brand::ITEM)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .fill(brand::item())
+        .stroke(Stroke::new(1.0, brand::item_line()))
         .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(HERO_PAD)
         .show(ui, |ui| {
             ui.set_width(width - f32::from(HERO_PAD.left + HERO_PAD.right) - 2.0);
-            kicker(ui, if read_only { "Answer" } else { "Summary" }, brand::TEAL_TEXT);
+            kicker(ui, if read_only { "Answer" } else { "Summary" }, brand::teal_text());
             ui.push_id("summary-said", |ui| markdown_in(ui, said));
         })
         .response
@@ -190,18 +190,18 @@ fn hero(ui: &mut Ui, width: f32, said: &str, read_only: bool) -> Rect {
 
 fn quiet_line(ui: &mut Ui, width: f32, quiet: &Quiet) -> Rect {
     let mut job = LayoutJob::default();
-    job.append(&quiet.text, 0.0, TextFormat::simple(body(TEXT_BODY), brand::MUTED));
+    job.append(&quiet.text, 0.0, TextFormat::simple(body(TEXT_BODY), brand::muted()));
     if !quiet.branch.is_empty() {
         job.append(
             &format!("   {}", quiet.branch),
             0.0,
-            TextFormat::simple(mono(TEXT_SECONDARY), brand::FAINT),
+            TextFormat::simple(mono(TEXT_SECONDARY), brand::faint()),
         );
     }
     job.wrap = TextWrapping::wrap_at_width(width.max(1.0));
     let galley = ui.painter().layout_job(job);
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
-    ui.painter().galley(rect.min, galley, brand::MUTED);
+    ui.painter().galley(rect.min, galley, brand::muted());
     rect
 }
 
@@ -216,9 +216,9 @@ fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Op
     let room = (row.right() - button_w - FACE_GAP - text_left).max(1.0);
     let (lead, rest) = summary.meta.split_once(" \u{b7} ").unwrap_or((&summary.meta, ""));
     let mut job = LayoutJob::default();
-    job.append(lead, 0.0, TextFormat::simple(heading(20.0), brand::TEXT));
+    job.append(lead, 0.0, TextFormat::simple(heading(20.0), brand::text()));
     if !rest.is_empty() {
-        job.append(&format!("   {rest}"), 0.0, TextFormat::simple(body(TEXT_BODY), brand::MUTED));
+        job.append(&format!("   {rest}"), 0.0, TextFormat::simple(body(TEXT_BODY), brand::muted()));
     }
     job.wrap = TextWrapping::truncate_at_width(room);
     let status = painter.layout_job(job);
@@ -226,7 +226,7 @@ fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Op
         ui,
         pos2(text_left, row.center().y - status.size().y / 2.0),
         status,
-        brand::TEXT,
+        brand::text(),
     );
     let button_row =
         Rect::from_min_max(pos2(row.right() - button_w, row.top()), row.right_bottom());
@@ -248,10 +248,10 @@ fn header(ui: &mut Ui, width: f32, summary: &Summary, placed: &mut Placed) -> Op
 }
 
 fn section_label(ui: &mut Ui, text: &str) {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), heading(13.0), brand::MUTED);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), heading(13.0), brand::muted());
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), galley.size().y + 6.0), Sense::hover());
-    selectable::galley(ui, rect.left_top(), galley, brand::MUTED);
+    selectable::galley(ui, rect.left_top(), galley, brand::muted());
 }
 
 fn mark_of(look: Look) -> Mark {
@@ -271,22 +271,22 @@ fn checks(ui: &mut Ui, width: f32, summary: &Summary, lines: &mut Vec<Rect>) -> 
     painter.rect(
         rect,
         CornerRadius::same(RADIUS),
-        brand::ITEM,
-        Stroke::new(1.0, brand::ITEM_LINE),
+        brand::item(),
+        Stroke::new(1.0, brand::item_line()),
         StrokeKind::Inside,
     );
     let head_mid = rect.top() + CARD_HEAD_H / 2.0;
-    let title = painter.layout_no_wrap(summary.card.title.clone(), heading(14.0), brand::TEXT);
+    let title = painter.layout_no_wrap(summary.card.title.clone(), heading(14.0), brand::text());
     painter.galley(
         pos2(rect.left() + CHECK_PAD, head_mid - title.size().y / 2.0),
         title,
-        brand::TEXT,
+        brand::text(),
     );
-    let meta = painter.layout_no_wrap(summary.card.meta.clone(), mono(12.0), brand::MUTED);
+    let meta = painter.layout_no_wrap(summary.card.meta.clone(), mono(12.0), brand::muted());
     painter.galley(
         pos2(rect.right() - CHECK_PAD - meta.size().x, head_mid - meta.size().y / 2.0),
         meta,
-        brand::MUTED,
+        brand::muted(),
     );
     for (index, row) in rows.iter().enumerate() {
         let line = Rect::from_min_size(
@@ -297,7 +297,7 @@ fn checks(ui: &mut Ui, width: f32, summary: &Summary, lines: &mut Vec<Rect>) -> 
         painter.hline(
             (line.left() + CHECK_PAD)..=(line.right() - CHECK_PAD),
             line.top(),
-            Stroke::new(1.0, brand::ITEM_LINE),
+            Stroke::new(1.0, brand::item_line()),
         );
         let mid = line.center().y;
         paint_mark(
@@ -307,19 +307,19 @@ fn checks(ui: &mut Ui, width: f32, summary: &Summary, lines: &mut Vec<Rect>) -> 
             mark_of(row.look),
             0.0,
         );
-        let result_ink = if row.look == Look::Skipped { brand::FAINT } else { brand::DONE };
+        let result_ink = if row.look == Look::Skipped { brand::faint() } else { brand::done() };
         let result = painter.layout_no_wrap(row.result.to_owned(), body(13.0), result_ink);
         let label_left = line.left() + CHECK_PAD + 26.0;
         let detail_left = label_left + LABEL_W;
         let room = (line.right() - CHECK_PAD - result.size().x - 12.0 - detail_left).max(1.0);
-        let label = painter.layout_no_wrap(row.label.to_owned(), heading(14.0), brand::TEXT);
-        selectable::galley(ui, pos2(label_left, mid - label.size().y / 2.0), label, brand::TEXT);
-        let detail = ellipsized(&painter, &row.detail, body(13.0), brand::MUTED, room);
+        let label = painter.layout_no_wrap(row.label.to_owned(), heading(14.0), brand::text());
+        selectable::galley(ui, pos2(label_left, mid - label.size().y / 2.0), label, brand::text());
+        let detail = ellipsized(&painter, &row.detail, body(13.0), brand::muted(), room);
         selectable::galley(
             ui,
             pos2(detail_left, mid - detail.size().y / 2.0),
             detail,
-            brand::MUTED,
+            brand::muted(),
         );
         selectable::galley(
             ui,
@@ -336,38 +336,38 @@ fn linked(ui: &mut Ui, width: f32, text: &str, lead: Option<&str>) -> Rect {
     let painter = ui.painter().clone();
     let mut line = Text::new();
     if let Some(lead) = lead.filter(|lead| *lead != text) {
-        line.run(&format!("{lead}  "), &TextFormat::simple(body(TEXT_BODY), brand::MUTED));
+        line.run(&format!("{lead}  "), &TextFormat::simple(body(TEXT_BODY), brand::muted()));
     }
-    line.run(text, &TextFormat::simple(body(TEXT_BODY), brand::TEXT));
+    line.run(text, &TextFormat::simple(body(TEXT_BODY), brand::text()));
     let laid = line.wrapped(width, SAID_ROWS).lay_out(&painter);
     let (rect, _) = ui.allocate_exact_size(vec2(width, laid.size().y), Sense::hover());
-    laid.paint_selectable(ui, ui.id().with(("summary-text", text)), rect.min, brand::TEXT);
+    laid.paint_selectable(ui, ui.id().with(("summary-text", text)), rect.min, brand::text());
     rect
 }
 
 fn branch_rows(ui: &mut Ui, width: f32, branch: &BranchLine) -> Rect {
     let painter = ui.painter().clone();
     let mut job = LayoutJob::default();
-    job.append(&branch.name, 0.0, TextFormat::simple(mono(TEXT_BODY), brand::SOFT));
-    job.append(&format!("   {}", branch.text), 0.0, TextFormat::simple(body(14.0), brand::MUTED));
+    job.append(&branch.name, 0.0, TextFormat::simple(mono(TEXT_BODY), brand::soft()));
+    job.append(&format!("   {}", branch.text), 0.0, TextFormat::simple(body(14.0), brand::muted()));
     if let Some(files) = &branch.files {
-        job.append("\n", 0.0, TextFormat::simple(body(14.0), brand::MUTED));
-        job.append(&files.text, 0.0, TextFormat::simple(body(14.0), brand::MUTED));
+        job.append("\n", 0.0, TextFormat::simple(body(14.0), brand::muted()));
+        job.append(&files.text, 0.0, TextFormat::simple(body(14.0), brand::muted()));
         job.append(
             &format!("   {}", files.added),
             0.0,
-            TextFormat::simple(mono(13.0), brand::GREEN),
+            TextFormat::simple(mono(13.0), brand::green()),
         );
         job.append(
             &format!("  {}", files.removed),
             0.0,
-            TextFormat::simple(mono(13.0), brand::RED),
+            TextFormat::simple(mono(13.0), brand::red()),
         );
     }
     job.wrap = TextWrapping::wrap_at_width(width.max(1.0));
     let galley = painter.layout_job(job);
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
-    selectable::galley(ui, rect.min, galley, brand::SOFT);
+    selectable::galley(ui, rect.min, galley, brand::soft());
     rect
 }
 
@@ -377,15 +377,15 @@ fn stages(ui: &mut Ui, width: f32, rows: &[StageRow]) {
         let (line, _) = ui.allocate_exact_size(vec2(width, STAGE_ROW_H), Sense::hover());
         let mid = line.center().y;
         let name =
-            ellipsized(&painter, &row.name, body(TEXT_BODY), brand::SOFT, STAGE_NAME_W - 12.0);
-        selectable::galley(ui, pos2(line.left(), mid - name.size().y / 2.0), name, brand::SOFT);
+            ellipsized(&painter, &row.name, body(TEXT_BODY), brand::soft(), STAGE_NAME_W - 12.0);
+        selectable::galley(ui, pos2(line.left(), mid - name.size().y / 2.0), name, brand::soft());
         let count = painter.layout_no_wrap(
             format!("{} of {}", row.done, row.total),
             mono(12.0),
-            brand::MUTED,
+            brand::muted(),
         );
         let count_left = line.right() - count.size().x;
-        selectable::galley(ui, pos2(count_left, mid - count.size().y / 2.0), count, brand::MUTED);
+        selectable::galley(ui, pos2(count_left, mid - count.size().y / 2.0), count, brand::muted());
         let track = Rect::from_min_max(
             pos2(line.left() + STAGE_NAME_W, mid - STAGE_BAR_H / 2.0),
             pos2(
@@ -393,13 +393,13 @@ fn stages(ui: &mut Ui, width: f32, rows: &[StageRow]) {
                 mid + STAGE_BAR_H / 2.0,
             ),
         );
-        painter.rect_filled(track, CornerRadius::same(2), brand::ITEM_LINE);
+        painter.rect_filled(track, CornerRadius::same(2), brand::item_line());
         let fraction = row.done as f32 / row.total.max(1) as f32;
         let fill = Rect::from_min_size(
             track.min,
             vec2(track.width() * fraction.clamp(0.0, 1.0), STAGE_BAR_H),
         );
-        painter.rect_filled(fill, CornerRadius::same(2), brand::TEAL);
+        painter.rect_filled(fill, CornerRadius::same(2), brand::teal());
     }
 }
 
@@ -418,9 +418,9 @@ fn steps(ui: &mut Ui, width: f32, rows: &[StageRow]) -> Rect {
         if index > 0 {
             ui.add_space(ITEM_GAP);
         }
-        let name = ui.painter().layout_no_wrap(row.name.clone(), heading(14.0), brand::SOFT);
+        let name = ui.painter().layout_no_wrap(row.name.clone(), heading(14.0), brand::soft());
         let (rect, _) = ui.allocate_exact_size(vec2(width, name.size().y + 4.0), Sense::hover());
-        selectable::galley(ui, rect.left_top(), name, brand::SOFT);
+        selectable::galley(ui, rect.left_top(), name, brand::soft());
         for step in &row.steps {
             item_row(ui, width, Some(mark_of_step(step.state)), &step.text, step.why.as_deref());
         }
@@ -435,9 +435,9 @@ fn steps(ui: &mut Ui, width: f32, rows: &[StageRow]) -> Rect {
 /// under it.
 fn item_row(ui: &mut Ui, width: f32, mark: Option<Mark>, text: &str, why: Option<&str>) {
     let mut job = LayoutJob::default();
-    job.append(text, 0.0, TextFormat::simple(body(14.0), brand::TEXT));
+    job.append(text, 0.0, TextFormat::simple(body(14.0), brand::text()));
     if let Some(why) = why.filter(|why| !why.trim().is_empty()) {
-        job.append(&format!("\n{why}"), 0.0, TextFormat::simple(body(13.0), brand::MUTED));
+        job.append(&format!("\n{why}"), 0.0, TextFormat::simple(body(13.0), brand::muted()));
     }
     job.wrap = TextWrapping::wrap_at_width((width - ITEM_INDENT).max(1.0));
     let galley = ui.painter().layout_job(job);
@@ -447,10 +447,10 @@ fn item_row(ui: &mut Ui, width: f32, mark: Option<Mark>, text: &str, why: Option
     match mark {
         Some(mark) => paint_mark(ui.painter(), at, 14.0, mark, 0.0),
         None => {
-            ui.painter().circle_filled(at, 2.5, brand::MUTED);
+            ui.painter().circle_filled(at, 2.5, brand::muted());
         }
     }
-    selectable::galley(ui, pos2(rect.left() + ITEM_INDENT, rect.top()), galley, brand::TEXT);
+    selectable::galley(ui, pos2(rect.left() + ITEM_INDENT, rect.top()), galley, brand::text());
 }
 
 #[cfg(test)]

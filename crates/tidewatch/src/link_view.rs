@@ -124,8 +124,9 @@ struct Chip {
 }
 
 fn chip_width(painter: &egui::Painter, chip: &Chip) -> f32 {
-    let text = painter.layout_no_wrap(chip.label.to_owned(), body(TEXT_SECONDARY), brand::SOFT);
-    let count = painter.layout_no_wrap(chip.count.to_string(), body(TEXT_SECONDARY), brand::FAINT);
+    let text = painter.layout_no_wrap(chip.label.to_owned(), body(TEXT_SECONDARY), brand::soft());
+    let count =
+        painter.layout_no_wrap(chip.count.to_string(), body(TEXT_SECONDARY), brand::faint());
     2.0 * Size::Compact.pad() + text.size().x + COUNT_GAP + count.size().x
 }
 
@@ -200,14 +201,14 @@ pub(crate) fn show(
     let mut top = rect.top() + head_h;
     if let Some(layout) = &layout {
         let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, layout.height));
-        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
+        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::item_line()));
         filter_area(ui, area, (&chips, layout), view);
         top += layout.height;
     }
     let mut copied = None;
     for (at, link) in rows.iter().enumerate() {
         let row = Rect::from_min_size(pos2(rect.left(), top), vec2(width, row_h));
-        painter.hline(row.x_range(), row.top(), Stroke::new(1.0, brand::ITEM_LINE));
+        painter.hline(row.x_range(), row.top(), Stroke::new(1.0, brand::item_line()));
         let live = links.is_live(link);
         if row_of(ui, row, (link, live), (at, tag_col), (links.now_ms, stacked)) {
             copied = Some(link.url.clone());
@@ -216,20 +217,20 @@ pub(crate) fn show(
     }
     if kept.is_empty() {
         let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, EMPTY_H));
-        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
+        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::item_line()));
         empty_row(ui, area, view);
         top += EMPTY_H;
     }
     if let Some(label) = fold {
         let area = Rect::from_min_size(pos2(rect.left(), top), vec2(width, FOLD_H));
-        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::ITEM_LINE));
-        let galley = painter.layout_no_wrap(label, body(TEXT_SECONDARY), brand::TEAL_TEXT);
+        painter.hline(area.x_range(), area.top(), Stroke::new(1.0, brand::item_line()));
+        let galley = painter.layout_no_wrap(label, body(TEXT_SECONDARY), brand::teal_text());
         let hit = Rect::from_min_size(
             pos2(area.left() + PAD_X, area.center().y - FOLD_H / 2.0),
             vec2(galley.size().x + 8.0, FOLD_H),
         );
         let response = ui.interact(hit, ui.id().with("links-fold"), Sense::click());
-        let ink = if response.hovered() { brand::TEXT } else { brand::TEAL_TEXT };
+        let ink = if response.hovered() { brand::text() } else { brand::teal_text() };
         painter.galley(pos2(hit.left(), area.center().y - galley.size().y / 2.0), galley, ink);
         if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             view.all = !view.all;
@@ -242,9 +243,9 @@ fn empty_row(ui: &mut Ui, area: Rect, view: &mut LinkView) {
     let painter = ui.painter();
     let line = link_filter::empty_line(&view.filter);
     let text =
-        painter.layout_no_wrap(format!("{line} \u{b7} "), body(TEXT_SECONDARY), brand::MUTED);
+        painter.layout_no_wrap(format!("{line} \u{b7} "), body(TEXT_SECONDARY), brand::muted());
     let action =
-        painter.layout_no_wrap("Show all".to_owned(), body(TEXT_SECONDARY), brand::TEAL_TEXT);
+        painter.layout_no_wrap("Show all".to_owned(), body(TEXT_SECONDARY), brand::teal_text());
     let left = area.left() + PAD_X;
     let mid = area.center().y;
     let hit = Rect::from_min_size(
@@ -252,9 +253,9 @@ fn empty_row(ui: &mut Ui, area: Rect, view: &mut LinkView) {
         vec2(action.size().x + 8.0, EMPTY_H),
     );
     let response = ui.interact(hit, ui.id().with("links-show-all"), Sense::click());
-    let ink = if response.hovered() { brand::TEXT } else { brand::TEAL_TEXT };
+    let ink = if response.hovered() { brand::text() } else { brand::teal_text() };
     let painter = ui.painter();
-    painter.galley(pos2(left, mid - text.size().y / 2.0), text.clone(), brand::MUTED);
+    painter.galley(pos2(left, mid - text.size().y / 2.0), text.clone(), brand::muted());
     painter.galley(pos2(hit.left(), mid - action.size().y / 2.0), action, ink);
     if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
         view.filter = Filter::default();
@@ -306,11 +307,11 @@ fn chip_rect(origin: Pos2, group: &(Vec<f32>, Vec<Pos2>, f32), at: usize) -> Rec
 fn paint_chip(ui: &mut Ui, rect: Rect, chip: &Chip, id: (&str, usize)) -> bool {
     let response = ui.interact(rect, ui.id().with(id), Sense::click());
     let (line, ink) = if chip.selected {
-        (brand::TEAL, brand::TEAL_TEXT)
+        (brand::teal(), brand::teal_text())
     } else if response.hovered() {
-        (brand::FAINT, brand::TEXT)
+        (brand::faint(), brand::text())
     } else {
-        (brand::ITEM_LINE, brand::SOFT)
+        (brand::item_line(), brand::soft())
     };
     let painter = ui.painter();
     painter.rect_stroke(
@@ -321,14 +322,14 @@ fn paint_chip(ui: &mut Ui, rect: Rect, chip: &Chip, id: (&str, usize)) -> bool {
     );
     let font = body(TEXT_SECONDARY);
     let text = painter.layout_no_wrap(chip.label.to_owned(), font.clone(), ink);
-    let count = painter.layout_no_wrap(chip.count.to_string(), font, brand::FAINT);
+    let count = painter.layout_no_wrap(chip.count.to_string(), font, brand::faint());
     let left = rect.left() + Size::Compact.pad();
     let mid = rect.center().y;
     painter.galley(pos2(left, mid - text.size().y / 2.0), text.clone(), ink);
     painter.galley(
         pos2(left + text.size().x + COUNT_GAP, mid - count.size().y / 2.0),
         count,
-        brand::FAINT,
+        brand::faint(),
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
@@ -342,7 +343,7 @@ fn head_height(
     age: Option<&str>,
 ) -> (f32, bool) {
     let Some(age) = age else { return (HEAD_H, false) };
-    let label = painter.layout_no_wrap("LINKS".to_owned(), heading(TEXT_SECONDARY), brand::SOFT);
+    let label = painter.layout_no_wrap("LINKS".to_owned(), heading(TEXT_SECONDARY), brand::soft());
     let used =
         PAD_X + ICON_PX + 8.0 + label.size().x + 8.0 + tag_width(painter, &count.to_string());
     let age_w = crate::panel_blocks::age_width(painter, age);
@@ -351,7 +352,7 @@ fn head_height(
 
 fn search_field(ui: &mut Ui, field: Rect, query: &mut String) {
     let id = ui.id().with("links-search");
-    ui.painter().rect_filled(field, CornerRadius::same(Size::Compact.radius()), brand::SEGMENT);
+    ui.painter().rect_filled(field, CornerRadius::same(Size::Compact.radius()), brand::segment());
     let inner = field.shrink2(vec2(Size::Compact.pad(), 0.0));
     let line = Rect::from_center_size(inner.center(), vec2(inner.width(), SEARCH_TEXT_H));
     let mut child = ui.new_child(UiBuilder::new().max_rect(line));
@@ -361,11 +362,11 @@ fn search_field(ui: &mut Ui, field: Rect, query: &mut String) {
             .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .font(body(TEXT_SECONDARY))
-            .text_color(brand::TEXT)
+            .text_color(brand::text())
             .desired_width(inner.width()),
     );
     let focused = ui.memory(|memory| memory.has_focus(id));
-    let line = if focused { brand::TEAL } else { brand::FIELD_LINE };
+    let line = if focused { brand::teal() } else { brand::field_line() };
     let painter = ui.painter();
     painter.rect_stroke(
         field,
@@ -379,18 +380,18 @@ fn search_field(ui: &mut Ui, field: Rect, query: &mut String) {
             Align2::LEFT_CENTER,
             SEARCH_HINT,
             body(TEXT_SECONDARY),
-            brand::FAINT,
+            brand::faint(),
         );
     }
 }
 
 fn tone_ink(tone: Tone) -> Color32 {
     match tone {
-        Tone::Bad => brand::RED,
-        Tone::Warn => brand::ORANGE,
-        Tone::Good => brand::GREEN,
-        Tone::Quiet => brand::MUTED,
-        Tone::Live => brand::TEAL_TEXT,
+        Tone::Bad => brand::red(),
+        Tone::Warn => brand::orange(),
+        Tone::Good => brand::green(),
+        Tone::Quiet => brand::muted(),
+        Tone::Live => brand::teal_text(),
     }
 }
 
@@ -402,25 +403,25 @@ fn head(ui: &Ui, rect: Rect, count: usize, age: Option<&str>, age_below: bool) {
         Align2::LEFT_CENTER,
         LINK_ICON,
         FontId::proportional(ICON_PX),
-        brand::MUTED,
+        brand::muted(),
     );
-    let label = painter.layout_no_wrap("LINKS".to_owned(), heading(TEXT_SECONDARY), brand::SOFT);
+    let label = painter.layout_no_wrap("LINKS".to_owned(), heading(TEXT_SECONDARY), brand::soft());
     let left = rect.left() + PAD_X + ICON_PX + 8.0;
-    painter.galley(pos2(left, mid - label.size().y / 2.0), label.clone(), brand::SOFT);
+    painter.galley(pos2(left, mid - label.size().y / 2.0), label.clone(), brand::soft());
     paint_tag(
         painter,
         (left + label.size().x + 8.0, mid),
         &count.to_string(),
-        brand::SOFT,
-        TagFill::Tint(brand::ITEM_LINE),
+        brand::soft(),
+        TagFill::Tint(brand::item_line()),
     );
     if let Some(age) = age {
         if age_below {
-            let galley = painter.layout_no_wrap(age.to_owned(), body(TEXT_TAG), brand::MUTED);
+            let galley = painter.layout_no_wrap(age.to_owned(), body(TEXT_TAG), brand::muted());
             painter.galley(
                 pos2(rect.left() + PAD_X, mid + HEAD_H / 2.0 - 4.0),
                 galley,
-                brand::MUTED,
+                brand::muted(),
             );
         } else {
             crate::panel_blocks::paint_age(painter, rect.right() - PAD_X, mid, age);
@@ -491,13 +492,13 @@ fn row_of(
         meta = format!("{} \u{b7} {meta}", hidden.join(", "));
     }
     let text_w = (text_right - text_left).max(MIN_TEXT_W);
-    let meta = ellipsized(&painter, &meta, body(TEXT_TAG), brand::MUTED, text_w);
-    let probe = ellipsized(&painter, &link.title, body(TEXT_BODY), brand::TEXT, text_w);
+    let meta = ellipsized(&painter, &meta, body(TEXT_TAG), brand::muted(), text_w);
+    let probe = ellipsized(&painter, &link.title, body(TEXT_BODY), brand::text(), text_w);
     let block = probe.size().y + meta.size().y + 1.0;
     let top = mid - block / 2.0;
     let hit = Rect::from_min_size(pos2(text_left, top), vec2(probe.size().x, probe.size().y));
     let response = ui.interact(hit, ui.id().with(("link-open", index, &link.url)), Sense::click());
-    let ink_of_title = if response.hovered() { brand::TEAL_TEXT } else { brand::TEXT };
+    let ink_of_title = if response.hovered() { brand::teal_text() } else { brand::text() };
     let title = if response.hovered() {
         ellipsized(&painter, &link.title, body(TEXT_BODY), ink_of_title, text_w)
     } else {
@@ -507,7 +508,7 @@ fn row_of(
     if response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(&link.url).clicked() {
         ui.ctx().open_url(OpenUrl::new_tab(&link.url));
     }
-    selectable::galley(ui, pos2(text_left, top + hit.height() + 1.0), meta, brand::MUTED);
+    selectable::galley(ui, pos2(text_left, top + hit.height() + 1.0), meta, brand::muted());
     let button_mid = if stacked { tag_mid } else { mid };
     let at =
         Rect::from_min_size(pos2(button_left, button_mid - button / 2.0), vec2(button, button));
@@ -530,21 +531,22 @@ pub(crate) fn paint_read_first(ui: &mut Ui, top_left: Pos2, width: f32, links: &
             Align2::LEFT_CENTER,
             LINK_ICON,
             FontId::proportional(TEXT_SECONDARY),
-            brand::MUTED,
+            brand::muted(),
         );
         let label =
-            painter.layout_no_wrap("Read first:".to_owned(), body(TEXT_SECONDARY), brand::MUTED);
+            painter.layout_no_wrap("Read first:".to_owned(), body(TEXT_SECONDARY), brand::muted());
         let label_left = top_left.x + TEXT_SECONDARY + 6.0;
-        painter.galley(pos2(label_left, mid - label.size().y / 2.0), label.clone(), brand::MUTED);
+        painter.galley(pos2(label_left, mid - label.size().y / 2.0), label.clone(), brand::muted());
         let title_left = label_left + label.size().x + 6.0;
         let room = (top_left.x + width - title_left).max(MIN_TEXT_W);
-        let probe = ellipsized(&painter, &link.title, body(TEXT_SECONDARY), brand::TEAL_TEXT, room);
+        let probe =
+            ellipsized(&painter, &link.title, body(TEXT_SECONDARY), brand::teal_text(), room);
         let hit = Rect::from_min_size(pos2(title_left, mid - probe.size().y / 2.0), probe.size());
         let response =
             ui.interact(hit, ui.id().with(("read-first", index, &link.url)), Sense::click());
         let underline =
-            if response.hovered() { Stroke::new(1.0, brand::TEAL_TEXT) } else { Stroke::NONE };
-        painter.galley_with_override_text_color(hit.min, probe, brand::TEAL_TEXT);
+            if response.hovered() { Stroke::new(1.0, brand::teal_text()) } else { Stroke::NONE };
+        painter.galley_with_override_text_color(hit.min, probe, brand::teal_text());
         painter.hline(hit.x_range(), hit.bottom(), underline);
         if response
             .on_hover_cursor(egui::CursorIcon::PointingHand)

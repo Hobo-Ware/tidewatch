@@ -6,6 +6,7 @@ use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, pos2};
 
 use super::editor::{Bar, BarAction, save_bar};
 use super::*;
+use crate::brand;
 
 fn raw(events: Vec<Event>) -> RawInput {
     RawInput {
@@ -256,7 +257,7 @@ fn a_path_stays_on_one_line_with_its_file_name_and_the_home_folder_as_a_tilde() 
         for _ in 0..2 {
             let _ = ctx.run_ui(raw(vec![]), |ui| {
                 let before = ui.min_rect().height();
-                path_line(ui, LONG, (12.0, FAINT), room);
+                path_line(ui, LONG, (12.0, brand::faint()), room);
                 rows = ((ui.min_rect().height() - before) / 14.0).round() as usize;
                 width = ui.min_rect().width();
             });
@@ -275,7 +276,7 @@ fn a_path_with_a_copy_button_leaves_the_button_its_room() {
 #[test]
 fn the_copy_button_puts_the_whole_path_on_the_clipboard() {
     let ctx = crate::fonts::test_context();
-    let frame = |ui: &mut Ui| path_with_copy(ui, LONG, (13.0, FAINT));
+    let frame = |ui: &mut Ui| path_with_copy(ui, LONG, (13.0, brand::faint()));
     warm(&ctx, frame);
     warm(&ctx, frame);
     let mut copied = Vec::new();

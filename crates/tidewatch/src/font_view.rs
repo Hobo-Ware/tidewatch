@@ -5,9 +5,10 @@ use egui::{Align2, FontId, Margin, RichText, Sense, Ui, vec2};
 use stdusk_egui::ui::icons;
 use tidewatch_core::prefs::FontChoice;
 
+use crate::brand;
 use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::{Size, selected_ink, selection_row};
-use crate::settings_ui::{self, Control, FAINT, MUTED, ORANGE, TEXT, Tone, row_with, text_input};
+use crate::settings_ui::{self, Control, Tone, row_with, text_input};
 use crate::terminal_font::{self, Status};
 
 const ROW_H: f32 = 28.0;
@@ -77,15 +78,15 @@ fn font_rows(ui: &mut Ui, picker: &mut Picker, view: &View) -> Option<FontChoice
         Control::button(ui, &label, Size::Compact),
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new("Font").size(TEXT_BODY).color(TEXT));
+            ui.label(RichText::new("Font").size(TEXT_BODY).color(brand::text()));
             settings_ui::note(
                 ui,
                 "The terminal only: the rest of the window keeps its own fonts.",
-                MUTED,
+                brand::muted(),
             );
             match &view.status {
-                Some(Status::Fine(text)) => settings_ui::note(ui, text, FAINT),
-                Some(Status::Warn(text)) => settings_ui::note(ui, text, ORANGE),
+                Some(Status::Fine(text)) => settings_ui::note(ui, text, brand::faint()),
+                Some(Status::Warn(text)) => settings_ui::note(ui, text, brand::orange()),
                 None => {}
             }
         },
@@ -120,7 +121,7 @@ fn list(ui: &mut Ui, picker: &mut Picker, view: &View) -> Option<FontChoice> {
             ui.add_space(6.0);
             let rows = rows(view.families, &picker.query);
             if rows.is_empty() {
-                settings_ui::note(ui, "No installed font matches.", FAINT);
+                settings_ui::note(ui, "No installed font matches.", brand::faint());
                 return None;
             }
             let enter = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
@@ -151,7 +152,7 @@ fn font_row(ui: &mut Ui, choice: &FontChoice, selected: bool) -> bool {
         Align2::LEFT_CENTER,
         terminal_font::label(choice),
         FontId::proportional(TEXT_BODY),
-        selected_ink(selected, TEXT),
+        selected_ink(selected, brand::text()),
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }

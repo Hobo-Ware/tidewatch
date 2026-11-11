@@ -21,11 +21,11 @@ pub(crate) const NEWS_GAP_MS: i64 = 2_000;
 
 pub(crate) fn ink(kind: Kind) -> Color32 {
     match kind {
-        Kind::Artifact => brand::VIOLET_TEXT,
-        Kind::Pr => brand::TEAL,
-        Kind::Issue => brand::GREEN,
-        Kind::Doc => brand::BLUE,
-        Kind::Web => brand::SOFT,
+        Kind::Artifact => brand::violet_text(),
+        Kind::Pr => brand::teal(),
+        Kind::Issue => brand::green(),
+        Kind::Doc => brand::blue(),
+        Kind::Web => brand::soft(),
     }
 }
 

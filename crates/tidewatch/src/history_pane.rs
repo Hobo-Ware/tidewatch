@@ -177,8 +177,8 @@ pub(crate) fn paint_card(ui: &Ui, rect: Rect) {
     ui.painter().rect(
         rect,
         CornerRadius::same(CARD_RADIUS),
-        brand::CARD,
-        Stroke::new(1.0, brand::CARD_LINE),
+        brand::card(),
+        Stroke::new(1.0, brand::card_line()),
         StrokeKind::Inside,
     );
 }
@@ -192,11 +192,11 @@ pub(crate) fn round_bottom(ui: &Ui, card: Rect) {
         let corner = pos2(if left_side { card.left() } else { card.right() }, card.bottom());
         let center = pos2(corner.x + sign * radius, corner.y - radius);
         let mut mesh = Mesh::default();
-        mesh.colored_vertex(corner, brand::GROUND);
+        mesh.colored_vertex(corner, brand::ground());
         for step in 0..=CORNER_STEPS {
             let angle = FRAC_PI_2 * step as f32 / CORNER_STEPS as f32;
             let at = center + vec2(-sign * radius * angle.cos(), radius * angle.sin());
-            mesh.colored_vertex(at, brand::GROUND);
+            mesh.colored_vertex(at, brand::ground());
         }
         for step in 0..CORNER_STEPS {
             mesh.add_triangle(0, step + 1, step + 2);
@@ -206,7 +206,7 @@ pub(crate) fn round_bottom(ui: &Ui, card: Rect) {
     painter.rect_stroke(
         card,
         CornerRadius::same(CARD_RADIUS),
-        Stroke::new(1.0, brand::CARD_LINE),
+        Stroke::new(1.0, brand::card_line()),
         StrokeKind::Inside,
     );
 }
@@ -267,7 +267,7 @@ fn show_card_header(
     face: Option<&Face<'_>>,
 ) -> Chosen {
     let painter = ui.painter().clone();
-    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::card_line()));
     let center_y = rect.center().y;
     let sides = info.sides;
     let labels: Vec<&str> = sides.iter().map(|side| side.label()).collect();
@@ -280,7 +280,7 @@ fn show_card_header(
     let side = control.clicked.and_then(|index| sides.get(index).copied());
     if dot && let Some(segment) = sides.iter().position(|side| *side == Side::Progress) {
         let at = control.segments[segment].right_top() + vec2(-6.0, 6.0);
-        painter.circle_filled(at, DOT_R, brand::NEEDS);
+        painter.circle_filled(at, DOT_R, brand::needs());
     }
     let right = control.left - SWITCH_GAP;
     let mut x = rect.left() + CARD_PAD;
@@ -299,21 +299,21 @@ fn show_card_header(
         x = next;
         repo = chosen;
     }
-    let mut job = LayoutJob::simple_singleline(info.title.to_owned(), mono(14.0), brand::TEXT);
+    let mut job = LayoutJob::simple_singleline(info.title.to_owned(), mono(14.0), brand::text());
     job.wrap.max_width = (right - x).max(0.0);
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     let galley = painter.layout_job(job);
     let width = galley.size().x;
-    selectable::galley(ui, pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
+    selectable::galley(ui, pos2(x, center_y - galley.size().y / 2.0), galley, brand::text());
     if shown == Side::Progress {
         return Chosen { side, repo };
     }
     x += width + PILL_GAP;
     for pill in pills(info.base) {
         let (ink, fill) = match pill.kind {
-            PillKind::Ahead => (brand::GREEN, brand::GREEN.gamma_multiply(0.12)),
-            PillKind::Behind => (brand::ORANGE, brand::ORANGE.gamma_multiply(0.12)),
+            PillKind::Ahead => (brand::green(), brand::green().gamma_multiply(0.12)),
+            PillKind::Behind => (brand::orange(), brand::orange().gamma_multiply(0.12)),
         };
         if x + tag_width(&painter, &pill.text) > right {
             break;
@@ -325,7 +325,7 @@ fn show_card_header(
 }
 
 fn side_style() -> GraphStyle {
-    GraphStyle::embedded(brand::TEAL)
+    GraphStyle::embedded(brand::teal())
 }
 
 /// The row the open commit's card hangs under and the gap it asks the graph for, `None` when no
@@ -373,7 +373,7 @@ fn show_graph(
     let summaries = &loaded.summaries;
     let highlight = view.search.highlight().map(|needle| Highlight {
         needle: needle.to_owned(),
-        fill: brand::TEAL.gamma_multiply(MATCH_FILL),
+        fill: brand::teal().gamma_multiply(MATCH_FILL),
     });
     if view.graph.highlight != highlight {
         view.graph.highlight = highlight;
@@ -412,8 +412,8 @@ fn show_graph(
 fn message(ui: &mut Ui, error: Option<&str>, idle: &str) {
     ui.add_space(40.0);
     ui.vertical_centered(|ui| match error {
-        Some(error) => ui.label(RichText::new(error).size(TEXT_SECONDARY).color(brand::RED)),
-        None => ui.label(RichText::new(idle).size(TEXT_SECONDARY).color(brand::FAINT)),
+        Some(error) => ui.label(RichText::new(error).size(TEXT_SECONDARY).color(brand::red())),
+        None => ui.label(RichText::new(idle).size(TEXT_SECONDARY).color(brand::faint())),
     });
 }
 
@@ -644,7 +644,7 @@ mod tests {
     fn count_dots(shape: &Shape, near: Pos2, found: &mut usize) {
         match shape {
             Shape::Circle(circle)
-                if circle.fill == brand::NEEDS && (circle.center - near).length() < 40.0 =>
+                if circle.fill == brand::needs() && (circle.center - near).length() < 40.0 =>
             {
                 *found += 1;
             }

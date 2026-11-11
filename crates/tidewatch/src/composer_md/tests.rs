@@ -198,8 +198,11 @@ fn a_mark_is_hidden_off_the_cursor_line_and_drawn_faint_on_it() {
         .map(|(_, size, color)| ("**", *size < 1.0 && *color == Color32::TRANSPARENT))
         .collect();
     assert_eq!(marks, vec![("**", false), ("**", false), ("**", true), ("**", true)]);
-    let faint: Vec<bool> =
-        on_first.iter().filter(|(piece, ..)| piece == "**").map(|s| s.2 == brand::FAINT).collect();
+    let faint: Vec<bool> = on_first
+        .iter()
+        .filter(|(piece, ..)| piece == "**")
+        .map(|s| s.2 == brand::faint())
+        .collect();
     assert_eq!(faint, vec![true, true, false, false]);
 }
 

@@ -24,14 +24,14 @@ pub(super) fn draw_toast(ui: &egui::Ui, column: Rect, msg: &str, fade: f32, face
     let alpha = |color: Color32| color.gamma_multiply(fade);
     let lead = face.map_or(0.0, |_| FACE + TOAST_FACE_GAP);
     let wrap = (column.width() - 2.0 * (TOAST_PAD.x + 16.0) - lead).max(120.0);
-    let galley = ui.painter().layout(msg.to_owned(), body(13.0), brand::TEXT, wrap);
+    let galley = ui.painter().layout(msg.to_owned(), body(13.0), brand::text(), wrap);
     let size = vec2(galley.size().x + lead, galley.size().y.max(FACE)) + TOAST_PAD * 2.0;
     let center =
         pos2(column.center().x, column.bottom() - TOAST_BOTTOM - (size.y - 32.0).max(0.0) / 2.0);
     let rect = Rect::from_center_size(center, size);
     let painter = ui.painter();
-    painter.rect_filled(rect, 8.0, alpha(brand::ITEM));
-    painter.rect_stroke(rect, 8.0, Stroke::new(1.0, alpha(brand::ITEM_LINE)), StrokeKind::Inside);
+    painter.rect_filled(rect, 8.0, alpha(brand::item()));
+    painter.rect_stroke(rect, 8.0, Stroke::new(1.0, alpha(brand::item_line())), StrokeKind::Inside);
     if let Some(face) = face {
         let plate = Rect::from_center_size(
             pos2(rect.left() + TOAST_PAD.x + FACE / 2.0, rect.center().y),
@@ -42,7 +42,7 @@ pub(super) fn draw_toast(ui: &egui::Ui, column: Rect, msg: &str, fade: f32, face
         agent_avatar::paint_face(ui.ctx(), &faded, plate, face);
     }
     let at = pos2(rect.left() + TOAST_PAD.x + lead, rect.center().y - galley.size().y / 2.0);
-    painter.galley_with_override_text_color(at, galley, alpha(brand::TEXT));
+    painter.galley_with_override_text_color(at, galley, alpha(brand::text()));
 }
 
 impl Tidewatch {

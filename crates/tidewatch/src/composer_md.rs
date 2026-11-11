@@ -476,13 +476,13 @@ fn format_of(
     let around = if strong { heading(size) } else { body(size) };
     let mut color = look.ink;
     if flags.has(Flags::QUOTE) {
-        color = brand::SOFT;
+        color = brand::soft();
     }
     if run.heading == 6 || flags.has(Flags::DIM) {
-        color = brand::MUTED;
+        color = brand::muted();
     }
     if flags.has(Flags::LINK) {
-        color = brand::TEAL_TEXT;
+        color = brand::teal_text();
     }
     if let Some(tint) = tint {
         color = tint;
@@ -502,7 +502,7 @@ fn format_of(
         format.line_height = Some(row_height(ui, &around) - lift);
         format.font_id = face;
         if flags.has(Flags::CODE) {
-            format.background = brand::ITEM;
+            format.background = brand::item();
         }
     }
     if flags.has(Flags::MARK) {
@@ -519,7 +519,7 @@ fn format_of(
                 ..format
             };
         }
-        format.color = brand::FAINT;
+        format.color = brand::faint();
         format.underline = Stroke::NONE;
         format.strikethrough = Stroke::NONE;
     }

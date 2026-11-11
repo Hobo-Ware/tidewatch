@@ -145,17 +145,17 @@ fn a_picture_face_is_a_plate_circle_the_art_and_a_one_pixel_ring_and_a_letter_fa
         assert_eq!(circles[0].center, rect.center());
         assert_eq!(circles[0].radius, 18.0);
         assert_eq!(circles[1].stroke.width, 1.0);
-        assert_eq!(circles[1].stroke.color, brand::FACE_RING);
+        assert_eq!(circles[1].stroke.color, brand::face_ring());
         assert_eq!(circles[1].radius, 17.5);
         if matches!(face, Face::Picture(_)) {
-            assert_eq!(circles[0].fill, brand::FACE_PLATE);
+            assert_eq!(circles[0].fill, brand::face_plate());
         }
     }
 }
 
 #[test]
 fn the_plate_is_the_color_the_readability_check_judges_against() {
-    assert_eq!(brand::FACE_PLATE.to_array()[..3], tidewatch_core::avatar_check::PLATE,);
+    assert_eq!(brand::face_plate().to_array()[..3], tidewatch_core::avatar_check::PLATE,);
 }
 
 #[test]

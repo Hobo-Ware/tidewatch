@@ -101,12 +101,12 @@ impl Heights {
 
 fn ink_color(ink: Ink) -> Color32 {
     match ink {
-        Ink::Teal => brand::TEAL,
-        Ink::Green => brand::GREEN,
-        Ink::Red => brand::RED,
-        Ink::Orange => brand::ORANGE,
-        Ink::Amber => brand::AMBER,
-        Ink::Quiet => brand::MUTED,
+        Ink::Teal => brand::teal(),
+        Ink::Green => brand::green(),
+        Ink::Red => brand::red(),
+        Ink::Orange => brand::orange(),
+        Ink::Amber => brand::amber(),
+        Ink::Quiet => brand::muted(),
     }
 }
 
@@ -158,8 +158,8 @@ fn card_width(ui: &Ui) -> f32 {
 fn draw_card(ui: &mut Ui, card: &Model, age: &str) -> Option<CardAction> {
     let width = card_width(ui);
     let frame = Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(CornerRadius::same(14))
         .inner_margin(Margin::symmetric(20, 16));
     let mut clicked = None;
@@ -193,23 +193,23 @@ fn header(ui: &mut Ui, card: &Model, age: &str) {
     let ink = ink_color(card.ink);
     paint_icon(painter, pos2(rect.left() + ICON_BOX / 2.0, rect.center().y), card.icon, ink);
     let right = if card.live { "live" } else { age };
-    let right_galley = painter.layout_no_wrap(right.to_owned(), body(12.0), brand::FAINT);
+    let right_galley = painter.layout_no_wrap(right.to_owned(), body(12.0), brand::faint());
     let right_x = rect.right() - right_galley.size().x;
     painter.galley(
         pos2(right_x, rect.center().y - right_galley.size().y / 2.0),
         right_galley,
-        brand::FAINT,
+        brand::faint(),
     );
-    let title = painter.layout_no_wrap(card.title.clone(), heading(TEXT_TITLE), brand::TEXT);
+    let title = painter.layout_no_wrap(card.title.clone(), heading(TEXT_TITLE), brand::text());
     let title_w = title.size().x;
     let x = rect.left() + INDENT;
-    painter.galley(pos2(x, rect.center().y - title.size().y / 2.0), title, brand::TEXT);
+    painter.galley(pos2(x, rect.center().y - title.size().y / 2.0), title, brand::text());
     if !card.sub.is_empty() {
         let sub_x = x + title_w + 10.0;
         let room = right_x - 12.0 - sub_x;
         if room > 24.0 {
-            let sub = ellipsized(painter, &card.sub, body(12.0), brand::MUTED, room);
-            painter.galley(pos2(sub_x, rect.center().y - sub.size().y / 2.0), sub, brand::MUTED);
+            let sub = ellipsized(painter, &card.sub, body(12.0), brand::muted(), room);
+            painter.galley(pos2(sub_x, rect.center().y - sub.size().y / 2.0), sub, brand::muted());
         }
     }
 }
@@ -217,16 +217,16 @@ fn header(ui: &mut Ui, card: &Model, age: &str) {
 fn draw_block(ui: &mut Ui, block: &Block) {
     match block {
         Block::Mono(text) => {
-            ui.label(RichText::new(text).monospace().size(13.0).color(brand::STEP_TEXT));
+            ui.label(RichText::new(text).monospace().size(13.0).color(brand::step_text()));
         }
         Block::Text(text) => {
-            ui.label(RichText::new(text).size(14.0).color(brand::STEP_TEXT));
+            ui.label(RichText::new(text).size(14.0).color(brand::step_text()));
         }
         Block::Markdown(text) => github_markdown(ui, text),
         Block::Jobs(jobs) => {
             Frame::new()
-                .fill(brand::SUNKEN)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::sunken())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(CornerRadius::same(10))
                 .inner_margin(Margin::symmetric(12, 6))
                 .show(ui, |ui| {
@@ -247,7 +247,7 @@ fn github_markdown(ui: &mut Ui, md: &str) {
         let styles = &mut ui.style_mut().text_styles;
         styles.insert(TextStyle::Body, FontId::proportional(TEXT_PX));
         styles.insert(TextStyle::Monospace, FontId::monospace(CODE_PX));
-        ui.visuals_mut().override_text_color = Some(brand::STEP_TEXT);
+        ui.visuals_mut().override_text_color = Some(brand::step_text());
         reader_chat_view::web_markdown(ui, md, false);
     });
 }
@@ -255,15 +255,15 @@ fn github_markdown(ui: &mut Ui, md: &str) {
 fn job_row(ui: &mut Ui, job: &JobLine) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
     let painter = ui.painter();
-    let name_ink = if job.passed { brand::SOFT } else { brand::TEXT };
+    let name_ink = if job.passed { brand::soft() } else { brand::text() };
     let mut x = rect.left();
     let took_w = job.took.as_ref().map_or(0.0, |took| {
-        let galley = painter.layout_no_wrap(took.clone(), body(12.0), brand::FAINT);
+        let galley = painter.layout_no_wrap(took.clone(), body(12.0), brand::faint());
         let width = galley.size().x;
         painter.galley(
             pos2(rect.right() - width, rect.center().y - galley.size().y / 2.0),
             galley,
-            brand::FAINT,
+            brand::faint(),
         );
         width + 12.0
     });
@@ -273,21 +273,21 @@ fn job_row(ui: &mut Ui, job: &JobLine) {
     painter.galley(pos2(x, rect.center().y - name.size().y / 2.0), name, name_ink);
     x += name_w + 10.0;
     if let Some(at) = &job.at {
-        let said = painter.layout_no_wrap("failed at".to_owned(), body(13.0), brand::MUTED);
+        let said = painter.layout_no_wrap("failed at".to_owned(), body(13.0), brand::muted());
         let said_w = said.size().x;
-        painter.galley(pos2(x, rect.center().y - said.size().y / 2.0), said, brand::MUTED);
+        painter.galley(pos2(x, rect.center().y - said.size().y / 2.0), said, brand::muted());
         x += said_w + 8.0;
         if limit - x > 20.0 {
-            let step = ellipsized(painter, at, mono(13.0), brand::RED, limit - x);
-            painter.galley(pos2(x, rect.center().y - step.size().y / 2.0), step, brand::RED);
+            let step = ellipsized(painter, at, mono(13.0), brand::red(), limit - x);
+            painter.galley(pos2(x, rect.center().y - step.size().y / 2.0), step, brand::red());
         }
     }
 }
 
 fn log_box(ui: &mut Ui, lines: &[String]) {
     Frame::new()
-        .fill(brand::SUNKEN)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .fill(brand::sunken())
+        .stroke(Stroke::new(1.0, brand::item_line()))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
@@ -296,11 +296,12 @@ fn log_box(ui: &mut Ui, lines: &[String]) {
             for line in lines {
                 let (rect, _) =
                     ui.allocate_exact_size(vec2(ui.available_width(), 19.0), Sense::hover());
-                let galley = ellipsized(ui.painter(), line, mono(12.0), brand::SOFT, rect.width());
+                let galley =
+                    ellipsized(ui.painter(), line, mono(12.0), brand::soft(), rect.width());
                 ui.painter().galley(
                     pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
                     galley,
-                    brand::SOFT,
+                    brand::soft(),
                 );
             }
         });
@@ -308,8 +309,8 @@ fn log_box(ui: &mut Ui, lines: &[String]) {
 
 fn comment_list(ui: &mut Ui, comments: &[(String, String)]) {
     Frame::new()
-        .fill(brand::SUNKEN)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .fill(brand::sunken())
+        .stroke(Stroke::new(1.0, brand::item_line()))
         .corner_radius(CornerRadius::same(10))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -318,12 +319,12 @@ fn comment_list(ui: &mut Ui, comments: &[(String, String)]) {
                 if index > 0 {
                     let (line, _) =
                         ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-                    ui.painter().rect_filled(line, CornerRadius::ZERO, brand::SIDEBAR_LINE);
+                    ui.painter().rect_filled(line, CornerRadius::ZERO, brand::sidebar_line());
                 }
                 Frame::new().inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 3.0;
-                    ui.label(RichText::new(place).monospace().size(12.0).color(brand::MUTED));
+                    ui.label(RichText::new(place).monospace().size(12.0).color(brand::muted()));
                     github_markdown(ui, text);
                 });
             }
@@ -340,8 +341,8 @@ fn bars(ui: &mut Ui, done: usize, total: usize) {
             pos2(rect.left() + n as f32 * (each + BARS_GAP), rect.top()),
             vec2(each, 4.0),
         );
-        ui.painter().rect_filled(bar, CornerRadius::same(2), brand::ITEM_LINE);
-        let (fill, share) = if n < done { (brand::GREEN, 1.0) } else { (brand::AMBER, 0.4) };
+        ui.painter().rect_filled(bar, CornerRadius::same(2), brand::item_line());
+        let (fill, share) = if n < done { (brand::green(), 1.0) } else { (brand::amber(), 0.4) };
         let lit = Rect::from_min_size(bar.min, vec2(bar.width() * share, 4.0));
         ui.painter().rect_filled(lit, CornerRadius::same(2), fill);
     }
@@ -364,12 +365,12 @@ fn button_row(ui: &mut Ui, buttons: &[Button], note: Option<&str>) -> Option<Car
         if let Some(note) = note {
             let (rect, _) =
                 ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-            let galley = ellipsized(ui.painter(), note, body(12.0), brand::FAINT, rect.width());
+            let galley = ellipsized(ui.painter(), note, body(12.0), brand::faint(), rect.width());
             let x = (rect.right() - galley.size().x).max(rect.left());
             ui.painter().galley(
                 pos2(x, rect.center().y - galley.size().y / 2.0),
                 galley,
-                brand::FAINT,
+                brand::faint(),
             );
         }
     });
@@ -379,26 +380,26 @@ fn button_row(ui: &mut Ui, buttons: &[Button], note: Option<&str>) -> Option<Car
 pub(crate) fn draw_bubble(ui: &mut Ui, bubble: &Bubble) {
     ui.with_layout(Layout::top_down(Align::Max), |ui| {
         Frame::new()
-            .fill(brand::ITEM)
-            .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+            .fill(brand::item())
+            .stroke(Stroke::new(1.0, brand::item_line()))
             .corner_radius(CornerRadius { nw: 12, ne: 12, sw: 12, se: 4 })
             .inner_margin(Margin::symmetric(14, 10))
             .show(ui, |ui| {
                 ui.set_max_width(MAX_BUBBLE_W.min(ui.available_width()));
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let mut who = LayoutJob::default();
-                who.append(bubble.who, 0.0, TextFormat::simple(body(TEXT_TAG), brand::MUTED));
-                who.append(&bubble.tag, 8.0, TextFormat::simple(body(TEXT_TAG), brand::TEAL));
+                who.append(bubble.who, 0.0, TextFormat::simple(body(TEXT_TAG), brand::muted()));
+                who.append(&bubble.tag, 8.0, TextFormat::simple(body(TEXT_TAG), brand::teal()));
                 ui.label(who);
                 let mut text = LayoutJob::default();
                 text.wrap.max_width = ui.available_width();
                 text.append(
                     &bubble.headline,
                     0.0,
-                    TextFormat::simple(body(TEXT_BODY), brand::TEXT),
+                    TextFormat::simple(body(TEXT_BODY), brand::text()),
                 );
                 if let Some(more) = &bubble.more {
-                    text.append(more, 8.0, TextFormat::simple(body(13.0), brand::FAINT));
+                    text.append(more, 8.0, TextFormat::simple(body(13.0), brand::faint()));
                 }
                 ui.label(text);
             });
@@ -408,9 +409,9 @@ pub(crate) fn draw_bubble(ui: &mut Ui, bubble: &Bubble) {
 fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button]) -> Option<CardAction> {
     let (rect, _) = ui.allocate_exact_size(vec2(card_width(ui), 40.0), Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(10), brand::CARD);
-    dashed_rect(painter, rect, Stroke::new(1.0, brand::FIELD_LINE));
-    painter.circle_filled(pos2(rect.left() + 18.0, rect.center().y), 4.0, brand::AMBER);
+    painter.rect_filled(rect, CornerRadius::same(10), brand::card());
+    dashed_rect(painter, rect, Stroke::new(1.0, brand::field_line()));
+    painter.circle_filled(pos2(rect.left() + 18.0, rect.center().y), 4.0, brand::amber());
     let mut clicked = None;
     let mut right = ui.new_child(
         UiBuilder::new()
@@ -428,10 +429,10 @@ fn waiting_row(ui: &mut Ui, text: &str, buttons: &[Button]) -> Option<CardAction
         ui.painter(),
         text,
         body(TEXT_BODY),
-        brand::TEXT,
+        brand::text(),
         right.min_rect().left() - 12.0 - left,
     );
-    ui.painter().galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);
+    ui.painter().galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley, brand::text());
     clicked
 }
 
@@ -446,7 +447,7 @@ fn confirm_row(
     let width = card_width(ui);
     let mut clicked = None;
     let framed = Frame::new()
-        .fill(brand::CARD)
+        .fill(brand::card())
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::symmetric(16, 12))
         .show(ui, |ui| {
@@ -454,14 +455,15 @@ fn confirm_row(
             ui.spacing_mut().item_spacing.y = 10.0;
             ui.horizontal_top(|ui| {
                 let (dot, _) = ui.allocate_exact_size(vec2(10.0, 20.0), Sense::hover());
-                ui.painter().circle_filled(dot.center(), 4.0, brand::AMBER);
+                ui.painter().circle_filled(dot.center(), 4.0, brand::amber());
                 ui.add(
-                    egui::Label::new(RichText::new(lead).size(TEXT_BODY).color(brand::TEXT)).wrap(),
+                    egui::Label::new(RichText::new(lead).size(TEXT_BODY).color(brand::text()))
+                        .wrap(),
                 );
             });
             Frame::new()
-                .fill(brand::SUNKEN)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::sunken())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(CornerRadius::same(8))
                 .inner_margin(Margin::symmetric(12, 10))
                 .show(ui, |ui| {
@@ -470,7 +472,7 @@ fn confirm_row(
                         egui::Label::new(
                             RichText::new(&message.headline)
                                 .size(TEXT_SECONDARY)
-                                .color(brand::STEP_TEXT),
+                                .color(brand::step_text()),
                         )
                         .wrap(),
                     );
@@ -481,7 +483,7 @@ fn confirm_row(
                                 message.extra_lines
                             ))
                             .size(TEXT_TAG)
-                            .color(brand::MUTED),
+                            .color(brand::muted()),
                         );
                     }
                 });
@@ -499,7 +501,7 @@ fn confirm_row(
                 }
             });
         });
-    dashed_rect(ui.painter(), framed.response.rect, Stroke::new(1.0, brand::FIELD_LINE));
+    dashed_rect(ui.painter(), framed.response.rect, Stroke::new(1.0, brand::field_line()));
     clicked
 }
 
@@ -509,26 +511,26 @@ fn paused_row(ui: &mut Ui, text: &str, fix: Option<&str>) {
     painter.rect(
         rect,
         CornerRadius::same(8),
-        brand::ITEM,
-        Stroke::new(1.0, brand::ITEM_LINE),
+        brand::item(),
+        Stroke::new(1.0, brand::item_line()),
         StrokeKind::Inside,
     );
     let boxed = Rect::from_center_size(
         pos2(rect.left() + 14.0 + ICON_BOX / 2.0, rect.center().y),
         vec2(ICON_BOX, ICON_BOX),
     );
-    painter.rect_filled(boxed, CornerRadius::same(8), brand::BUTTON);
-    paint_icon(painter, boxed.center(), Icon::Bang, brand::MUTED);
+    painter.rect_filled(boxed, CornerRadius::same(8), brand::button());
+    paint_icon(painter, boxed.center(), Icon::Bang, brand::muted());
     let mut right = rect.right() - 14.0;
     if let Some(fix) = fix {
-        let galley = painter.layout_no_wrap(fix.to_owned(), mono(TEXT_SECONDARY), brand::SOFT);
+        let galley = painter.layout_no_wrap(fix.to_owned(), mono(TEXT_SECONDARY), brand::soft());
         right -= galley.size().x;
-        painter.galley(pos2(right, rect.center().y - galley.size().y / 2.0), galley, brand::SOFT);
+        painter.galley(pos2(right, rect.center().y - galley.size().y / 2.0), galley, brand::soft());
         right -= 12.0;
     }
     let left = boxed.right() + 10.0;
-    let galley = ellipsized(painter, text, body(TEXT_BODY), brand::TEXT, right - left);
-    painter.galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);
+    let galley = ellipsized(painter, text, body(TEXT_BODY), brand::text(), right - left);
+    painter.galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley, brand::text());
 }
 
 fn dashed_rect(painter: &Painter, rect: Rect, stroke: Stroke) {

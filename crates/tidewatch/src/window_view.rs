@@ -7,14 +7,12 @@ use egui::{
 use tidewatch_core::prefs::{Panels, QUAKE_HEIGHT_RANGE, WindowPrefs};
 use tidewatch_core::ui_zoom;
 
+use crate::brand;
 use crate::hotkey;
 use crate::screen_kit::Size;
 use crate::screen_kit::TEXT_BODY;
 use crate::segmented;
-use crate::settings_ui::{
-    self, Control, FAINT, FIELD_LINE, GROUND, RED, TEAL, TEAL_TEXT, key_cap, key_cap_width,
-    row_with, switch_row,
-};
+use crate::settings_ui::{self, Control, key_cap, key_cap_width, row_with, switch_row};
 use crate::shell::HotkeyStatus;
 use crate::window_settings::Editor;
 
@@ -108,7 +106,7 @@ fn zoom_row(ui: &mut Ui, current: f32) -> Option<f32> {
 fn height_slider(ui: &mut Ui, height: &mut f32) -> egui::Response {
     ui.spacing_mut().slider_width = HEIGHT_SLIDER_WIDTH;
     ui.spacing_mut().item_spacing.x = 12.0;
-    ui.visuals_mut().selection.bg_fill = TEAL;
+    ui.visuals_mut().selection.bg_fill = brand::teal();
     let response =
         ui.add(egui::Slider::new(height, QUAKE_HEIGHT_RANGE).show_value(false).trailing_fill(true));
     kelp_ui::widgets::focus_ring(ui, &response, 4.0);
@@ -118,7 +116,7 @@ fn height_slider(ui: &mut Ui, height: &mut f32) -> egui::Response {
         egui::Align2::RIGHT_CENTER,
         format!("{:.0}%", *height * 100.0),
         egui::FontId::monospace(13.0),
-        settings_ui::TEXT,
+        brand::text(),
     );
     response
 }
@@ -148,8 +146,8 @@ fn hotkey_row(ui: &mut Ui, editor: &mut Editor, status: &HotkeyStatus) -> Option
         Control::new(RECORDER_WIDTH, RECORDER_HEIGHT),
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new("Hotkey").size(TEXT_BODY).color(settings_ui::TEXT));
-            settings_ui::note(ui, "Click and press the keys you want.", settings_ui::MUTED);
+            ui.label(RichText::new("Hotkey").size(TEXT_BODY).color(brand::text()));
+            settings_ui::note(ui, "Click and press the keys you want.", brand::muted());
             status_line(ui, problem.as_deref(), status);
         },
         |ui| applied = recorder(ui, editor, problem.is_some()),
@@ -159,18 +157,18 @@ fn hotkey_row(ui: &mut Ui, editor: &mut Editor, status: &HotkeyStatus) -> Option
 
 fn status_line(ui: &mut Ui, problem: Option<&str>, status: &HotkeyStatus) {
     if let Some(problem) = problem {
-        settings_ui::note(ui, problem, RED);
+        settings_ui::note(ui, problem, brand::red());
         return;
     }
     match status {
-        HotkeyStatus::Registered => settings_ui::note(ui, "Registered", TEAL_TEXT),
+        HotkeyStatus::Registered => settings_ui::note(ui, "Registered", brand::teal_text()),
         HotkeyStatus::Problem(reason) => {
-            settings_ui::note(ui, &format!("Not registered: {reason}"), RED);
+            settings_ui::note(ui, &format!("Not registered: {reason}"), brand::red());
         }
         HotkeyStatus::NoGlobalHotkeys => settings_ui::note(
             ui,
             "This desktop has no global hotkeys. Bind a shortcut to `tidewatch --toggle`.",
-            FAINT,
+            brand::faint(),
         ),
         HotkeyStatus::Off => {}
     }
@@ -200,7 +198,7 @@ fn recorder(ui: &mut Ui, editor: &mut Editor, bad: bool) -> Option<WindowPrefs> 
     let caps = widths.iter().sum::<f32>() + CAP_GAP * widths.len().saturating_sub(1) as f32;
     let width = (caps + 16.0).max(MIN_RECORDER);
     let (rect, response) = ui.allocate_exact_size(vec2(width, RECORDER_HEIGHT), Sense::click());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), GROUND);
+    ui.painter().rect_filled(rect, CornerRadius::same(10), brand::ground());
     let mut inner = ui.new_child(
         UiBuilder::new()
             .max_rect(rect.shrink2(vec2(8.0, 6.0)))
@@ -211,13 +209,13 @@ fn recorder(ui: &mut Ui, editor: &mut Editor, bad: bool) -> Option<WindowPrefs> 
         key_cap(&mut inner, label, 13.0);
     }
     if recording && labels.is_empty() {
-        inner.label(RichText::new("Press keys").size(13.0).color(FAINT));
+        inner.label(RichText::new("Press keys").size(13.0).color(brand::faint()));
     }
     let line = match (bad, recording, response.hovered()) {
-        (true, _, _) => RED,
-        (false, true, _) => TEAL,
-        (false, false, true) => FAINT,
-        (false, false, false) => FIELD_LINE,
+        (true, _, _) => brand::red(),
+        (false, true, _) => brand::teal(),
+        (false, false, true) => brand::faint(),
+        (false, false, false) => brand::field_line(),
     };
     ui.painter().rect_stroke(
         rect,

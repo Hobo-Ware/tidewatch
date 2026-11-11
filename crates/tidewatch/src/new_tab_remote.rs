@@ -30,12 +30,12 @@ pub(crate) fn show(ui: &mut Ui, offer: &RemoteOffer, on: bool) -> Shown {
     let lit = enabled && on;
     let painter = ui.painter().clone();
     let radius = CornerRadius::same(12);
-    painter.rect_filled(rect, radius, brand::CARD);
+    painter.rect_filled(rect, radius, brand::card());
     if lit {
-        let glow = Stroke::new(4.0, brand::TEAL.gamma_multiply(0.08));
+        let glow = Stroke::new(4.0, brand::teal().gamma_multiply(0.08));
         painter.rect_stroke(rect, radius, glow, StrokeKind::Outside);
     }
-    let line = if lit { brand::TEAL } else { brand::CARD_LINE };
+    let line = if lit { brand::teal() } else { brand::card_line() };
     painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
 
     let glyph_box = Rect::from_center_size(
@@ -43,9 +43,9 @@ pub(crate) fn show(ui: &mut Ui, offer: &RemoteOffer, on: bool) -> Shown {
         vec2(GLYPH_BOX, GLYPH_BOX),
     );
     let (tile, ink) = match (enabled, lit) {
-        (true, true) => (brand::TEAL.gamma_multiply(0.12), brand::TEAL),
-        (true, false) => (brand::ITEM, brand::SOFT),
-        (false, _) => (brand::ITEM, brand::FAINT),
+        (true, true) => (brand::teal().gamma_multiply(0.12), brand::teal()),
+        (true, false) => (brand::item(), brand::soft()),
+        (false, _) => (brand::item(), brand::faint()),
     };
     painter.rect_filled(glyph_box, CornerRadius::same(9), tile);
     paint_phone(&painter, glyph_box.center(), GLYPH, ink);
@@ -56,20 +56,20 @@ pub(crate) fn show(ui: &mut Ui, offer: &RemoteOffer, on: bool) -> Shown {
     );
     let text_left = glyph_box.right() + TEXT_GAP;
     let room = (switch_rect.left() - TEXT_GAP - text_left).max(1.0);
-    let title_ink = if enabled { brand::TEXT } else { brand::MUTED };
+    let title_ink = if enabled { brand::text() } else { brand::muted() };
     let title = painter.layout_no_wrap("Remote control".to_owned(), heading(14.0), title_ink);
     let sub = crate::reader_view::ellipsized(
         &painter,
         offer.line(),
         body(TEXT_SECONDARY),
-        brand::MUTED,
+        brand::muted(),
         room,
     );
     let stack = title.size().y + 2.0 + sub.size().y;
     let top = rect.center().y - stack / 2.0;
     let sub_at = pos2(text_left, top + title.size().y + 2.0);
     painter.galley(pos2(text_left, top), title, title_ink);
-    painter.galley(sub_at, sub, brand::MUTED);
+    painter.galley(sub_at, sub, brand::muted());
 
     let mut shown = enabled && on;
     let mut child = ui.new_child(UiBuilder::new().max_rect(switch_rect));

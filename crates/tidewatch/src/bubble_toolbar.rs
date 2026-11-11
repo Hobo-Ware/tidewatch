@@ -150,8 +150,8 @@ pub(crate) fn show(
             painter.rect(
                 toolbar,
                 CornerRadius::same(RADIUS),
-                brand::ITEM,
-                Stroke::new(BORDER, brand::ITEM_LINE),
+                brand::item(),
+                Stroke::new(BORDER, brand::item_line()),
                 StrokeKind::Inside,
             );
             let mut x = toolbar.left() + BORDER + PAD;
@@ -193,7 +193,7 @@ fn button(ui: &mut Ui, seq: u64, tool: Tool, rect: Rect, text: &str) -> Option<B
             Color32::from_white_alpha(16),
         );
     }
-    let ink = if hovered || copied { brand::TEAL_TEXT } else { brand::MUTED };
+    let ink = if hovered || copied { brand::teal_text() } else { brand::muted() };
     let glyph = Rect::from_center_size(rect.center(), vec2(ICON, ICON));
     if copied {
         code_block::paint_check(ui.painter(), glyph, ink);

@@ -59,9 +59,9 @@ fn row_h(width: f32) -> f32 {
 
 fn status_ink(status: Status) -> Color32 {
     match status {
-        Status::Idle => brand::DONE,
-        Status::Working => brand::WORKING,
-        Status::Quiet | Status::NotRunning => brand::MUTED,
+        Status::Idle => brand::done(),
+        Status::Working => brand::working(),
+        Status::Quiet | Status::NotRunning => brand::muted(),
     }
 }
 
@@ -82,8 +82,8 @@ pub(crate) fn line(ui: &mut Ui, data: &Card, open: bool, reveal: bool) -> Option
     ui.painter().rect(
         rect,
         CornerRadius::same(14),
-        brand::CARD,
-        Stroke::new(1.0, brand::CARD_LINE),
+        brand::card(),
+        Stroke::new(1.0, brand::card_line()),
         StrokeKind::Inside,
     );
     let painter = ui.painter_at(rect);
@@ -92,14 +92,14 @@ pub(crate) fn line(ui: &mut Ui, data: &Card, open: bool, reveal: bool) -> Option
         Align2::LEFT_CENTER,
         "Running elsewhere",
         heading(TEXT_TITLE),
-        brand::TEXT,
+        brand::text(),
     );
     painter.text(
         pos2(rect.left() + 14.0, rect.center().y + 10.0),
         Align2::LEFT_CENTER,
         line_text(data.rows.len()),
         body(12.0),
-        brand::MUTED,
+        brand::muted(),
     );
     let label = if open { "Hide" } else { "Move here" };
     let button_w = crate::screen_kit::button_width(ui, label, Size::Compact);
@@ -135,8 +135,8 @@ pub(crate) fn card(ui: &mut Ui, data: &Card, reveal: bool) -> Option<CardAction>
     ui.painter().rect(
         rect,
         CornerRadius::same(12),
-        brand::CARD,
-        Stroke::new(1.0, brand::CARD_LINE),
+        brand::card(),
+        Stroke::new(1.0, brand::card_line()),
         StrokeKind::Inside,
     );
     let mut action = header(ui, rect, data);
@@ -167,10 +167,10 @@ fn disclosure(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
     painter.hline(
         (rect.left() + 12.0)..=(rect.right() - 12.0),
         rect.top(),
-        Stroke::new(1.0, brand::CARD_LINE),
+        Stroke::new(1.0, brand::card_line()),
     );
     let chevron = if data.ended_open { "\u{25be}" } else { "\u{25b8}" };
-    let ink = if response.hovered() { brand::TEXT } else { brand::MUTED };
+    let ink = if response.hovered() { brand::text() } else { brand::muted() };
     painter.text(
         pos2(rect.left() + SIDE, rect.center().y),
         Align2::LEFT_CENTER,
@@ -188,13 +188,13 @@ fn disclosure(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
 fn header(ui: &mut Ui, rect: Rect, data: &Card) -> Option<CardAction> {
     let area = Rect::from_min_size(rect.min, vec2(rect.width(), HEADER_H));
     let painter = ui.painter_at(area);
-    painter.hline(area.x_range(), area.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+    painter.hline(area.x_range(), area.bottom(), Stroke::new(1.0, brand::card_line()));
     let label = "Move all idle here";
     let button_w = button_width(ui, label, Size::Compact);
     let room = area.width() - 2.0 * SIDE - button_w - HEADER_GAP;
-    let summary = ellipsized(&painter, &data.summary, body(TEXT_SECONDARY), brand::MUTED, room);
+    let summary = ellipsized(&painter, &data.summary, body(TEXT_SECONDARY), brand::muted(), room);
     let at = pos2(area.left() + SIDE, area.center().y - summary.size().y / 2.0);
-    painter.galley(at, summary, brand::MUTED);
+    painter.galley(at, summary, brand::muted());
     let mut inner = ui.new_child(
         UiBuilder::new()
             .id_salt("takeover_header")
@@ -217,7 +217,7 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &Row) -> Option<CardAction> {
     painter.hline(
         (rect.left() + 12.0)..=(rect.right() - 12.0),
         rect.top(),
-        Stroke::new(1.0, brand::CARD_LINE),
+        Stroke::new(1.0, brand::card_line()),
     );
     paint_cli_badge(
         &painter,
@@ -241,15 +241,15 @@ fn row_cluster(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, rect: Re
 }
 
 fn level_ink(row: &Row) -> Color32 {
-    if row.yolo { brand::RED } else { brand::SOFT }
+    if row.yolo { brand::red() } else { brand::soft() }
 }
 
 fn hover_whole_name(ui: &mut Ui, row: &Row, rects: [Rect; 2]) {
     for (part, rect) in rects.into_iter().enumerate() {
         ui.interact(rect, Id::new(("takeover_name", &row.key, part)), Sense::hover()).on_hover_ui(
             |ui| {
-                ui.label(RichText::new(&row.name).size(TEXT_SECONDARY).color(brand::TEXT));
-                ui.label(RichText::new(&row.folder).font(mono(TEXT_TAG)).color(brand::MUTED));
+                ui.label(RichText::new(&row.name).size(TEXT_SECONDARY).color(brand::text()));
+                ui.label(RichText::new(&row.folder).font(mono(TEXT_TAG)).color(brand::muted()));
             },
         );
     }
@@ -266,17 +266,17 @@ fn draw_wide(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row) -> Option<Ca
         pill(&mut cluster, row.status.label(), status_ink(row.status));
     }
     pill(&mut cluster, &row.level, level_ink(row));
-    cluster.label(RichText::new(&row.host).size(TEXT_SECONDARY).color(brand::MUTED));
+    cluster.label(RichText::new(&row.host).size(TEXT_SECONDARY).color(brand::muted()));
     let text_x = rect.left() + SIDE + BADGE + 12.0;
     let room = (cluster.min_rect().left() - text_x - 12.0).max(40.0);
-    let name = ellipsized(painter, &row.name, body(13.0), brand::TEXT, room);
-    let folder = ellipsized(painter, &row.folder, mono(TEXT_TAG), brand::FAINT, room);
+    let name = ellipsized(painter, &row.name, body(13.0), brand::text(), room);
+    let folder = ellipsized(painter, &row.folder, mono(TEXT_TAG), brand::faint(), room);
     let name_at = pos2(text_x, rect.center().y - 15.0);
     let folder_at = pos2(text_x, rect.center().y + 3.0);
     let rects =
         [Rect::from_min_size(name_at, name.size()), Rect::from_min_size(folder_at, folder.size())];
-    painter.galley(name_at, name, brand::TEXT);
-    painter.galley(folder_at, folder, brand::FAINT);
+    painter.galley(name_at, name, brand::text());
+    painter.galley(folder_at, folder, brand::faint());
     hover_whole_name(ui, row, rects);
     action
 }
@@ -300,7 +300,7 @@ fn draw_narrow(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row) -> Option<
     }
     pill(&mut pills, &row.level, level_ink(row));
     let name_room = pills.min_rect().left() - text_x - HEADER_GAP;
-    let name = ellipsized(painter, &row.name, body(TEXT_SECONDARY), brand::TEXT, name_room);
+    let name = ellipsized(painter, &row.name, body(TEXT_SECONDARY), brand::text(), name_room);
     let name_at = pos2(text_x, top_y - name.size().y / 2.0);
 
     let mut offer = row_cluster(ui, ("takeover_offer", &row.key), line(bottom_y));
@@ -311,15 +311,15 @@ fn draw_narrow(ui: &mut Ui, painter: &Painter, rect: Rect, row: &Row) -> Option<
 
     let rects =
         [Rect::from_min_size(name_at, name.size()), Rect::from_min_size(info_at, info.size())];
-    painter.galley(name_at, name, brand::TEXT);
-    painter.galley(info_at, info, brand::FAINT);
+    painter.galley(name_at, name, brand::text());
+    painter.galley(info_at, info, brand::faint());
     hover_whole_name(ui, row, rects);
     clicked.map(CardAction::Press)
 }
 
 fn info_galley(painter: &Painter, row: &Row, room: f32) -> std::sync::Arc<egui::Galley> {
     let mut job = LayoutJob::default();
-    let format = |font| TextFormat::simple(font, brand::FAINT);
+    let format = |font| TextFormat::simple(font, brand::faint());
     job.append(&row.folder, 0.0, format(mono(TEXT_TAG)));
     job.append(&format!(" \u{b7} {}", row.host), 0.0, format(body(TEXT_TAG)));
     job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
@@ -365,20 +365,22 @@ pub(crate) fn dialog(
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     ui.label(
-                        RichText::new((number + 1).to_string()).font(mono(13.0)).color(brand::TEAL),
+                        RichText::new((number + 1).to_string())
+                            .font(mono(13.0))
+                            .color(brand::teal()),
                     );
                     ui.add(
-                        egui::Label::new(RichText::new(line).size(TEXT_BODY).color(brand::SOFT))
+                        egui::Label::new(RichText::new(line).size(TEXT_BODY).color(brand::soft()))
                             .wrap(),
                     );
                 });
             }
             commands(ui, view);
             for note in &view.notes {
-                ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::ORANGE));
+                ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::orange()));
             }
             if let Some(note) = &view.yolo_note {
-                ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::MUTED));
+                ui.label(RichText::new(note).size(TEXT_SECONDARY).color(brand::muted()));
             }
             if view.offer_worktree {
                 switch_line(ui, "Move it into a new worktree first", worktree);
@@ -400,8 +402,8 @@ fn commands(ui: &mut Ui, view: &DialogView) {
     let list = |ui: &mut Ui| {
         for item in &view.items {
             Frame::new()
-                .fill(brand::ITEM)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::item())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(8)
                 .inner_margin(Margin::symmetric(12, 8))
                 .show(ui, |ui| {
@@ -411,14 +413,14 @@ fn commands(ui: &mut Ui, view: &DialogView) {
                         ui.label(
                             RichText::new(format!("{}  {}", item.name, item.folder))
                                 .size(TEXT_SECONDARY)
-                                .color(brand::TEXT),
+                                .color(brand::text()),
                         );
                     }
                     let command =
                         item.command.as_deref().unwrap_or("this session cannot be resumed");
                     ui.add(
                         egui::Label::new(
-                            RichText::new(command).font(mono(12.0)).color(brand::MUTED),
+                            RichText::new(command).font(mono(12.0)).color(brand::muted()),
                         )
                         .wrap(),
                     );

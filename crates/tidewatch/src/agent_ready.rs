@@ -50,7 +50,7 @@ pub(crate) fn empty_state(ui: &Ui, area: Rect, ready: Ready) {
     let note = painter.layout(
         "A fresh worktree on its own branch. Nothing runs until you say what to do.".to_owned(),
         body(14.0),
-        brand::MUTED,
+        brand::muted(),
         (area.width() - 48.0).min(520.0),
     );
     let header = header_for(area.height(), note.size().y);
@@ -74,13 +74,13 @@ pub(crate) fn empty_state(ui: &Ui, area: Rect, ready: Ready) {
         Align2::CENTER_TOP,
         format!("{} is ready", ready.profile),
         heading(24.0),
-        brand::TEXT,
+        brand::text(),
     );
     if note_h > 0.0 {
         painter.galley(
             pos2(area.center().x - note.size().x / 2.0, title.bottom() + NOTE_GAP),
             note,
-            brand::MUTED,
+            brand::muted(),
         );
     }
 }
@@ -246,7 +246,7 @@ mod tests {
         let chips = out
             .shapes
             .iter()
-            .filter(|clipped| matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == brand::SUNKEN && r.rect.height() == crate::screen_kit::Size::Tag.height()))
+            .filter(|clipped| matches!(&clipped.shape, egui::Shape::Rect(r) if r.fill == brand::sunken() && r.rect.height() == crate::screen_kit::Size::Tag.height()))
             .count();
         let path = paths[0].display().to_string();
         assert_eq!((crate::tokens::sendable(&text), chips), (format!("see {path} please"), 1));
@@ -378,7 +378,7 @@ mod tests {
             });
         });
         let boxed = out.shapes.iter().find_map(|clipped| match &clipped.shape {
-            egui::Shape::Rect(rect) if rect.fill == brand::CARD => Some(rect.rect),
+            egui::Shape::Rect(rect) if rect.fill == brand::card() => Some(rect.rect),
             _ => None,
         });
         let header = text_with(&out.shapes, "is ready")

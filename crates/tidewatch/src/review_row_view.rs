@@ -23,10 +23,10 @@ const RING: f32 = 4.0;
 
 fn ink(standing: Standing) -> Color32 {
     match standing {
-        Standing::Answered => brand::GREEN,
-        Standing::Working => brand::ORANGE,
-        Standing::Waiting => brand::FAINT,
-        Standing::Resolved => brand::MUTED,
+        Standing::Answered => brand::green(),
+        Standing::Working => brand::orange(),
+        Standing::Waiting => brand::faint(),
+        Standing::Resolved => brand::muted(),
     }
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn show(
     });
     let profile = facts.map_or("The agent", |facts| facts.profile);
     Frame::new()
-        .fill(brand::TEAL_NAV)
+        .fill(brand::teal_nav())
         .stroke(Stroke::new(1.0, USER_LINE))
         .corner_radius(RADIUS)
         .inner_margin(Margin::symmetric(18, 16))
@@ -60,14 +60,14 @@ pub(crate) fn show(
             header(ui, &review);
             if !message.is_empty() {
                 indented(ui, |ui| {
-                    ui.label(RichText::new(message).size(14.0).color(brand::STEP_TEXT));
+                    ui.label(RichText::new(message).size(14.0).color(brand::step_text()));
                 });
             }
             if !review.notes.is_empty() {
                 indented(ui, |ui| {
                     Frame::new()
-                        .fill(brand::SUNKEN)
-                        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                        .fill(brand::sunken())
+                        .stroke(Stroke::new(1.0, brand::item_line()))
                         .corner_radius(CornerRadius::same(NOTE_RADIUS))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -81,7 +81,7 @@ pub(crate) fn show(
                                     ui.painter().rect_filled(
                                         line,
                                         CornerRadius::ZERO,
-                                        brand::SIDEBAR_LINE,
+                                        brand::sidebar_line(),
                                     );
                                 }
                                 if let Some(path) = note_block(ui, note, profile) {
@@ -109,7 +109,7 @@ fn indented(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 fn header(ui: &mut Ui, review: &SentReview) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
     let painter = ui.painter();
-    let stroke = Stroke::new(1.4, brand::TEAL_TEXT);
+    let stroke = Stroke::new(1.4, brand::teal_text());
     let p = |x: f32, y: f32| {
         rect.left_center() + vec2((x - 12.0) * 16.0 / 24.0 + 8.0, (y - 12.0) * 16.0 / 24.0)
     };
@@ -118,25 +118,26 @@ fn header(ui: &mut Ui, review: &SentReview) {
         stroke,
     ));
     painter.line_segment([p(8.0, 10.0), p(16.0, 10.0)], stroke);
-    let title = painter.layout_no_wrap("Review sent".to_owned(), heading(TEXT_TITLE), brand::TEXT);
+    let title =
+        painter.layout_no_wrap("Review sent".to_owned(), heading(TEXT_TITLE), brand::text());
     let title_w = title.size().x;
     painter.galley(
         pos2(rect.left() + 26.0, rect.center().y - title.size().y / 2.0),
         title,
-        brand::TEXT,
+        brand::text(),
     );
-    let sub = painter.layout_no_wrap(review.notes_label(), body(12.0), brand::MUTED);
+    let sub = painter.layout_no_wrap(review.notes_label(), body(12.0), brand::muted());
     painter.galley(
         pos2(rect.left() + 26.0 + title_w + 10.0, rect.center().y - sub.size().y / 2.0),
         sub,
-        brand::MUTED,
+        brand::muted(),
     );
     if !review.notes.is_empty() {
-        let progress = painter.layout_no_wrap(review.progress(), body(12.0), brand::FAINT);
+        let progress = painter.layout_no_wrap(review.progress(), body(12.0), brand::faint());
         painter.galley(
             pos2(rect.right() - progress.size().x, rect.center().y - progress.size().y / 2.0),
             progress,
-            brand::FAINT,
+            brand::faint(),
         );
     }
 }
@@ -148,7 +149,7 @@ fn note_block(ui: &mut Ui, note: &SentNote, profile: &str) -> Option<String> {
         ui.set_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = 3.0;
         ui.horizontal(|ui| {
-            let label = RichText::new(place(note)).font(mono(12.0)).color(brand::MUTED);
+            let label = RichText::new(place(note)).font(mono(12.0)).color(brand::muted());
             let link = ui.add(egui::Label::new(label).sense(Sense::click()));
             if link
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -164,7 +165,7 @@ fn note_block(ui: &mut Ui, note: &SentNote, profile: &str) -> Option<String> {
                 }
             });
         });
-        ui.label(RichText::new(&note.text).size(14.0).color(brand::TEXT));
+        ui.label(RichText::new(&note.text).size(14.0).color(brand::text()));
         if let Some(reply) = &note.reply {
             reply_line(ui, profile, reply);
         }
@@ -182,11 +183,11 @@ fn reply_line(ui: &mut Ui, profile: &str, reply: &str) {
     let shown = Frame::new().inner_margin(Margin { left: 10, ..Margin::ZERO }).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let text = format!("{profile}: {reply}");
-        ui.label(RichText::new(text).size(13.0).color(brand::SOFT));
+        ui.label(RichText::new(text).size(13.0).color(brand::soft()));
     });
     let rect = shown.response.rect;
     let bar = Rect::from_min_max(rect.left_top(), pos2(rect.left() + BAR_W, rect.bottom()));
-    ui.painter().rect_filled(bar, CornerRadius::same(1), brand::FIELD_LINE);
+    ui.painter().rect_filled(bar, CornerRadius::same(1), brand::field_line());
 }
 
 fn buttons(ui: &mut Ui, review: &SentReview, actions: &mut Vec<ReviewAction>) {

@@ -9,6 +9,7 @@ use egui::{
 use tidewatch_core::agents::Level;
 use tidewatch_core::profiles::default_effort_for;
 
+use crate::brand;
 use crate::catalog::Availability;
 use crate::profile_editor::{Draft, Editor, Group};
 use crate::screen_kit::{badge_colors, badge_letter, field_label};
@@ -17,10 +18,7 @@ use crate::settings_ui::editor::{
     Bar, BarAction, Item, card_header, columns, list_item, page_area, page_top, save_bar,
     split_card,
 };
-use crate::settings_ui::{
-    CARD, FAINT, GREEN, MUTED, ORANGE, RED, SOFT, TEAL_TEXT, caption, disclosure, fade_edges,
-    field, note, switch_line,
-};
+use crate::settings_ui::{caption, disclosure, fade_edges, field, note, switch_line};
 use crate::settings_view::Action;
 
 pub(crate) type Probes = HashMap<String, Availability>;
@@ -51,10 +49,10 @@ fn tint(agent: &str) -> (String, (Color32, Color32)) {
 
 fn probe_label(availability: Option<&Availability>) -> (String, Color32) {
     match availability {
-        Some(Availability::Found(Some(version))) => (format!("{version} found"), SOFT),
-        Some(Availability::Found(None)) => ("found".to_owned(), SOFT),
-        Some(Availability::Missing) => ("not installed".to_owned(), ORANGE),
-        Some(Availability::Probing) | None => ("checking...".to_owned(), FAINT),
+        Some(Availability::Found(Some(version))) => (format!("{version} found"), brand::soft()),
+        Some(Availability::Found(None)) => ("found".to_owned(), brand::soft()),
+        Some(Availability::Missing) => ("not installed".to_owned(), brand::orange()),
+        Some(Availability::Probing) | None => ("checking...".to_owned(), brand::faint()),
     }
 }
 
@@ -145,7 +143,7 @@ fn list_column(ui: &mut Ui, rect: Rect, editor: &mut Editor, probes: &Probes) {
                     badge: Some((&letter, colors)),
                     name: &draft.name,
                     tag: draft.level.label(),
-                    tag_color: if selected { TEAL_TEXT } else { MUTED },
+                    tag_color: if selected { brand::teal_text() } else { brand::muted() },
                     selected,
                     dimmed: missing,
                 };
@@ -168,12 +166,12 @@ fn group_header(ui: &mut Ui, group: &Group, availability: Option<&Availability>)
         Align2::LEFT_CENTER,
         group.name.to_uppercase(),
         FontId::proportional(12.0),
-        FAINT,
+        brand::faint(),
     );
     let (text, color) = if group.known {
         probe_label(availability)
     } else {
-        ("not in the agent table".to_owned(), ORANGE)
+        ("not in the agent table".to_owned(), brand::orange())
     };
     let right = painter.text(
         rect.right_center() + vec2(-4.0, 2.0),
@@ -183,7 +181,7 @@ fn group_header(ui: &mut Ui, group: &Group, availability: Option<&Availability>)
         color,
     );
     let dot = match availability {
-        Some(Availability::Found(_)) if group.known => GREEN,
+        Some(Availability::Found(_)) if group.known => brand::green(),
         _ => color,
     };
     painter.circle_filled(pos2(right.left() - 8.0, rect.center().y + 2.0), 3.0, dot);
@@ -191,13 +189,13 @@ fn group_header(ui: &mut Ui, group: &Group, availability: Option<&Availability>)
 
 fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Option<Action> {
     let Some(selected) = editor.drafts.get(editor.selected).cloned() else {
-        ui.painter().rect_filled(rect, CornerRadius::same(14), CARD);
+        ui.painter().rect_filled(rect, CornerRadius::same(14), brand::card());
         ui.painter().text(
             rect.center(),
             Align2::CENTER_CENTER,
             "No profiles. Add one with New profile.",
             FontId::proportional(14.0),
-            MUTED,
+            brand::muted(),
         );
         return None;
     };
@@ -226,7 +224,7 @@ fn editor_card(ui: &mut Ui, rect: Rect, editor: &mut Editor, file: &str) -> Opti
                 }
             });
         });
-    fade_edges(&body, &form_scroll, CARD);
+    fade_edges(&body, &form_scroll, brand::card());
     let mut action = None;
     if bar.shows() {
         let mut bar_ui = ui.new_child(UiBuilder::new().max_rect(parts.bar));
@@ -316,7 +314,7 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
 
 fn levels(ui: &mut Ui, draft: &mut Draft) -> bool {
     let labels = Level::ALL.map(Level::label);
-    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(RED));
+    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::red()));
     let active = Level::ALL.iter().position(|level| *level == draft.level).unwrap_or(usize::MAX);
     let id = ui.id().with("profile_level");
     let picked = segmented::inline_or_chips(ui, id, &labels, &tones, &[], active);
@@ -326,7 +324,7 @@ fn levels(ui: &mut Ui, draft: &mut Draft) -> bool {
     caption(ui, level_note(draft.level));
     if draft.level == Level::Yolo {
         ui.add_space(2.0);
-        note(ui, "YOLO only runs in agent worktree tabs; Other refuses it.", RED);
+        note(ui, "YOLO only runs in agent worktree tabs; Other refuses it.", brand::red());
     }
     picked.is_some()
 }

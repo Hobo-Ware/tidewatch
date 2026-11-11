@@ -7,10 +7,8 @@ use egui::{
 };
 use stdusk_egui::widgets::style_menu;
 
-use super::{
-    BAR, CARD, CARD_LINE, HEADER_H, ITEM, ITEM_LINE, MUTED, ORANGE, RED, SOFT, TEAL, TEXT, Tone,
-    badge, button, button_width, font_semibold, header_at, heading,
-};
+use super::{HEADER_H, Tone, badge, button, button_width, font_semibold, header_at, heading};
+use crate::brand;
 use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::{Glyph, Size, glyph_button, selection_row};
 
@@ -41,8 +39,8 @@ pub(crate) fn save_bar(ui: &mut Ui, bar: &Bar) -> Option<BarAction> {
     let rect = ui.available_rect_before_wrap();
     let rect = Rect::from_min_size(rect.min, vec2(rect.width(), BAR_HEIGHT));
     let corner = CornerRadius { nw: 0, ne: 0, sw: CARD_RADIUS - 1, se: CARD_RADIUS - 1 };
-    ui.painter().rect_filled(rect, corner, BAR);
-    ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, CARD_LINE));
+    ui.painter().rect_filled(rect, corner, brand::bar());
+    ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, brand::card_line()));
     let mut action = None;
     let inner_rect = rect.shrink2(vec2(20.0, 0.0));
     let buttons_w = button_width(ui, "Save", Size::Regular)
@@ -55,9 +53,9 @@ pub(crate) fn save_bar(ui: &mut Ui, bar: &Bar) -> Option<BarAction> {
     message.spacing_mut().item_spacing.x = 10.0;
     let (dot_rect, _) = message.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
     let (dot, text, color) = match (bar.error, bar.saving) {
-        (Some(error), _) => (RED, error, RED),
-        (None, true) => (TEAL, "Saving...", SOFT),
-        (None, false) => (ORANGE, "Unsaved changes", SOFT),
+        (Some(error), _) => (brand::red(), error, brand::red()),
+        (None, true) => (brand::teal(), "Saving...", brand::soft()),
+        (None, false) => (brand::orange(), "Unsaved changes", brand::soft()),
     };
     message.painter().circle_filled(dot_rect.center(), 4.0, dot);
     message
@@ -113,8 +111,8 @@ pub(crate) fn list_item(ui: &mut Ui, item: &Item) -> Response {
             painter.rect(
                 rect,
                 CornerRadius::same(8),
-                ITEM,
-                Stroke::new(1.0, ITEM_LINE),
+                brand::item(),
+                Stroke::new(1.0, brand::item_line()),
                 StrokeKind::Inside,
             );
         }
@@ -138,7 +136,7 @@ pub(crate) fn list_item(ui: &mut Ui, item: &Item) -> Response {
             Align2::LEFT_CENTER,
             item.name,
             FontId::proportional(TEXT_BODY),
-            TEXT,
+            brand::text(),
         );
         painter.text(
             pos2(rect.right() - 12.0, rect.center().y),
@@ -165,16 +163,16 @@ pub(crate) struct CardRects {
 
 pub(crate) fn split_card(ui: &Ui, rect: Rect, bar: bool) -> CardRects {
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(CARD_RADIUS), CARD);
+    painter.rect_filled(rect, CornerRadius::same(CARD_RADIUS), brand::card());
     painter.rect_stroke(
         rect,
         CornerRadius::same(CARD_RADIUS),
-        Stroke::new(1.0, CARD_LINE),
+        Stroke::new(1.0, brand::card_line()),
         StrokeKind::Inside,
     );
     let content = rect.shrink(1.0);
     let header = Rect::from_min_size(content.min, vec2(content.width(), CARD_HEADER));
-    painter.hline(content.x_range(), header.bottom(), Stroke::new(1.0, CARD_LINE));
+    painter.hline(content.x_range(), header.bottom(), Stroke::new(1.0, brand::card_line()));
     let bar_height = if bar { BAR_HEIGHT } else { 0.0 };
     let body = Rect::from_min_max(
         pos2(content.left(), header.bottom() + 1.0),
@@ -205,7 +203,7 @@ pub(crate) fn card_header(
     left.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.add(egui::Label::new(heading(name, 20.0)).truncate());
-        ui.add(egui::Label::new(RichText::new(line).size(13.0).color(MUTED)).truncate())
+        ui.add(egui::Label::new(RichText::new(line).size(13.0).color(brand::muted())).truncate())
             .on_hover_text(line);
     });
     let at = Rect::from_center_size(
@@ -224,7 +222,7 @@ pub(crate) fn card_header(
     }
     egui::Popup::menu(&more).align(RectAlign::BOTTOM_END).gap(4.0).width(MENU_W).show(|ui| {
         style_menu(ui);
-        let row = egui::Button::new(RichText::new("Delete").color(RED))
+        let row = egui::Button::new(RichText::new("Delete").color(brand::red()))
             .min_size(vec2(ui.available_width(), 0.0));
         if ui.add(row).clicked() {
             delete = true;

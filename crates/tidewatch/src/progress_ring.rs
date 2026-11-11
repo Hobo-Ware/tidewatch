@@ -13,11 +13,11 @@ const STEPS_PER_TURN: f32 = 72.0;
 
 pub(crate) fn tone_color(tone: Tone) -> Color32 {
     match tone {
-        Tone::Working => brand::WORKING,
-        Tone::NeedsYou => brand::NEEDS,
-        Tone::Waiting => brand::WAITING,
-        Tone::Blocked => brand::BLOCKED,
-        Tone::Done => brand::DONE,
+        Tone::Working => brand::working(),
+        Tone::NeedsYou => brand::needs(),
+        Tone::Waiting => brand::waiting(),
+        Tone::Blocked => brand::blocked(),
+        Tone::Done => brand::done(),
     }
 }
 
@@ -93,18 +93,18 @@ pub(crate) fn paint_mark(painter: &Painter, center: Pos2, size: f32, mark: Mark,
                 center + vec2(-0.1, 0.4) * unit,
                 center + vec2(0.55, -0.4) * unit,
             ];
-            painter.add(Shape::line(points, Stroke::new(1.7, brand::GREEN)));
+            painter.add(Shape::line(points, Stroke::new(1.7, brand::green())));
         }
-        Mark::Doing => paint_spinner(painter, center, size * 0.8, time, brand::TEAL),
+        Mark::Doing => paint_spinner(painter, center, size * 0.8, time, brand::teal()),
         Mark::Skipped => {
             let half = vec2(0.4 * unit, 0.0);
-            painter.line_segment([center - half, center + half], Stroke::new(1.5, brand::FAINT));
+            painter.line_segment([center - half, center + half], Stroke::new(1.5, brand::faint()));
         }
         Mark::Blocked => {
-            painter.text(center, Align2::CENTER_CENTER, "!", heading(size), brand::NEEDS);
+            painter.text(center, Align2::CENTER_CENTER, "!", heading(size), brand::needs());
         }
         Mark::Todo => {
-            painter.circle_stroke(center, size * 0.3, Stroke::new(1.3, brand::FAINT));
+            painter.circle_stroke(center, size * 0.3, Stroke::new(1.3, brand::faint()));
         }
     }
 }
@@ -226,6 +226,6 @@ mod tests {
                 assert_ne!(tone_color(*tone), tone_color(*other));
             }
         }
-        assert_eq!(tone_color(Tone::Blocked), brand::RED);
+        assert_eq!(tone_color(Tone::Blocked), brand::red());
     }
 }

@@ -66,7 +66,7 @@ pub(crate) fn totals(counts: &[Option<LineCounts>], files: usize) -> Option<Line
 
 /// The ink of a removed-lines count: red, or muted for a zero, which removes nothing.
 pub(crate) fn removed_ink(removed: usize) -> egui::Color32 {
-    if removed == 0 { brand::MUTED } else { brand::RED }
+    if removed == 0 { brand::muted() } else { brand::red() }
 }
 
 /// What follows the short id in the meta line: the author and how many files.
@@ -104,15 +104,15 @@ fn meta_job(view: &TabView, files: usize) -> LayoutJob {
     let mut job = LayoutJob::default();
     let plain = |font: FontId, color| TextFormat { font_id: font, color, ..TextFormat::default() };
     if let Some(id) = short_id(view) {
-        job.append(&id, 0.0, plain(mono(TEXT_TAG), brand::SOFT));
+        job.append(&id, 0.0, plain(mono(TEXT_TAG), brand::soft()));
     }
     let author = view.summary.as_ref().map(|(_, summary)| summary.author.as_str());
     let tail = format!(" · {}", meta_tail(author, files));
-    job.append(&tail, 0.0, plain(body(12.0), brand::MUTED));
+    job.append(&tail, 0.0, plain(body(12.0), brand::muted()));
     if let Some((added, removed)) = totals(&view.counts, files) {
-        job.append(" · ", 0.0, plain(body(12.0), brand::MUTED));
-        job.append(&format!("+{added}"), 0.0, plain(body(12.0), brand::GREEN));
-        job.append(&format!(" -{removed}"), 0.0, plain(body(12.0), brand::RED));
+        job.append(" · ", 0.0, plain(body(12.0), brand::muted()));
+        job.append(&format!("+{added}"), 0.0, plain(body(12.0), brand::green()));
+        job.append(&format!(" -{removed}"), 0.0, plain(body(12.0), brand::red()));
     }
     job
 }
@@ -130,7 +130,7 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot, waiting: &Waitin
     let below = Rect::from_min_max(pos2(card.left(), gap.top()), card.max);
     let clip = viewport.intersect(ui.clip_rect());
     let painter = ui.painter().with_clip_rect(clip);
-    let fill = brand::TEAL.gamma_multiply_u8(FILL_ALPHA);
+    let fill = brand::teal().gamma_multiply_u8(FILL_ALPHA);
     painter.rect_filled(below, CornerRadius { nw: 0, ne: 0, sw: RADIUS, se: RADIUS }, fill);
     for left_side in [true, false] {
         painter.add(row_corner(
@@ -150,19 +150,19 @@ pub(crate) fn show(ui: &mut Ui, view: &mut TabView, spot: Spot, waiting: &Waitin
             Align2::LEFT_CENTER,
             "Loading files...",
             body(12.0),
-            brand::MUTED,
+            brand::muted(),
         );
         return;
     }
     let galley = painter.layout_job(meta_job(view, files));
-    selectable::galley(ui, pos2(text_x, meta_y - galley.size().y / 2.0), galley, brand::MUTED);
+    selectable::galley(ui, pos2(text_x, meta_y - galley.size().y / 2.0), galley, brand::muted());
     if files == 0 {
         painter.text(
             pos2(text_x + ROW_PAD, gap.top() + META_H + FILE_ROW_H / 2.0),
             Align2::LEFT_CENTER,
             "Nothing changed here",
             body(13.0),
-            brand::FAINT,
+            brand::faint(),
         );
         return;
     }
@@ -275,7 +275,7 @@ fn file_row(
             Align2::RIGHT_CENTER,
             format!("+{added}"),
             mono(12.0),
-            brand::GREEN,
+            brand::green(),
         );
         right -= ADD_W;
     }
@@ -283,7 +283,7 @@ fn file_row(
         right -= paint_notes_badge(&painter, right, center_y, notes) + COUNT_GAP;
     }
     let left = rect.left() + ROW_PAD + LETTER_W;
-    let ink = selected_ink(mark == Mark::Shown, brand::TEXT);
+    let ink = selected_ink(mark == Mark::Shown, brand::text());
     paint_path(ui, &painter, &change.path, (left, right - COUNT_GAP, center_y), ink);
     response.on_hover_text(&change.path).clicked()
 }
@@ -295,16 +295,16 @@ fn notes_label(count: usize) -> String {
 /// A speech bubble and `count` (`99+` past 99) in teal with the badge's right edge at `right`.
 /// Returns the badge's width.
 fn paint_notes_badge(painter: &Painter, right: f32, mid: f32, count: usize) -> f32 {
-    let galley = painter.layout_no_wrap(notes_label(count), body(TEXT_TAG), brand::TEAL);
+    let galley = painter.layout_no_wrap(notes_label(count), body(TEXT_TAG), brand::teal());
     let width = NOTES_ICON + NOTES_ICON_GAP + galley.size().x;
     let left = right - width;
     let spot =
         Rect::from_center_size(pos2(left + NOTES_ICON / 2.0, mid), vec2(NOTES_ICON, NOTES_ICON));
-    icons::paint(painter, spot, Icon::Comment, brand::TEAL);
+    icons::paint(painter, spot, Icon::Comment, brand::teal());
     painter.galley(
         pos2(left + NOTES_ICON + NOTES_ICON_GAP, mid - galley.size().y / 2.0),
         galley,
-        brand::TEAL,
+        brand::teal(),
     );
     width
 }
@@ -327,9 +327,9 @@ pub(crate) fn paint_path(
         return;
     }
     let dir_text = tail_fit(ui, dir, &font, room - name_galley.size().x);
-    let dir_galley = painter.layout_no_wrap(dir_text, font, brand::FAINT);
+    let dir_galley = painter.layout_no_wrap(dir_text, font, brand::faint());
     let name_x = left + dir_galley.size().x;
-    painter.galley(pos2(left, y - dir_galley.size().y / 2.0), dir_galley, brand::FAINT);
+    painter.galley(pos2(left, y - dir_galley.size().y / 2.0), dir_galley, brand::faint());
     painter.galley(pos2(name_x, y - name_galley.size().y / 2.0), name_galley, ink);
 }
 
@@ -341,7 +341,7 @@ pub(crate) fn split_dir(path: &str) -> (&str, &str) {
 /// `path` cut from the front with an ellipsis until it fits `room`, so the file name stays.
 pub(crate) fn tail_fit(ui: &Ui, path: &str, font: &FontId, room: f32) -> String {
     let width = |text: &str| {
-        ui.painter().layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x
+        ui.painter().layout_no_wrap(text.to_owned(), font.clone(), brand::text()).size().x
     };
     if path.is_empty() || width(path) <= room {
         return path.to_owned();
@@ -382,8 +382,8 @@ mod tests {
 
     #[test]
     fn a_zero_removed_count_is_muted_and_a_real_one_is_red() {
-        assert_eq!(removed_ink(0), brand::MUTED);
-        assert_eq!(removed_ink(1), brand::RED);
+        assert_eq!(removed_ink(0), brand::muted());
+        assert_eq!(removed_ink(1), brand::red());
     }
 
     #[test]
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn the_text_starts_after_the_lanes_and_the_gutter_of_the_uncommitted_lane() {
-        let style = GraphStyle::embedded(brand::TEAL);
+        let style = GraphStyle::embedded(brand::teal());
         assert_eq!(message_inset(&style, 0, false), 34.0);
         assert_eq!(message_inset(&style, 1, false), 34.0);
         assert_eq!(message_inset(&style, 3, false), 34.0 + 2.0 * 18.0);

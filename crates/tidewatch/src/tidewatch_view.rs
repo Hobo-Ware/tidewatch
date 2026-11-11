@@ -25,8 +25,12 @@ const FOOTER_PX: f32 = 12.0;
 const FOOTER_GAP: f32 = 8.0;
 const ACTION_GAP: f32 = 8.0;
 const OUTER: f32 = 10.0;
-const MARK_INK: Color32 = brand::TEAL;
-const FOOTER_INK: Color32 = brand::FAINT;
+fn mark_ink() -> Color32 {
+    brand::teal()
+}
+fn footer_ink() -> Color32 {
+    brand::faint()
+}
 const BADGE_D: f32 = 16.0;
 const BADGE_RING: f32 = 1.5;
 const BADGE_MARK: f32 = 0.55;
@@ -102,15 +106,15 @@ pub(crate) fn badge_rect(face: Rect) -> Rect {
 pub(crate) fn paint_badge(painter: &Painter, face: Rect) {
     let disc = badge_rect(face);
     let centre = disc.center();
-    painter.circle_filled(centre, BADGE_D / 2.0 + BADGE_RING, brand::GROUND);
-    painter.circle_filled(centre, BADGE_D / 2.0, brand::TEAL_NAV);
+    painter.circle_filled(centre, BADGE_D / 2.0 + BADGE_RING, brand::ground());
+    painter.circle_filled(centre, BADGE_D / 2.0, brand::teal_nav());
     let size = vec2(MARK_W, MARK_H) * BADGE_MARK;
     paint_mark(painter, centre - size / 2.0, BADGE_MARK);
 }
 
 fn paint_mark(painter: &Painter, top_left: Pos2, scale: f32) {
     let at = |x: f32, y: f32| top_left + vec2(x, y) * scale;
-    let stroke = |width: f32| Stroke::new((width * scale).max(1.0), MARK_INK);
+    let stroke = |width: f32| Stroke::new((width * scale).max(1.0), mark_ink());
     painter.add(Shape::line(vec![at(1.0, 1.5), at(6.0, 6.0), at(1.0, 10.5)], stroke(1.6)));
     let wave: Vec<Pos2> = (0..=10)
         .map(|n| {
@@ -137,10 +141,10 @@ fn preview_text(text: &str) -> String {
 
 fn footer(ui: &mut Ui, column: f32, text: &str) {
     let galley =
-        ui.painter().layout(text.to_owned(), body(FOOTER_PX), FOOTER_INK, footer_width(column));
+        ui.painter().layout(text.to_owned(), body(FOOTER_PX), footer_ink(), footer_width(column));
     let (rect, _) = ui.allocate_exact_size(vec2(column, galley.size().y), Sense::hover());
     let at = pos2(rect.center().x - galley.size().x / 2.0, rect.top());
-    ui.painter().galley(at, galley, FOOTER_INK);
+    ui.painter().galley(at, galley, footer_ink());
 }
 
 const QUIET_H: f32 = 24.0;
@@ -166,17 +170,17 @@ pub(crate) fn quiet(ui: &mut Ui, shown: &Quiet<'_>) -> Clicked {
         ui.allocate_exact_size(vec2(ui.available_width(), QUIET_H), Sense::click());
     let painter = ui.painter_at(rect);
     let mid = rect.center().y;
-    let ink = if response.hovered() || shown.open { brand::SOFT } else { brand::MUTED };
+    let ink = if response.hovered() || shown.open { brand::soft() } else { brand::muted() };
     paint_mark(&painter, pos2(rect.left() + 2.0, mid - MARK_H / 2.0), 1.0);
     let mut x = rect.left() + 2.0 + MARK_W + QUIET_GAP;
     let at = quiet_notes::span(shown.run, shown.zone)
-        .map(|span| painter.layout_no_wrap(span, body(TEXT_TAG), brand::MUTED));
+        .map(|span| painter.layout_no_wrap(span, body(TEXT_TAG), brand::muted()));
     let right = rect.right() - at.as_ref().map_or(0.0, |at| at.size().x);
     if let Some(at) = at {
-        painter.galley(pos2(right, mid - at.size().y / 2.0), at, brand::MUTED);
+        painter.galley(pos2(right, mid - at.size().y / 2.0), at, brand::muted());
     }
     let tag = quiet_notes::count(shown.run)
-        .map(|number| painter.layout_no_wrap(number, body(TEXT_TAG), brand::MUTED));
+        .map(|number| painter.layout_no_wrap(number, body(TEXT_TAG), brand::muted()));
     let pill_w = tag.as_ref().map_or(0.0, |tag| tag.size().x + 14.0 + QUIET_GAP);
     let room = right - QUIET_GAP - x - pill_w - QUIET_CHEVRON_W - QUIET_GAP;
     let sentence =
@@ -191,10 +195,10 @@ pub(crate) fn quiet(ui: &mut Ui, shown: &Quiet<'_>) -> Clicked {
         painter.rect_stroke(
             pill,
             CornerRadius::same((pill.height() / 2.0).round() as u8),
-            Stroke::new(1.0, brand::ITEM_LINE),
+            Stroke::new(1.0, brand::item_line()),
             StrokeKind::Inside,
         );
-        painter.galley(pill.center() - tag.size() / 2.0, tag, brand::MUTED);
+        painter.galley(pill.center() - tag.size() / 2.0, tag, brand::muted());
         x = pill.right() + QUIET_GAP;
     }
     let tip = if shown.open { -3.0 } else { 3.0 };
@@ -227,12 +231,12 @@ fn quiet_list(ui: &mut Ui, shown: &Quiet<'_>) -> Option<Click> {
         job.append(
             &format!("{clock} \u{b7} {}", preview_text(&record.text)),
             0.0,
-            TextFormat::simple(body(QUIET_PX), brand::SOFT),
+            TextFormat::simple(body(QUIET_PX), brand::soft()),
         );
         job.append(
             &format!("   {}", record.because),
             0.0,
-            TextFormat::simple(body(TEXT_TAG), brand::MUTED),
+            TextFormat::simple(body(TEXT_TAG), brand::muted()),
         );
         job.wrap.max_width = width;
         job.wrap.max_rows = QUIET_ROWS;
@@ -245,13 +249,13 @@ fn quiet_list(ui: &mut Ui, shown: &Quiet<'_>) -> Option<Click> {
         let at = pos2(left + QUIET_LIST_PAD, rect.top());
         top.get_or_insert(rect.top());
         bottom = rect.bottom();
-        ui.painter().galley(at, galley, brand::SOFT);
+        ui.painter().galley(at, galley, brand::soft());
         ui.add_space(QUIET_ENTRY_GAP);
     }
     if let Some(top) = top {
         ui.painter().line_segment(
             [pos2(left, top), pos2(left, bottom)],
-            Stroke::new(1.0, brand::ITEM_LINE),
+            Stroke::new(1.0, brand::item_line()),
         );
     }
     let click = shown.run.first().and_then(|record| record.switch()).and_then(|switch| {

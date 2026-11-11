@@ -7,6 +7,7 @@ use egui::{
     Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
 
+use crate::brand;
 use crate::general_view::{self, General};
 use crate::house_style_view;
 use crate::login_item;
@@ -16,9 +17,7 @@ use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::selection_row;
 use crate::settings::{Section, Settings};
 use crate::settings_icons;
-use crate::settings_ui::{
-    FAINT, GROUND, HEADER_H, ORANGE, SIDEBAR, SIDEBAR_LINE, SOFT, TEAL_TEXT, TEXT, font_semibold,
-};
+use crate::settings_ui::{HEADER_H, font_semibold};
 use crate::shortcuts_view;
 use crate::trust_view;
 use crate::updates::Updates;
@@ -115,7 +114,7 @@ pub(crate) fn show(
 ) -> Option<Action> {
     let typing_id = egui::Id::new("settings_typing");
     let typing = ui.ctx().data(|data| data.get_temp::<bool>(typing_id)).unwrap_or(false);
-    ui.painter().rect_filled(area, CornerRadius::ZERO, GROUND);
+    ui.painter().rect_filled(area, CornerRadius::ZERO, brand::ground());
     let sidebar_rect = Rect::from_min_size(area.min, vec2(SIDEBAR_WIDTH, area.height()));
     sidebar(ui, sidebar_rect, settings, updates);
     let main = Rect::from_min_max(pos2(sidebar_rect.right(), area.top()), area.max);
@@ -217,15 +216,15 @@ pub(crate) fn content_column(main: Rect) -> Rect {
 
 fn sidebar(ui: &mut Ui, rect: Rect, settings: &mut Settings, updates: &Updates) {
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::ZERO, SIDEBAR);
-    painter.vline(rect.right() - 0.5, rect.y_range(), Stroke::new(1.0, SIDEBAR_LINE));
-    painter.hline(rect.x_range(), rect.top() + HEADER_H, Stroke::new(1.0, SIDEBAR_LINE));
+    painter.rect_filled(rect, CornerRadius::ZERO, brand::sidebar());
+    painter.vline(rect.right() - 0.5, rect.y_range(), Stroke::new(1.0, brand::sidebar_line()));
+    painter.hline(rect.x_range(), rect.top() + HEADER_H, Stroke::new(1.0, brand::sidebar_line()));
     painter.text(
         rect.left_top() + vec2(24.0, HEADER_H / 2.0),
         Align2::LEFT_CENTER,
         "Settings",
         font_semibold(16.0),
-        TEXT,
+        brand::text(),
     );
     let mut inner = ui.new_child(
         UiBuilder::new()
@@ -249,14 +248,14 @@ fn sidebar(ui: &mut Ui, rect: Rect, settings: &mut Settings, updates: &Updates) 
         Align2::LEFT_BOTTOM,
         updates.short_status(),
         FontId::proportional(13.0),
-        FAINT,
+        brand::faint(),
     );
     painter.text(
         pos2(left, status.top() - 2.0),
         Align2::LEFT_BOTTOM,
         version,
         FontId::proportional(13.0),
-        FAINT,
+        brand::faint(),
     );
 }
 
@@ -271,7 +270,11 @@ fn item(
         ui.allocate_exact_size(vec2(ui.available_width(), ITEM_HEIGHT), Sense::click());
     let painter = ui.painter();
     selection_row(painter, rect, selected, response.hovered());
-    let (text, icon) = if selected { (TEAL_TEXT, TEAL_TEXT) } else { (SOFT, SOFT) };
+    let (text, icon) = if selected {
+        (brand::teal_text(), brand::teal_text())
+    } else {
+        (brand::soft(), brand::soft())
+    };
     let icon_rect = Rect::from_center_size(
         pos2(rect.left() + 12.0 + ITEM_ICON / 2.0, rect.center().y),
         vec2(ITEM_ICON, ITEM_ICON),
@@ -285,7 +288,7 @@ fn item(
         text,
     );
     if unsaved {
-        painter.circle_filled(pos2(rect.right() - 14.0, rect.center().y), 3.5, ORANGE);
+        painter.circle_filled(pos2(rect.right() - 14.0, rect.center().y), 3.5, brand::orange());
     }
     kelp_ui::widgets::focus_ring(ui, &response, 8.0);
     response.on_hover_cursor(egui::CursorIcon::PointingHand)

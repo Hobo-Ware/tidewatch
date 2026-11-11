@@ -24,7 +24,7 @@ const BRANCHES_MAX_H: f32 = 260.0;
 const OUTLINE: f32 = 1.0;
 
 fn text_width(ui: &Ui, text: &str, size: f32) -> f32 {
-    ui.painter().layout_no_wrap(text.to_owned(), body(size), brand::MUTED).size().x
+    ui.painter().layout_no_wrap(text.to_owned(), body(size), brand::muted()).size().x
 }
 
 pub(crate) fn text_id() -> Id {
@@ -46,11 +46,11 @@ fn problem_line(ui: &mut Ui, name: &str, check: &NameCheck) -> bool {
         match check {
             NameCheck::Fine => {}
             NameCheck::Invalid(problem) => {
-                ui.label(RichText::new(problem.message()).size(12.0).color(brand::RED));
+                ui.label(RichText::new(problem.message()).size(12.0).color(brand::red()));
             }
             NameCheck::Taken { suggestion } => {
                 let text = format!("{PREFIX}{name} is taken.");
-                ui.label(RichText::new(text).size(12.0).color(brand::RED));
+                ui.label(RichText::new(text).size(12.0).color(brand::red()));
                 accept =
                     quiet_button(ui, &format!("Use {suggestion}"), true, Size::Compact).clicked();
             }
@@ -68,24 +68,24 @@ pub(crate) fn name_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>)
         let room = ui.max_rect().width() - label_w;
         if text_width(ui, note, 11.5) + NOTE_GAP <= room {
             let at = pos2(ui.max_rect().right(), top + LABEL_H / 2.0);
-            ui.painter().text(at, Align2::RIGHT_CENTER, note, body(TEXT_TAG), brand::FAINT);
+            ui.painter().text(at, Align2::RIGHT_CENTER, note, body(TEXT_TAG), brand::faint());
         }
     }
     ui.add_space(LABEL_GAP);
     let mut text = state.name(facts);
     let shown = text.clone();
-    let response = field_frame_on(ui, brand::SEGMENT, true, |ui| {
+    let response = field_frame_on(ui, brand::segment(), true, |ui| {
         ui.horizontal(|ui| {
             ui.set_min_height(FIELD_H - 12.0);
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.label(RichText::new(PREFIX).font(mono(13.0)).color(brand::FAINT));
+            ui.label(RichText::new(PREFIX).font(mono(13.0)).color(brand::faint()));
             ui.add(
                 TextEdit::singleline(&mut text)
                     .id(Id::new("new-tab-name"))
                     .frame(egui::Frame::NONE)
                     .margin(Margin::ZERO)
                     .font(mono(13.0))
-                    .text_color(brand::TEXT)
+                    .text_color(brand::text())
                     .desired_width(ui.available_width().max(40.0)),
             )
         })
@@ -107,7 +107,7 @@ pub(crate) fn name_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>)
 
 fn paint_branch_icon(ui: &Ui, center: Pos2) {
     let painter = ui.painter();
-    let stroke = Stroke::new(1.4, brand::MUTED);
+    let stroke = Stroke::new(1.4, brand::muted());
     let (top, bottom, side) =
         (center + vec2(-3.5, -4.5), center + vec2(-3.5, 4.5), center + vec2(3.5, -2.5));
     for point in [top, bottom, side] {
@@ -119,7 +119,7 @@ fn paint_branch_icon(ui: &Ui, center: Pos2) {
 }
 
 fn paint_chevron(ui: &Ui, center: Pos2) {
-    let stroke = Stroke::new(1.5, brand::MUTED);
+    let stroke = Stroke::new(1.5, brand::muted());
     let points = [center + vec2(-3.0, -1.5), center + vec2(0.0, 1.5), center + vec2(3.0, -1.5)];
     ui.painter().line_segment([points[0], points[1]], stroke);
     ui.painter().line_segment([points[1], points[2]], stroke);
@@ -130,14 +130,14 @@ pub(crate) fn base_field(ui: &mut Ui, state: &NewTab, facts: Option<&RepoFacts>)
     field_label(ui, "Start from");
     ui.add_space(LABEL_GAP);
     let current = state.base(facts).unwrap_or_else(|| "HEAD".to_owned());
-    let response = field_frame_on(ui, brand::SEGMENT, true, |ui| {
+    let response = field_frame_on(ui, brand::segment(), true, |ui| {
         let size = vec2(ui.available_width(), FIELD_H - 12.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         paint_branch_icon(ui, pos2(rect.left() + 7.0, rect.center().y));
         let room = rect.width() - 36.0;
-        let label = ellipsized(ui.painter(), &current, mono(13.0), brand::TEXT, room);
+        let label = ellipsized(ui.painter(), &current, mono(13.0), brand::text(), room);
         let at = pos2(rect.left() + 22.0, rect.center().y - label.size().y / 2.0);
-        ui.painter().galley(at, label, brand::TEXT);
+        ui.painter().galley(at, label, brand::text());
         paint_chevron(ui, pos2(rect.right() - 8.0, rect.center().y));
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     });

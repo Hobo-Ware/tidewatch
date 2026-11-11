@@ -117,7 +117,7 @@ pub(crate) fn show(
         ui.painter().hline(
             header.shrink2(vec2(1.0, 0.0)).x_range(),
             header.bottom(),
-            Stroke::new(1.0, brand::CARD_LINE),
+            Stroke::new(1.0, brand::card_line()),
         );
         out.back = show_header(ui, header, view, extras, chip, &mut out.actions);
         let mut top = header.bottom();
@@ -135,7 +135,7 @@ pub(crate) fn show(
         if view.loaded.is_none() {
             message(ui, area, view.error.as_deref(), "Loading history...");
         } else {
-            out.notes_changed = show_body(ui, area, view, DiffStyle::embedded(brand::TEAL));
+            out.notes_changed = show_body(ui, area, view, DiffStyle::embedded(brand::teal()));
         }
         history_pane::round_bottom(ui, card);
     });
@@ -143,7 +143,7 @@ pub(crate) fn show(
 }
 
 fn text_width(ui: &Ui, text: &str, font: &FontId) -> f32 {
-    ui.painter().layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x
+    ui.painter().layout_no_wrap(text.to_owned(), font.clone(), brand::text()).size().x
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -176,19 +176,19 @@ fn pill(ui: &mut Ui, id: Id, right: f32, center_y: f32, pill: &Pill) -> (Respons
     let hot = pill.enabled && response.hovered();
     let (fill, line, ink) = match pill.look {
         Look::Primary => (
-            if hot { brand::TEAL.gamma_multiply(0.1) } else { Color32::TRANSPARENT },
-            brand::TEAL,
-            brand::TEAL_TEXT,
+            if hot { brand::teal().gamma_multiply(0.1) } else { Color32::TRANSPARENT },
+            brand::teal(),
+            brand::teal_text(),
         ),
-        Look::On => (brand::SEGMENT_ON, brand::SEGMENT_LINE, brand::TEAL_TEXT),
+        Look::On => (brand::segment_on(), brand::segment_line(), brand::teal_text()),
         Look::Plain => (
-            if hot { brand::BUTTON } else { brand::SEGMENT },
-            brand::SEGMENT_LINE,
-            if hot { brand::TEXT } else { brand::SOFT },
+            if hot { brand::button() } else { brand::segment() },
+            brand::segment_line(),
+            if hot { brand::text() } else { brand::soft() },
         ),
     };
     let ink = pill.ink.unwrap_or(ink);
-    let ink = if pill.enabled { ink } else { brand::FAINT };
+    let ink = if pill.enabled { ink } else { brand::faint() };
     let painter = ui.painter();
     painter.rect(
         rect,
@@ -214,14 +214,14 @@ pub(crate) fn arrow(ui: &mut Ui, id: Id, rect: Rect, up: bool, enabled: bool, ti
     painter.rect(
         rect,
         CornerRadius::same(ARROW_RADIUS),
-        if hot { brand::BUTTON } else { brand::SEGMENT },
-        Stroke::new(1.0, brand::SEGMENT_LINE),
+        if hot { brand::button() } else { brand::segment() },
+        Stroke::new(1.0, brand::segment_line()),
         StrokeKind::Inside,
     );
     let ink = match (enabled, hot) {
-        (false, _) => brand::FAINT,
-        (true, true) => brand::TEXT,
-        (true, false) => brand::SOFT,
+        (false, _) => brand::faint(),
+        (true, true) => brand::text(),
+        (true, false) => brand::soft(),
     };
     let mid = rect.center();
     let tip_y = if up { -1.5 } else { 1.5 };
@@ -233,7 +233,7 @@ pub(crate) fn arrow(ui: &mut Ui, id: Id, rect: Rect, up: bool, enabled: bool, ti
 }
 
 fn back_button(ui: &mut Ui, left: f32, center_y: f32, chip: &TerminalChip) -> Response {
-    let label = ui.painter().layout_no_wrap("Terminal".to_owned(), body(FONT), brand::SOFT);
+    let label = ui.painter().layout_no_wrap("Terminal".to_owned(), body(FONT), brand::soft());
     let width = 7.0 + 12.0 + 6.0 + label.size().x + PILL_PAD;
     let rect = Rect::from_min_size(pos2(left, center_y - BUTTON_H / 2.0), vec2(width, BUTTON_H));
     let response = ui.interact(rect, Id::new("terminal-chip"), Sense::click());
@@ -242,11 +242,11 @@ fn back_button(ui: &mut Ui, left: f32, center_y: f32, chip: &TerminalChip) -> Re
     painter.rect(
         rect,
         CornerRadius::same(BUTTON_RADIUS),
-        if hot { brand::BUTTON } else { brand::SEGMENT },
-        Stroke::new(1.0, brand::SEGMENT_LINE),
+        if hot { brand::button() } else { brand::segment() },
+        Stroke::new(1.0, brand::segment_line()),
         StrokeKind::Inside,
     );
-    let ink = if hot { brand::TEXT } else { brand::SOFT };
+    let ink = if hot { brand::text() } else { brand::soft() };
     let caret = pos2(rect.left() + 7.0 + 6.0, center_y);
     let stroke = Stroke::new(1.6, ink);
     painter.line_segment([caret + vec2(2.0, -3.5), caret + vec2(-1.5, 0.0)], stroke);
@@ -284,11 +284,11 @@ fn show_header(
     right = file_arrows(ui, right, center_y, view);
     let floor = back.rect.right() + GAP + MIN_PATH_W + GAP + counts_width(ui, view);
     if let Some(text) = position_text(&view.files, view.file.as_deref()) {
-        let galley = ui.painter().layout_no_wrap(text, body(FONT), brand::MUTED);
+        let galley = ui.painter().layout_no_wrap(text, body(FONT), brand::muted());
         let at = pos2(right - 8.0 - galley.size().x, center_y - galley.size().y / 2.0);
         if at.x - GAP >= floor {
             right = at.x - GAP;
-            ui.painter().galley(at, galley, brand::MUTED);
+            ui.painter().galley(at, galley, brand::muted());
         }
     }
     if let Some(extras) = extras {
@@ -348,7 +348,7 @@ fn note_pills(extras: &PaneExtras) -> Vec<Pill> {
             action: PaneAction::OpenUrl(chip.url.clone()),
             label: chip.text.clone(),
             look: Look::Plain,
-            ink: Some(brand::GREEN),
+            ink: Some(brand::green()),
             enabled: true,
             tip: format!("{} - click to open in the browser", chip.url),
         });
@@ -428,7 +428,7 @@ fn left_group(ui: &Ui, left: f32, limit: f32, center_y: f32, view: &TabView) {
     let painter = ui.painter();
     let put = |x: f32, galley: Arc<Galley>| -> f32 {
         let width = galley.size().x;
-        painter.galley(pos2(x, center_y - galley.size().y / 2.0), galley, brand::TEXT);
+        painter.galley(pos2(x, center_y - galley.size().y / 2.0), galley, brand::text());
         x + width
     };
     let lay =
@@ -440,21 +440,21 @@ fn left_group(ui: &Ui, left: f32, limit: f32, center_y: f32, view: &TabView) {
     let (plus, minus) = counts_text(view);
     let sha = view.summary.as_ref().map(|(id, _)| id.to_hex_with_len(SHORT_ID).to_string());
     let (lead, sha) = origin(sha.as_deref());
-    let lead = lay(lead, body(12.0), brand::MUTED);
-    let sha = sha.map(|sha| lay(sha, mono(12.0), brand::SOFT));
+    let lead = lay(lead, body(12.0), brand::muted());
+    let sha = sha.map(|sha| lay(sha, mono(12.0), brand::soft()));
     let origin_w = lead.size().x + sha.as_ref().map_or(0.0, |g| g.size().x);
     let font = mono(14.0);
     let path_w = text_width(ui, path, &font);
     let (path_room, after) = plan_left(path_w, counts_width(ui, view), origin_w, limit - left);
     let shown = tail_fit(ui, path, &font, path_room);
     let (dir, name) = split_dir(&shown);
-    let mut x = put(left, lay(dir, font.clone(), brand::MUTED));
-    x = put(x, lay(name, font, brand::TEXT)) + GAP;
+    let mut x = put(left, lay(dir, font.clone(), brand::muted()));
+    x = put(x, lay(name, font, brand::text())) + GAP;
     if after == After::Nothing {
         return;
     }
-    x = put(x, lay(&plus, body(12.0), brand::GREEN)) + COUNT_GAP;
-    x = put(x, lay(&minus, body(12.0), brand::RED)) + GAP;
+    x = put(x, lay(&plus, body(12.0), brand::green())) + COUNT_GAP;
+    x = put(x, lay(&minus, body(12.0), brand::red())) + GAP;
     if after == After::CountsAndOrigin {
         x = put(x, lead);
         if let Some(sha) = sha {

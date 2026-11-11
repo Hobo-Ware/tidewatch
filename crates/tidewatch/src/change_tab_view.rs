@@ -50,8 +50,11 @@ fn kind_row(ui: &mut Ui, pick: &mut Pick) {
 fn card(ui: &mut Ui, rect: Rect, card: &Card, selected: bool) -> bool {
     let response = ui.interact(rect, Id::new(("change_tab_card", &card.id)), Sense::click());
     selection_row(ui.painter(), rect, selected, response.hovered());
-    let (name, detail) =
-        if card.installed { (brand::TEXT, brand::MUTED) } else { (brand::FAINT, brand::FAINT) };
+    let (name, detail) = if card.installed {
+        (brand::text(), brand::muted())
+    } else {
+        (brand::faint(), brand::faint())
+    };
     let detail_text = if card.installed { card.detail.as_str() } else { "Not installed" };
     let line = FaceLine {
         cli: &card.agent_id,
@@ -93,7 +96,7 @@ fn profile_list(ui: &mut Ui, facts: &Facts, pick: &mut Pick) {
 fn level_row(ui: &mut Ui, pick: &mut Pick) {
     label(ui, "Level");
     let labels = Level::ALL.map(Level::label);
-    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));
+    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::red()));
     let refusals = Level::ALL.map(|_| None);
     let active = Level::ALL.iter().position(|level| *level == pick.level).unwrap_or(0);
     let clicked = segmented::inline_or_chips(
@@ -112,16 +115,16 @@ fn level_row(ui: &mut Ui, pick: &mut Pick) {
 fn what_happens(ui: &mut Ui, text: &str) {
     let width = ui.available_width();
     let inner = width - 2.0 * 12.0;
-    let galley = ui.painter().layout(text.to_owned(), body(TEXT_SECONDARY), brand::SOFT, inner);
+    let galley = ui.painter().layout(text.to_owned(), body(TEXT_SECONDARY), brand::soft(), inner);
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + 20.0), Sense::hover());
     ui.painter().rect(
         rect,
         egui::CornerRadius::same(8),
-        brand::SUNKEN,
-        Stroke::new(1.0, brand::SEGMENT_LINE),
+        brand::sunken(),
+        Stroke::new(1.0, brand::segment_line()),
         StrokeKind::Inside,
     );
-    ui.painter().galley(rect.min + vec2(12.0, 10.0), galley, brand::SOFT);
+    ui.painter().galley(rect.min + vec2(12.0, 10.0), galley, brand::soft());
 }
 
 pub(crate) fn show(ctx: &egui::Context, facts: &Facts, pick: &mut Pick) -> Option<Outcome> {

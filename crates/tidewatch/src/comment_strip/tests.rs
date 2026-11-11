@@ -262,15 +262,16 @@ fn a_comment_is_cut_to_two_lines_within_the_width() {
         let painter = ui.painter().clone();
         let long = COMMENT.repeat(4);
         for width in [120.0, 260.0, 420.0] {
-            let galley = clipped(&painter, &long, mono(12.0), brand::MUTED, width, COMMENT_ROWS);
+            let galley = clipped(&painter, &long, mono(12.0), brand::muted(), width, COMMENT_ROWS);
             assert_eq!(galley.rows.len(), COMMENT_ROWS, "{width}");
             assert!(galley.size().x <= width + 0.5, "{width}: {}", galley.size().x);
         }
         let unbroken = "x".repeat(300);
-        let galley = clipped(&painter, &unbroken, mono(12.0), brand::MUTED, 260.0, COMMENT_ROWS);
+        let galley = clipped(&painter, &unbroken, mono(12.0), brand::muted(), 260.0, COMMENT_ROWS);
         assert!(galley.rows.len() <= COMMENT_ROWS, "{}", galley.rows.len());
         assert!(galley.size().x <= 260.5, "{}", galley.size().x);
-        let short = clipped(&painter, "loop over a", mono(12.0), brand::MUTED, 420.0, COMMENT_ROWS);
+        let short =
+            clipped(&painter, "loop over a", mono(12.0), brand::muted(), 420.0, COMMENT_ROWS);
         assert_eq!(short.rows.len(), 1);
     });
 }

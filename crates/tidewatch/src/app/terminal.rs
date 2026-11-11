@@ -159,7 +159,7 @@ impl TerminalGrid {
 
     pub(super) fn measure(ui: &egui::Ui, rect: egui::Rect, in_use: &InUse) -> Self {
         let (font, bold) = in_use.font_ids(FONT_SIZE);
-        let glyph = ui.painter().layout_no_wrap("M".to_owned(), font.clone(), brand::TEXT);
+        let glyph = ui.painter().layout_no_wrap("M".to_owned(), font.clone(), brand::text());
         let (cell_w, cell_h) = (glyph.size().x, glyph.size().y);
         let (cols, rows) = layout::grid_dims(rect, cell_w, cell_h);
         Self { rect, cols, rows, cell_w, cell_h, font, bold }
@@ -250,10 +250,10 @@ impl Tidewatch {
             }
             Body::Draft(_) | Body::Poofed(_) => {}
             Body::Creating => {
-                status_message(ui, area, "Creating worktree...", brand::MUTED);
+                status_message(ui, area, "Creating worktree...", brand::muted());
             }
-            Body::Removing => status_message(ui, area, "Removing worktree...", brand::MUTED),
-            Body::Failed(message) => status_message(ui, area, message, brand::RED),
+            Body::Removing => status_message(ui, area, "Removing worktree...", brand::muted()),
+            Body::Failed(message) => status_message(ui, area, message, brand::red()),
         }
         self.drop_if_single(active_id);
         self.bell.paint(ui, area, now);
@@ -442,13 +442,13 @@ fn exit_notice_text(profile_name: &str, code: i32) -> String {
 
 fn exit_notice(ui: &egui::Ui, rect: egui::Rect, text: &str) {
     let painter = ui.painter_at(rect);
-    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), brand::TEXT);
+    let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), brand::text());
     let pill = egui::Rect::from_center_size(
         egui::pos2(rect.center().x, rect.bottom() - 28.0),
         galley.size() + egui::vec2(24.0, 14.0),
     );
     paint_pill_card(&painter, pill);
-    painter.galley(pill.center() - galley.size() / 2.0, galley, brand::TEXT);
+    painter.galley(pill.center() - galley.size() / 2.0, galley, brand::text());
 }
 
 /// A small card along the bottom edge of the pane, drawn over the grid and never sent to the pty.
@@ -456,8 +456,12 @@ fn exit_notice(ui: &egui::Ui, rect: egui::Rect, text: &str) {
 fn pane_notice(ui: &egui::Ui, pane: egui::Rect, text: &str) -> egui::Rect {
     let (pad, margin) = (egui::vec2(10.0, 5.0), 8.0);
     let wrap_width = (pane.width() - 2.0 * (margin + pad.x)).max(60.0);
-    let galley =
-        ui.painter().layout(text.to_owned(), FontId::proportional(12.0), brand::MUTED, wrap_width);
+    let galley = ui.painter().layout(
+        text.to_owned(),
+        FontId::proportional(12.0),
+        brand::muted(),
+        wrap_width,
+    );
     let size = galley.size() + pad * 2.0;
     let pill = egui::Rect::from_min_size(
         egui::pos2(pane.center().x - size.x / 2.0, pane.bottom() - margin - size.y),
@@ -465,7 +469,7 @@ fn pane_notice(ui: &egui::Ui, pane: egui::Rect, text: &str) -> egui::Rect {
     );
     let painter = ui.painter_at(pane);
     paint_pill_card(&painter, pill);
-    painter.galley(pill.min + pad, galley, brand::MUTED);
+    painter.galley(pill.min + pad, galley, brand::muted());
     pill
 }
 

@@ -34,9 +34,9 @@ pub(crate) fn shown_name(hit: &Hit) -> (String, std::ops::Range<usize>) {
 
 fn name_job(hit: &Hit, selected: bool) -> LayoutJob {
     let (name, lit) = shown_name(hit);
-    let ink = selected_ink(selected, brand::TEXT);
+    let ink = selected_ink(selected, brand::text());
     let plain = TextFormat::simple(FontId::proportional(TEXT_BODY), ink);
-    let bold = TextFormat::simple(heading(TEXT_TITLE), brand::TEAL_TEXT);
+    let bold = TextFormat::simple(heading(TEXT_TITLE), brand::teal_text());
     let mut job = LayoutJob::default();
     job.append(&name[..lit.start], 0.0, plain.clone());
     job.append(&name[lit.clone()], 0.0, bold);
@@ -57,19 +57,19 @@ fn paint_row(ui: &Ui, rect: Rect, hit: &Hit, selected: bool, hovered: bool) {
             Align2::CENTER_CENTER,
             hit.emoji.as_str(),
             FontId::proportional(GLYPH_PX),
-            brand::TEXT,
+            brand::text(),
         );
     }
     let galley = painter.layout_job(name_job(hit, selected));
     let x = rect.left() + ROW_PAD + GLYPH_COLUMN + COLUMN_GAP;
-    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);
+    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::text());
     if selected {
         painter.text(
             pos2(rect.right() - ROW_PAD, rect.center().y),
             Align2::RIGHT_CENTER,
             "Tab",
             FontId::proportional(12.0),
-            brand::MUTED,
+            brand::muted(),
         );
     }
 }
@@ -89,8 +89,8 @@ pub(crate) fn show(ui: &Ui, id: Id, at: Pos2, rows: &[Hit], picked: usize) -> Op
         .fixed_pos(pos2(at.x, at.y - GAP))
         .show(ui.ctx(), |ui| {
             Frame::new()
-                .fill(brand::ITEM)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::item())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(CornerRadius::same(12))
                 .inner_margin(Margin::same(PAD))
                 .show(ui, |ui| {

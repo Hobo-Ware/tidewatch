@@ -16,9 +16,9 @@ pub(crate) enum CardAction {
 
 fn dot_ink(dot: Dot) -> egui::Color32 {
     match dot {
-        Dot::Ready => brand::GREEN,
-        Dot::Asked => brand::TEAL,
-        Dot::Missing => brand::AMBER,
+        Dot::Ready => brand::green(),
+        Dot::Asked => brand::teal(),
+        Dot::Missing => brand::amber(),
     }
 }
 
@@ -32,7 +32,7 @@ pub(crate) fn show_card(ui: &mut Ui, rect: Rect, view: &CardView) -> Option<Card
         Align2::LEFT_CENTER,
         &view.text,
         body(13.0),
-        brand::TEXT,
+        brand::text(),
     );
     let label = view.button.as_deref()?;
     let button_rect = card.shrink2(vec2(10.0, 0.0));

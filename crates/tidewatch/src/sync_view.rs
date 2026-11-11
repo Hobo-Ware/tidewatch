@@ -6,11 +6,11 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use tidewatch_core::settings_sync::remote_url;
 
+use crate::brand;
 use crate::screen_kit::Size;
 use crate::screen_kit::TEXT_BODY;
 use crate::settings_ui::{
-    self, Control, MUTED, ORANGE, TEXT, Tone, button, row, row_with, section, switch_row,
-    text_input,
+    self, Control, Tone, button, row, row_with, section, switch_row, text_input,
 };
 
 pub(crate) const FOOTNOTE: &str =
@@ -113,7 +113,7 @@ pub(crate) fn card(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<Chan
             change = Some(Change::SyncNow);
         }
         if let Some((text, problem)) = note_text(&view.note) {
-            let ink = if problem { ORANGE } else { MUTED };
+            let ink = if problem { brand::orange() } else { brand::muted() };
             row_with(
                 ui,
                 Control::NONE,
@@ -127,7 +127,7 @@ pub(crate) fn card(ui: &mut Ui, editor: &mut Editor, view: &View) -> Option<Chan
             ui,
             Control::NONE,
             |ui| {
-                ui.label(RichText::new(FOOTNOTE).size(13.0).color(MUTED));
+                ui.label(RichText::new(FOOTNOTE).size(13.0).color(brand::muted()));
             },
             |_| {},
         );
@@ -141,12 +141,16 @@ fn repo_row(ui: &mut Ui, editor: &mut Editor) -> Option<String> {
         .inner_margin(Margin::symmetric(18, 14))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            ui.label(RichText::new("Repo").size(TEXT_BODY).color(TEXT));
+            ui.label(RichText::new("Repo").size(TEXT_BODY).color(brand::text()));
             let hint = "A private repo you own, such as you/tidewatch-settings.";
-            ui.label(RichText::new(hint).size(13.0).color(MUTED));
+            ui.label(RichText::new(hint).size(13.0).color(brand::muted()));
             let response = text_input(ui, &mut editor.repo, "you/tidewatch-settings");
             if editor.problem() {
-                settings_ui::note(ui, "Use owner/name, or the full address of a git repo.", ORANGE);
+                settings_ui::note(
+                    ui,
+                    "Use owner/name, or the full address of a git repo.",
+                    brand::orange(),
+                );
             }
             (response.lost_focus() && !editor.problem()).then(|| editor.repo.trim().to_owned())
         })

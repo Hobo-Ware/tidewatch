@@ -41,7 +41,7 @@ pub(crate) fn show(
     home: Option<&Path>,
     elsewhere: Option<(usize, usize)>,
 ) -> Option<Action> {
-    ui.painter().rect_filled(area, 0.0, brand::GROUND);
+    ui.painter().rect_filled(area, 0.0, brand::ground());
     let width = COLUMN_W.min(area.width() - 40.0);
     let rows = recent.len() as f32;
     let list_h = if recent.is_empty() { 0.0 } else { 26.0 + 22.0 + rows * (ROW_H + 4.0) };
@@ -59,17 +59,17 @@ pub(crate) fn show(
         Align2::CENTER_TOP,
         "Open a repo to start",
         heading(30.0),
-        brand::TEXT,
+        brand::text(),
     );
     let text = painter.layout(
         "Every tab is a worktree of the repo you open, with an agent in it.".to_owned(),
         body(TEXT_BODY),
-        brand::MUTED,
+        brand::muted(),
         width,
     );
     let text_pos = pos2(cx - text.size().x / 2.0, title.bottom() + 10.0);
     let text_bottom = text_pos.y + text.size().y;
-    painter.galley(text_pos, text, brand::MUTED);
+    painter.galley(text_pos, text, brand::muted());
     y = text_bottom + 26.0;
     let button = open_button(ui, pos2(cx, y));
     if button.clicked() {
@@ -89,7 +89,7 @@ pub(crate) fn show(
             Align2::LEFT_TOP,
             "RECENT",
             body(TEXT_TAG),
-            brand::MUTED,
+            brand::muted(),
         );
         y += 22.0;
         for (index, repo) in recent.iter().enumerate() {
@@ -98,8 +98,8 @@ pub(crate) fn show(
             painter.rect(
                 row,
                 CornerRadius::same(8),
-                brand::ITEM,
-                Stroke::new(1.0, brand::ITEM_LINE),
+                brand::item(),
+                Stroke::new(1.0, brand::item_line()),
                 StrokeKind::Inside,
             );
             selection_row(&painter, row, false, response.hovered());
@@ -108,21 +108,21 @@ pub(crate) fn show(
                 Align2::LEFT_CENTER,
                 &repo.name,
                 heading(TEXT_TITLE),
-                brand::TEXT,
+                brand::text(),
             );
             painter.text(
                 pos2(name.right() + 12.0, row.center().y),
                 Align2::LEFT_CENTER,
                 tilde(&repo.dir, home),
                 mono(TEXT_SECONDARY),
-                brand::MUTED,
+                brand::muted(),
             );
             painter.text(
                 row.right_center() - vec2(12.0, 0.0),
                 Align2::RIGHT_CENTER,
                 repo.tabs_text(),
                 body(12.0),
-                brand::MUTED,
+                brand::muted(),
             );
             if response.clicked() {
                 action = Some(Action::Recent(repo.dir.clone()));
@@ -144,7 +144,7 @@ fn sessions_line(ui: &mut Ui, rect: Rect, running: usize, idle: usize) -> bool {
         Align2::LEFT_CENTER,
         format!("{running} {noun} in other terminals"),
         body(13.0),
-        brand::SOFT,
+        brand::soft(),
     );
     let mut inner = ui.new_child(
         UiBuilder::new()
@@ -168,16 +168,17 @@ fn open_button(ui: &mut Ui, top_center: Pos2) -> egui::Response {
 
 fn hint(ui: &Ui, top_center: Pos2) {
     let painter = ui.painter();
-    let lead = painter.layout_no_wrap("or from a terminal: ".to_owned(), body(13.0), brand::MUTED);
+    let lead =
+        painter.layout_no_wrap("or from a terminal: ".to_owned(), body(13.0), brand::muted());
     let command = painter.layout_no_wrap(
         "tidewatch ~/code/my-repo".to_owned(),
         mono(TEXT_SECONDARY),
-        brand::SOFT,
+        brand::soft(),
     );
     let x = top_center.x - f32::midpoint(lead.size().x, command.size().x);
     let command_x = x + lead.size().x;
-    painter.galley(pos2(x, top_center.y), lead, brand::MUTED);
-    painter.galley(pos2(command_x, top_center.y), command, brand::MUTED);
+    painter.galley(pos2(x, top_center.y), lead, brand::muted());
+    painter.galley(pos2(command_x, top_center.y), command, brand::muted());
 }
 
 #[cfg(test)]

@@ -87,14 +87,14 @@ pub(crate) fn button(ui: &mut egui::Ui, active: bool, needs: &[(String, usize)])
         ui.painter().rect_stroke(
             rect,
             CornerRadius::same(8),
-            Stroke::new(1.0, brand::TEAL),
+            Stroke::new(1.0, brand::teal()),
             StrokeKind::Inside,
         );
     } else if hovered {
         ui.painter().rect_filled(rect, 8.0, colors::hover());
     }
     let ink = if active {
-        brand::TEAL
+        brand::teal()
     } else if hovered {
         colors::fg()
     } else {
@@ -182,7 +182,7 @@ pub(crate) fn show(
     sections: &Sections<'_>,
     below: impl FnOnce(&mut Ui),
 ) -> Out {
-    ui.painter().rect_filled(area, 0.0, brand::GROUND);
+    ui.painter().rect_filled(area, 0.0, brand::ground());
     let board = overview.board(state.repo.as_deref());
     state.repo = state.repo.take().filter(|repo| board.chips.iter().any(|c| c.label == *repo));
     let head_h = header(ui, area, &board, state);
@@ -237,8 +237,8 @@ fn chip_width(ui: &Ui, chip: Option<&RepoChip>, active_all: usize) -> f32 {
         None => ("All".to_owned(), active_all, 0.0),
     };
     let font = FontId::proportional(TEXT_SECONDARY);
-    let text = ui.painter().layout_no_wrap(label, font.clone(), brand::SOFT).size().x;
-    let count = ui.painter().layout_no_wrap(count.to_string(), font, brand::FAINT).size().x;
+    let text = ui.painter().layout_no_wrap(label, font.clone(), brand::soft()).size().x;
+    let count = ui.painter().layout_no_wrap(count.to_string(), font, brand::faint()).size().x;
     2.0 * Size::Compact.pad() + swatch + text + 6.0 + count
 }
 
@@ -249,9 +249,12 @@ fn chip_label(label: &str) -> String {
 fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
     let (left, right) = (area.left() + SIDE, area.right() - SIDE);
     let painter = ui.painter().clone();
-    let title = painter.layout_no_wrap("Overview".to_owned(), heading(TEXT_PAGE), brand::TEXT);
-    let summary =
-        painter.layout_no_wrap(board.summary(), FontId::proportional(TEXT_SECONDARY), brand::SOFT);
+    let title = painter.layout_no_wrap("Overview".to_owned(), heading(TEXT_PAGE), brand::text());
+    let summary = painter.layout_no_wrap(
+        board.summary(),
+        FontId::proportional(TEXT_SECONDARY),
+        brand::soft(),
+    );
     let all: usize = board.chips.iter().map(|chip| chip.count).sum();
     let mut chips: Vec<Option<&RepoChip>> = vec![None];
     chips.extend(board.chips.iter().map(Some));
@@ -261,11 +264,11 @@ fn header(ui: &mut Ui, area: Rect, board: &Board, state: &mut State) -> f32 {
     let mid = row_top + CHIP_H / 2.0;
     let room = right - left - title.size().x - 14.0 - summary.size().x - 24.0;
     let inline = total <= room;
-    painter.galley(pos2(left, mid - title.size().y / 2.0), title.clone(), brand::TEXT);
+    painter.galley(pos2(left, mid - title.size().y / 2.0), title.clone(), brand::text());
     painter.galley(
         pos2(left + title.size().x + 14.0, mid - summary.size().y / 2.0 + 2.0),
         summary,
-        brand::SOFT,
+        brand::soft(),
     );
     let wide = right - left;
     let wrapped = if inline {
@@ -345,11 +348,11 @@ fn paint_chips(
         let id = ui.id().with(("overview-chip", chip.map(|c| c.label.as_str())));
         let resp = ui.interact(rect, id, Sense::click());
         let (line, ink) = if selected {
-            (brand::TEAL, brand::TEAL_TEXT)
+            (brand::teal(), brand::teal_text())
         } else if resp.hovered() {
-            (brand::FAINT, brand::TEXT)
+            (brand::faint(), brand::text())
         } else {
-            (brand::ITEM_LINE, brand::SOFT)
+            (brand::item_line(), brand::soft())
         };
         painter.rect_stroke(
             rect,
@@ -372,12 +375,12 @@ fn paint_chips(
         };
         let font = FontId::proportional(TEXT_SECONDARY);
         let text = painter.layout_no_wrap(label, font.clone(), ink);
-        let count = painter.layout_no_wrap(count.to_string(), font, brand::FAINT);
+        let count = painter.layout_no_wrap(count.to_string(), font, brand::faint());
         painter.galley(pos2(x, mid_of(rect) - text.size().y / 2.0), text.clone(), ink);
         painter.galley(
             pos2(x + text.size().x + 6.0, mid_of(rect) - count.size().y / 2.0),
             count,
-            brand::FAINT,
+            brand::faint(),
         );
         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             state.repo = chip.map(|chip| chip.label.clone());
@@ -403,7 +406,7 @@ fn empty(ui: &mut Ui) {
                 Command::NewTab.keys()
             ))
             .size(TEXT_SECONDARY)
-            .color(brand::MUTED),
+            .color(brand::muted()),
         );
     });
 }
@@ -442,10 +445,10 @@ impl Lane {
 
     fn dot(self) -> Color32 {
         match self {
-            Self::Needs => brand::NEEDS,
-            Self::Working => brand::WORKING,
-            Self::Waiting => brand::WAITING,
-            Self::Idle => brand::FAINT,
+            Self::Needs => brand::needs(),
+            Self::Working => brand::working(),
+            Self::Waiting => brand::waiting(),
+            Self::Idle => brand::faint(),
         }
     }
 
@@ -544,9 +547,9 @@ fn main_column(ui: &mut Ui, width: f32, board: &Board, state: &mut State, out: &
 
 pub(crate) fn section_frame(painter: &Painter, rect: Rect, needs: bool) {
     let (fill, line) = if needs {
-        (brand::NEEDS_FILL, brand::STRUGGLE_LINE)
+        (brand::needs_fill(), brand::struggle_line())
     } else {
-        (brand::CARD, brand::CARD_LINE)
+        (brand::card(), brand::card_line())
     };
     painter.rect(
         rect,
@@ -580,7 +583,7 @@ pub(crate) fn section_head(painter: &Painter, section: Rect, head: &Head<'_>) {
             Align2::LEFT_CENTER,
             head.caption,
             FontId::proportional(TEXT_SECONDARY),
-            brand::MUTED,
+            brand::muted(),
         );
     }
     painter.text(
@@ -588,7 +591,7 @@ pub(crate) fn section_head(painter: &Painter, section: Rect, head: &Head<'_>) {
         Align2::RIGHT_CENTER,
         head.count,
         FontId::proportional(TEXT_SECONDARY),
-        brand::MUTED,
+        brand::muted(),
     );
 }
 
@@ -635,7 +638,7 @@ fn grid_section(
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
     section_frame(&painter, rect, lane == Lane::Needs);
-    let ink = if lane == Lane::Needs { brand::NEEDS } else { brand::TEXT };
+    let ink = if lane == Lane::Needs { brand::needs() } else { brand::text() };
     section_head(
         &painter,
         rect,
@@ -694,11 +697,11 @@ pub(crate) fn repo_label(painter: &Painter, left: f32, mid: f32, name: &str, max
         painter,
         name,
         FontId::proportional(TEXT_SECONDARY),
-        brand::SOFT,
+        brand::soft(),
         max_w - SWATCH - 4.0,
     );
     let right = left + SWATCH + 4.0 + text.size().x;
-    painter.galley(pos2(left + SWATCH + 4.0, mid - text.size().y / 2.0), text, brand::SOFT);
+    painter.galley(pos2(left + SWATCH + 4.0, mid - text.size().y / 2.0), text, brand::soft());
     right
 }
 
@@ -749,15 +752,15 @@ fn card(
     let view = card_view(row);
     let painter = ui.painter_at(rect);
     let line = match (lane, resp.hovered()) {
-        (Lane::Needs, true) => brand::ORANGE_SOFT,
-        (Lane::Needs, false) => brand::STRUGGLE_LINE,
-        (_, true) => brand::FIELD_LINE,
-        (_, false) => brand::ITEM_LINE,
+        (Lane::Needs, true) => brand::orange_soft(),
+        (Lane::Needs, false) => brand::struggle_line(),
+        (_, true) => brand::field_line(),
+        (_, false) => brand::item_line(),
     };
     painter.rect(
         rect,
         CornerRadius::same(CARD_RADIUS),
-        brand::ITEM,
+        brand::item(),
         Stroke::new(1.0, line),
         StrokeKind::Inside,
     );
@@ -765,9 +768,9 @@ fn card(
     let center = pos2(inner.left() + RING / 2.0, inner.top() + ROW_H / 2.0);
     let ringed = lane == Lane::Working;
     if ringed {
-        let track = brand::ITEM_LINE;
+        let track = brand::item_line();
         if view.fraction > 0.0 {
-            progress_ring::paint(&painter, center, RING, view.fraction, brand::WORKING, track);
+            progress_ring::paint(&painter, center, RING, view.fraction, brand::working(), track);
         } else {
             let radius = RING / 2.0 - progress_ring::stroke_of(RING) / 2.0;
             painter.circle_stroke(
@@ -799,13 +802,13 @@ fn card(
         painter.layout_no_wrap(
             fmt_elapsed(row.elapsed),
             FontId::monospace(TEXT_SECONDARY),
-            brand::FAINT,
+            brand::faint(),
         )
     });
     let full = (inner.right() - text_x - button_room).max(1.0);
     let tag = row.kind.label();
     let pill_w = if lane == Lane::Working { 0.0 } else { tag_width(&painter, &tag) };
-    let name_ink = if lane == Lane::Idle { brand::SOFT } else { brand::TEXT };
+    let name_ink = if lane == Lane::Idle { brand::soft() } else { brand::text() };
     let flag_w =
         row.stamp.out_of_date.map_or(0.0, |_| panel_blocks::out_of_date_width(&painter) + 6.0);
     let name = ellipsized(
@@ -856,7 +859,7 @@ fn card(
             painter.layout_no_wrap(
                 tokens.short.clone(),
                 FontId::monospace(TEXT_SECONDARY),
-                brand::FAINT,
+                brand::faint(),
             )
         })
         .filter(|galley| {
@@ -866,7 +869,7 @@ fn card(
     let tokens_w = tokens.as_ref().map_or(0.0, |galley| galley.size().x + 8.0);
     let line_mid = inner.top() + LINE_MID;
     let (text, ink) = match ask {
-        Some(ask) => (ask.text.clone(), brand::NEEDS),
+        Some(ask) => (ask.text.clone(), brand::needs()),
         None => second_line(row, lane, &view),
     };
     let mut line_left = text_x;
@@ -879,9 +882,9 @@ fn card(
         let dot = painter.layout_no_wrap(
             "\u{b7}".to_owned(),
             FontId::proportional(TEXT_SECONDARY),
-            brand::MUTED,
+            brand::muted(),
         );
-        painter.galley(pos2(line_left, line_mid - dot.size().y / 2.0), dot.clone(), brand::MUTED);
+        painter.galley(pos2(line_left, line_mid - dot.size().y / 2.0), dot.clone(), brand::muted());
         line_left += dot.size().x + 6.0;
     }
     let line_room = (inner.right() - line_left - button_room - clock_w - tokens_w).max(1.0);
@@ -906,8 +909,8 @@ fn card(
         }
         if let Some(text) = lost_quiet {
             let room = (line_left + line_room - x).max(20.0);
-            let galley = ellipsized(&painter, text, body(TEXT_TAG), brand::MUTED, room);
-            painter.galley(pos2(x, line_mid - galley.size().y / 2.0), galley, brand::MUTED);
+            let galley = ellipsized(&painter, text, body(TEXT_TAG), brand::muted(), room);
+            painter.galley(pos2(x, line_mid - galley.size().y / 2.0), galley, brand::muted());
         }
     } else if rest_room >= MIN_STAGE_W {
         let rest = ellipsized(
@@ -923,7 +926,7 @@ fn card(
         painter.galley(
             pos2(inner.right() - clock.size().x, line_mid - clock.size().y / 2.0),
             clock,
-            brand::FAINT,
+            brand::faint(),
         );
     }
     if let Some(galley) = tokens {
@@ -931,7 +934,7 @@ fn card(
             inner.right() - button_room - clock_w - galley.size().x,
             line_mid - galley.size().y / 2.0,
         );
-        painter.galley(at, galley, brand::FAINT);
+        painter.galley(at, galley, brand::faint());
     }
     if let Some(list) = checklist_of(row) {
         let top = inner.top() + plan.text - overview_steps::height(list);
@@ -964,11 +967,11 @@ fn card(
                 pos2(inner.left(), inner.bottom() - BAR_H),
                 vec2(inner.width(), BAR_H),
             );
-            painter.rect_filled(bar, CornerRadius::same(2), brand::ITEM_LINE);
+            painter.rect_filled(bar, CornerRadius::same(2), brand::item_line());
             if view.fraction > 0.0 {
                 let fill =
                     Rect::from_min_size(bar.min, vec2(bar.width() * view.fraction.min(1.0), BAR_H));
-                painter.rect_filled(fill, CornerRadius::same(2), brand::WORKING);
+                painter.rect_filled(fill, CornerRadius::same(2), brand::working());
             }
         }
         Lane::Waiting | Lane::Idle => {}
@@ -1009,11 +1012,11 @@ fn ask_chips(
             painter,
             line,
             FontId::proportional(TEXT_SECONDARY),
-            brand::MUTED,
+            brand::muted(),
             layout.room,
         );
         let at = pos2(text_x, rect.top() + CARD_PAD + ROW_H + 1.0 + WHY_H * index as f32);
-        painter.galley(at, galley, brand::MUTED);
+        painter.galley(at, galley, brand::muted());
     }
     let origin = pos2(text_x, action_top);
     layout.row.show(ui, origin)
@@ -1021,12 +1024,12 @@ fn ask_chips(
 
 fn second_line(row: &Row, lane: Lane, view: &crate::overview::CardView) -> (String, Color32) {
     match lane {
-        Lane::Needs => (needs_line(row, &view.line), brand::NEEDS),
-        Lane::Working => (view.line.clone(), brand::MUTED),
-        Lane::Waiting => (waiting_line(row, &view.line), brand::WAITING),
+        Lane::Needs => (needs_line(row, &view.line), brand::needs()),
+        Lane::Working => (view.line.clone(), brand::muted()),
+        Lane::Waiting => (waiting_line(row, &view.line), brand::waiting()),
         Lane::Idle => {
             let failed = row.tone == Tone::Failed;
-            (idle_line(row), if failed { brand::RED } else { brand::MUTED })
+            (idle_line(row), if failed { brand::red() } else { brand::muted() })
         }
     }
 }

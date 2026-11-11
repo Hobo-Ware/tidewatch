@@ -25,13 +25,13 @@ pub(crate) fn show(ui: &mut Ui, band: Rect) -> bool {
     );
     paint_item(ui.painter(), card, false);
     let dot = pos2(card.left() + PAD + DOT / 2.0, card.center().y);
-    ui.painter().circle_filled(dot, DOT / 2.0, brand::MUTED);
+    ui.painter().circle_filled(dot, DOT / 2.0, brand::muted());
     ui.painter().text(
         pos2(dot.x + DOT / 2.0 + 8.0, card.center().y),
         Align2::LEFT_CENTER,
         LABEL,
         FontId::proportional(TEXT_BODY),
-        brand::TEXT,
+        brand::text(),
     );
     let width = button_width(ui, BUTTON, Size::Compact);
     let button = Rect::from_center_size(

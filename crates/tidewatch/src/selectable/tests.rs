@@ -47,8 +47,8 @@ fn drag_across(ctx: &egui::Context, from: Pos2, to: Pos2, draw: &mut dyn FnMut(&
 }
 
 fn paint_static(ui: &mut Ui) {
-    let laid = ui.painter().layout_no_wrap(SENTENCE.to_owned(), body(14.0), brand::TEXT);
-    galley(ui, AT, laid, brand::TEXT);
+    let laid = ui.painter().layout_no_wrap(SENTENCE.to_owned(), body(14.0), brand::text());
+    galley(ui, AT, laid, brand::text());
 }
 
 fn paint_button(ui: &mut Ui) {

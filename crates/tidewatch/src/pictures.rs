@@ -303,7 +303,7 @@ fn truncated(
 fn paint_thumb(ui: &Ui, rect: Rect, small: Option<&TextureHandle>) {
     let painter = ui.painter();
     let radius = CornerRadius::same(6);
-    painter.rect_filled(rect, radius, brand::SUNKEN);
+    painter.rect_filled(rect, radius, brand::sunken());
     match small {
         Some(texture) => {
             painter.image(
@@ -319,19 +319,19 @@ fn paint_thumb(ui: &Ui, rect: Rect, small: Option<&TextureHandle>) {
                     rect.center() + vec2(0.0, (at - 0.5) * rect.height()),
                     vec2(rect.width() * width, 3.0),
                 );
-                painter.rect_filled(bar, CornerRadius::same(2), brand::FAINT);
+                painter.rect_filled(bar, CornerRadius::same(2), brand::faint());
             }
         }
     }
-    painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::FIELD_LINE), StrokeKind::Inside);
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::field_line()), StrokeKind::Inside);
 }
 
 fn paint_file_glyph(ui: &Ui, rect: Rect, path: &Path, dir: bool) {
     let painter = ui.painter();
     let radius = CornerRadius::same(6);
-    painter.rect_filled(rect, radius, brand::SUNKEN);
-    painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::FIELD_LINE), StrokeKind::Inside);
-    let ink = Stroke::new(1.5, brand::SOFT);
+    painter.rect_filled(rect, radius, brand::sunken());
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::field_line()), StrokeKind::Inside);
+    let ink = Stroke::new(1.5, brand::soft());
     if dir {
         let body = Rect::from_center_size(rect.center() + vec2(0.0, 2.0), vec2(26.0, 18.0));
         let tab = Rect::from_min_size(body.left_top() - vec2(0.0, 4.0), vec2(10.0, 4.0));
@@ -343,7 +343,7 @@ fn paint_file_glyph(ui: &Ui, rect: Rect, path: &Path, dir: bool) {
     let (right, top) = (rect.right(), rect.top());
     painter.add(egui::Shape::convex_polygon(
         vec![Pos2::new(right - fold, top), Pos2::new(right, top), Pos2::new(right, top + fold)],
-        brand::ITEM,
+        brand::item(),
         Stroke::NONE,
     ));
     painter.add(egui::Shape::convex_polygon(
@@ -352,7 +352,7 @@ fn paint_file_glyph(ui: &Ui, rect: Rect, path: &Path, dir: bool) {
             Pos2::new(right - fold, top + fold),
             Pos2::new(right, top + fold),
         ],
-        brand::FIELD_LINE,
+        brand::field_line(),
         Stroke::NONE,
     ));
     painter.text(
@@ -360,15 +360,15 @@ fn paint_file_glyph(ui: &Ui, rect: Rect, path: &Path, dir: bool) {
         egui::Align2::CENTER_CENTER,
         attachments::ext_label(path),
         FontId::proportional(12.0),
-        brand::SOFT,
+        brand::soft(),
     );
 }
 
 fn paint_remove(ui: &Ui, rect: Rect, hovered: bool) {
     let painter = ui.painter();
-    let line = if hovered { brand::FAINT } else { brand::FIELD_LINE };
+    let line = if hovered { brand::faint() } else { brand::field_line() };
     if hovered {
-        painter.rect_filled(rect, CornerRadius::same(Size::Compact.radius()), brand::BUTTON);
+        painter.rect_filled(rect, CornerRadius::same(Size::Compact.radius()), brand::button());
     }
     painter.rect_stroke(
         rect,
@@ -377,7 +377,7 @@ fn paint_remove(ui: &Ui, rect: Rect, hovered: bool) {
         StrokeKind::Inside,
     );
     let c = rect.center();
-    let ink = Stroke::new(1.5, brand::SOFT);
+    let ink = Stroke::new(1.5, brand::soft());
     painter.line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], ink);
     painter.line_segment([c + vec2(3.5, -3.5), c + vec2(-3.5, 3.5)], ink);
 }
@@ -398,12 +398,12 @@ pub(crate) fn paint(
         Look::Ready(loaded) => Some(loaded.clone()),
         Look::Loading | Look::Missing => None,
     };
-    let line = if body.hovered() { brand::FIELD_LINE } else { brand::ITEM_LINE };
+    let line = if body.hovered() { brand::field_line() } else { brand::item_line() };
     let painter = ui.painter();
     painter.rect(
         rect,
         CornerRadius::same(10),
-        brand::ITEM,
+        brand::item(),
         Stroke::new(1.0, line),
         StrokeKind::Inside,
     );
@@ -425,25 +425,25 @@ pub(crate) fn paint(
     let label = source.label(n);
     let shown = match file {
         Some(_) => attachments::fit_middle(&label, |text| {
-            ui.painter().layout_no_wrap(text.to_owned(), name_font.clone(), brand::TEXT).size().x
+            ui.painter().layout_no_wrap(text.to_owned(), name_font.clone(), brand::text()).size().x
                 <= text_w
         }),
         None => label,
     };
-    let name = truncated(ui, &shown, name_font, brand::TEXT, text_w);
+    let name = truncated(ui, &shown, name_font, brand::text(), text_w);
     let detail_text = match &look {
         Look::Ready(loaded) if loaded.dir => "Folder".to_owned(),
         Look::Ready(loaded) => meta_text(loaded.size, loaded.bytes),
         Look::Loading => String::new(),
         Look::Missing => source.gone().to_owned(),
     };
-    let detail = truncated(ui, &detail_text, FontId::proportional(12.0), brand::MUTED, text_w);
+    let detail = truncated(ui, &detail_text, FontId::proportional(12.0), brand::muted(), text_w);
     let block = name.size().y + detail.size().y;
     let x = thumb.right() + TEXT_GAP;
     let top = rect.center().y - block / 2.0;
     let painter = ui.painter();
-    painter.galley(Pos2::new(x, top), name.clone(), brand::TEXT);
-    painter.galley(Pos2::new(x, top + name.size().y), detail, brand::MUTED);
+    painter.galley(Pos2::new(x, top), name.clone(), brand::text());
+    painter.galley(Pos2::new(x, top + name.size().y), detail, brand::muted());
     let mut outcome = Outcome::default();
     if removable {
         let button = Rect::from_min_size(

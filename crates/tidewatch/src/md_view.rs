@@ -132,7 +132,7 @@ fn format_of(ui: &Ui, run: &Run, size: f32, semibold: bool, color: Color32) -> T
     if run.kind == Kind::Note {
         format.font_id = body(size * NOTE_EM);
         format.valign = Align::TOP;
-        format.color = brand::TEAL_TEXT;
+        format.color = brand::teal_text();
         return format;
     }
     if run.kind == Kind::Code {
@@ -151,11 +151,11 @@ fn format_of(ui: &Ui, run: &Run, size: f32, semibold: bool, color: Color32) -> T
         format.strikethrough = Stroke::new(1.0, color);
     }
     if run.kind == Kind::Image {
-        format.background = brand::ITEM;
-        format.color = brand::TEAL_TEXT;
+        format.background = brand::item();
+        format.color = brand::teal_text();
     }
     if linked {
-        format.color = brand::TEAL_TEXT;
+        format.color = brand::teal_text();
         format.underline = Stroke::new(1.0, brand::link_rest());
     }
     format
@@ -170,7 +170,7 @@ fn ascent(ui: &Ui, font: egui::FontId) -> f32 {
 
 fn heading_block(ui: &mut Ui, level: u8, runs: &Inline) {
     let index = usize::from(level.clamp(1, 6)) - 1;
-    let color = if level == 6 { brand::MUTED } else { ink(ui) };
+    let color = if level == 6 { brand::muted() } else { ink(ui) };
     text(ui, runs, HEADING_EM[index], true, color, TextWrapMode::Wrap);
     if level <= 2 {
         ui.add_space(4.0);
@@ -186,7 +186,7 @@ fn rule(ui: &mut Ui) {
 
 fn rule_line(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, brand::ITEM_LINE);
+    ui.painter().rect_filled(rect, 0.0, brand::item_line());
 }
 
 fn quote(ui: &mut Ui, inner: &[Block], ctx: Ctx) {
@@ -195,7 +195,7 @@ fn quote(ui: &mut Ui, inner: &[Block], ctx: Ctx) {
         ui.add_space(QUOTE_INDENT);
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            ui.visuals_mut().override_text_color = Some(brand::SOFT);
+            ui.visuals_mut().override_text_color = Some(brand::soft());
             blocks(ui, inner, ctx);
         });
     });
@@ -204,7 +204,7 @@ fn quote(ui: &mut Ui, inner: &[Block], ctx: Ctx) {
         pos2(left + 2.0, rect.top()),
         pos2(left + 2.0 + QUOTE_BAR, rect.bottom()),
     );
-    ui.painter().rect_filled(bar, CornerRadius::same(2), brand::FAINT);
+    ui.painter().rect_filled(bar, CornerRadius::same(2), brand::faint());
 }
 
 fn list(ui: &mut Ui, start: Option<u64>, items: &[Item], ctx: Ctx) {
@@ -263,7 +263,7 @@ pub(crate) fn paint_marker(
     let painter = ui.painter();
     let edge_center = edge_top + vec2(0.0, line / 2.0 - LIFT);
     let center = edge_center - vec2(BULLET_R + 3.0, 0.0);
-    let color = brand::SOFT;
+    let color = brand::soft();
     match marker {
         Marker::Bullet(depth) => match depth % 3 {
             0 => {
@@ -297,17 +297,17 @@ fn paint_box(ui: &Ui, center: egui::Pos2, done: bool) {
         painter.rect(
             rect,
             radius,
-            brand::TEAL_NAV,
-            Stroke::new(1.3, brand::TEAL),
+            brand::teal_nav(),
+            Stroke::new(1.3, brand::teal()),
             StrokeKind::Inside,
         );
         let at = |x: f32, y: f32| rect.min + vec2(x, y) * (BOX / 15.0);
         painter.add(Shape::line(
             vec![at(3.8, 7.8), at(6.4, 10.6), at(11.2, 4.8)],
-            Stroke::new(1.7, brand::TEAL_TEXT),
+            Stroke::new(1.7, brand::teal_text()),
         ));
     } else {
-        painter.rect_stroke(rect, radius, Stroke::new(1.3, brand::FAINT), StrokeKind::Inside);
+        painter.rect_stroke(rect, radius, Stroke::new(1.3, brand::faint()), StrokeKind::Inside);
     }
 }
 
@@ -316,7 +316,7 @@ fn notes_block(ui: &mut Ui, notes: &[Note], ctx: Ctx) {
     rule_line(ui);
     ui.add_space(BLOCK_GAP);
     ui.scope(|ui| {
-        ui.visuals_mut().override_text_color = Some(brand::SOFT);
+        ui.visuals_mut().override_text_color = Some(brand::soft());
         let labels: Vec<String> = notes.iter().map(|note| format!("{}.", note.label)).collect();
         let gutter = gutter_for(ui, &labels);
         for (index, note) in notes.iter().enumerate() {
@@ -336,12 +336,12 @@ fn table(ui: &mut Ui, aligns: &[Alignment], head: &[Inline], rows: &[Vec<Inline>
         ui.spacing_mut().scroll = ScrollStyle::solid();
         ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
             Frame::new()
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(CornerRadius::same(TABLE_RADIUS))
                 .show(ui, |ui| {
                     Grid::new(id)
                         .spacing(Vec2::ZERO)
-                        .with_row_color(|row, _| (row == 0).then_some(brand::ITEM))
+                        .with_row_color(|row, _| (row == 0).then_some(brand::item()))
                         .show(ui, |ui| {
                             cells(ui, aligns, head, 0, true);
                             ui.end_row();
@@ -394,7 +394,7 @@ mod tests {
             };
             outs.push(ctx.run_ui(raw, |ui| {
                 ui.set_width(WIDTH);
-                crate::reader_chat_view::chat_text(ui, |ui| show(ui, md, Look::AGENT));
+                crate::reader_chat_view::chat_text(ui, |ui| show(ui, md, Look::agent()));
             }));
         }
         outs

@@ -6,7 +6,7 @@
 use resvg::tiny_skia::{Pixmap, Transform};
 use resvg::usvg;
 
-/// The plate every face sits on, as sRGB. The app's `brand::FACE_PLATE` is this color.
+/// The plate every face sits on, as sRGB. The app's `brand::face_plate()` is this color.
 pub const PLATE: [u8; 3] = [0x22, 0x29, 0x37];
 /// How much of the plate's radius the drawn part of a picture reaches, wherever it sits in its
 /// viewBox.

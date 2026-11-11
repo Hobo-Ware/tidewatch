@@ -28,14 +28,14 @@ pub(crate) struct Shown {
 fn paint_mark(ui: &Ui, rect: Rect, on: bool, enabled: bool) {
     let painter = ui.painter();
     if on {
-        let ink = if enabled { brand::TEAL } else { brand::FAINT };
+        let ink = if enabled { brand::teal() } else { brand::faint() };
         let at = |x: f32, y: f32| rect.min + vec2(x, y) * (rect.width() / 24.0);
         painter.add(Shape::line(
             vec![at(5.0, 12.0), at(10.0, 17.0), at(19.0, 7.0)],
             Stroke::new(2.2, ink),
         ));
     } else {
-        painter.rect_stroke(rect, 4.0, Stroke::new(1.5, brand::FIELD_LINE), StrokeKind::Inside);
+        painter.rect_stroke(rect, 4.0, Stroke::new(1.5, brand::field_line()), StrokeKind::Inside);
     }
 }
 
@@ -57,7 +57,7 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3], tests_tip: Option<&str>, pr_lab
         );
         paint_mark(ui, mark, row.on, enabled);
         let painter = ui.painter();
-        let ink = if enabled { brand::TEXT } else { brand::MUTED };
+        let ink = if enabled { brand::text() } else { brand::muted() };
         let text = if row.tick == Tick::Pr { pr_label } else { row.tick.label() };
         let label = painter.text(
             pos2(mark.right() + MARK_GAP, rect.center().y),
@@ -72,7 +72,7 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row; 3], tests_tip: Option<&str>, pr_lab
                 Align2::LEFT_CENTER,
                 reason,
                 body(12.0),
-                brand::FAINT,
+                brand::faint(),
             );
         }
         if enabled {

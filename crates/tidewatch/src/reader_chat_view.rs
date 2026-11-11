@@ -64,7 +64,9 @@ const BUBBLE_PAD: Margin = Margin { left: 16, right: 16, top: 12, bottom: 12 };
 const USER_PAD: Margin = Margin { left: 16, right: 16, top: 10, bottom: 10 };
 const USER_RADIUS: CornerRadius = CornerRadius { nw: 16, ne: 16, se: 4, sw: 16 };
 const AGENT_RADIUS: CornerRadius = CornerRadius { nw: 4, ne: 16, se: 16, sw: 16 };
-const USER_FILL: Color32 = brand::TEAL_NAV;
+fn user_fill() -> Color32 {
+    brand::teal_nav()
+}
 pub(crate) const USER_LINE: Color32 = Color32::from_rgb(0x1f, 0x3a, 0x3a);
 const USER_CODE_FILL: Color32 = Color32::from_black_alpha(90);
 const LIST_SLACK: f32 = 32.0;
@@ -108,18 +110,19 @@ pub(crate) fn is_fresh(at_ms: Option<i64>, after_ms: Option<i64>) -> bool {
 /// small shadow, so the text scrolling under it does not bleed through.
 pub(crate) fn jump_pill(ui: &mut Ui, slot: Rect, label: &str) -> Response {
     let size = crate::screen_kit::Size::Compact;
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(size.font()), brand::TEAL_TEXT);
+    let galley =
+        ui.painter().layout_no_wrap(label.to_owned(), body(size.font()), brand::teal_text());
     let rect =
         Rect::from_min_size(slot.min, vec2(galley.size().x + 2.0 * size.pad(), size.height()));
     let response = ui.interact(rect, ui.id().with(("jump-pill", label)), Sense::click());
-    let fill = if response.hovered() { brand::ITEM } else { brand::CARD };
-    let line = if response.hovered() { brand::FIELD_LINE } else { brand::CARD_LINE };
+    let fill = if response.hovered() { brand::item() } else { brand::card() };
+    let line = if response.hovered() { brand::field_line() } else { brand::card_line() };
     let painter = ui.painter();
     let radius = CornerRadius::same(size.radius());
     painter.add(JUMP_SHADOW.as_shape(rect, radius));
     painter.rect_filled(rect, radius, fill);
     painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
-    painter.galley(rect.center() - galley.size() / 2.0, galley, brand::TEAL_TEXT);
+    painter.galley(rect.center() - galley.size() / 2.0, galley, brand::teal_text());
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -146,7 +149,7 @@ pub(crate) fn chat_text<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         styles.insert(TextStyle::Monospace, FontId::monospace(BODY_PX * CODE_EM));
         styles.insert(TextStyle::Heading, FontId::proportional(HEADING_PX));
         styles.insert(TextStyle::Small, FontId::proportional(13.0));
-        ui.visuals_mut().code_bg_color = brand::ITEM;
+        ui.visuals_mut().code_bg_color = brand::item();
         add(ui)
     })
     .inner
@@ -188,9 +191,9 @@ pub(crate) fn web_markdown(ui: &mut Ui, text: &str, captions: bool) {
         let visuals = ui.visuals_mut();
         visuals.override_text_color = None;
         visuals.widgets.noninteractive.fg_stroke.color = ink;
-        visuals.hyperlink_color = brand::TEAL_TEXT;
+        visuals.hyperlink_color = brand::teal_text();
         ui.style_mut().url_in_tooltip = true;
-        reader_markdown::show(ui, &links::markdown(text, repo.as_deref()), captions, Look::AGENT);
+        reader_markdown::show(ui, &links::markdown(text, repo.as_deref()), captions, Look::agent());
     });
     ui.ctx().output_mut(|out| {
         out.commands.retain(
@@ -203,12 +206,12 @@ fn meta(ui: &mut Ui, text: &str, align: Align) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, META_H), Sense::hover());
     let painter = ui.painter();
-    let galley = painter.layout_no_wrap(text.to_owned(), body(12.0), brand::FAINT);
+    let galley = painter.layout_no_wrap(text.to_owned(), body(12.0), brand::faint());
     let x = match align {
         Align::Max => rect.right() - galley.size().x,
         _ => rect.left(),
     };
-    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::FAINT);
+    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::faint());
 }
 
 fn stamped(who: &str, at_ms: Option<i64>, zone: &TimeZone) -> String {
@@ -270,9 +273,9 @@ fn sent_caption(record: &Record) -> String {
 
 fn caption(ui: &mut Ui, record: &Record, max_w: f32) {
     let (rect, response) = ui.allocate_exact_size(vec2(max_w, META_H), Sense::hover());
-    let galley = ellipsized(ui.painter(), &sent_caption(record), body(12.0), brand::MUTED, max_w);
+    let galley = ellipsized(ui.painter(), &sent_caption(record), body(12.0), brand::muted(), max_w);
     let x = rect.right() - galley.size().x;
-    ui.painter().galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::MUTED);
+    ui.painter().galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::muted());
     response.on_hover_text(record.footer());
 }
 
@@ -314,16 +317,16 @@ fn queued_meta(ui: &mut Ui, time: f64) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, META_H), Sense::hover());
     let painter = ui.painter();
-    let galley = painter.layout_no_wrap("Queued".to_owned(), body(12.0), brand::FAINT);
+    let galley = painter.layout_no_wrap("Queued".to_owned(), body(12.0), brand::faint());
     let x = rect.right() - galley.size().x;
     let y = rect.center().y;
-    painter.galley(pos2(x, y - galley.size().y / 2.0), galley, brand::FAINT);
+    painter.galley(pos2(x, y - galley.size().y / 2.0), galley, brand::faint());
     paint_spinner(
         painter,
         pos2(x - QUEUED_GAP - QUEUED_SPIN / 2.0, y),
         QUEUED_SPIN,
         time,
-        brand::TEAL,
+        brand::teal(),
     );
 }
 
@@ -331,9 +334,9 @@ fn not_seen_meta(ui: &mut Ui) {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, META_H), Sense::hover());
     let painter = ui.painter();
-    let galley = painter.layout_no_wrap(NOT_SEEN.to_owned(), body(12.0), brand::ORANGE);
+    let galley = painter.layout_no_wrap(NOT_SEEN.to_owned(), body(12.0), brand::orange());
     let x = rect.right() - galley.size().x;
-    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::ORANGE);
+    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::orange());
 }
 
 fn user_bubble(
@@ -386,7 +389,7 @@ fn user_bubble(
                 );
                 ui.set_opacity(dim);
                 let bubble = Frame::new()
-                    .fill(USER_FILL)
+                    .fill(user_fill())
                     .stroke(Stroke::new(1.0, USER_LINE))
                     .corner_radius(USER_RADIUS)
                     .inner_margin(USER_PAD)
@@ -399,7 +402,7 @@ fn user_bubble(
                         let measured = LayoutJob::simple(
                             markdown.clone(),
                             FontId::proportional(BODY_PX),
-                            brand::TEXT,
+                            brand::text(),
                             room,
                         );
                         let natural = ui
@@ -533,16 +536,16 @@ fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
         line.run(text, &egui::text::TextFormat::simple(font, ink));
         line.wrapped(width, usize::MAX).lay_out(ui.painter())
     };
-    let heading_laid = laid("Your answers", body(ANSWER_HEAD_PX), brand::MUTED, room);
+    let heading_laid = laid("Your answers", body(ANSWER_HEAD_PX), brand::muted(), room);
     let lines: Vec<(Laid, Laid)> = pairs
         .iter()
         .map(|(question, answer)| {
             (
-                laid(question, body(ANSWER_QUESTION_PX), brand::SOFT, room),
+                laid(question, body(ANSWER_QUESTION_PX), brand::soft(), room),
                 laid(
                     answer,
                     crate::screen_kit::heading(ANSWER_PX),
-                    brand::TEXT,
+                    brand::text(),
                     room - ANSWER_LEAD,
                 ),
             )
@@ -561,7 +564,7 @@ fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
             laid.paint(ui, id.with(name), rect.min, ink);
             rect
         };
-        put(ui, &heading_laid, (0, 0), brand::MUTED);
+        put(ui, &heading_laid, (0, 0), brand::muted());
         for (index, (question, answer)) in lines.iter().enumerate() {
             ui.add_space(ANSWER_PAIR_GAP);
             if index > 0 {
@@ -570,16 +573,16 @@ fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
                 ui.painter().rect_filled(line, CornerRadius::ZERO, USER_LINE);
                 ui.add_space(ANSWER_PAIR_GAP);
             }
-            put(ui, question, (index, 1), brand::SOFT);
+            put(ui, question, (index, 1), brand::soft());
             ui.add_space(ANSWER_LINE_GAP);
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let (tick, _) = ui.allocate_exact_size(vec2(ANSWER_LEAD, 18.0), Sense::hover());
                 let c = tick.left_center() + vec2(6.0, 0.0);
-                let stroke = Stroke::new(2.0, brand::TEAL);
+                let stroke = Stroke::new(2.0, brand::teal());
                 ui.painter().line_segment([c + vec2(-3.5, 0.2), c + vec2(-1.0, 3.0)], stroke);
                 ui.painter().line_segment([c + vec2(-1.0, 3.0), c + vec2(3.8, -3.0)], stroke);
-                put(ui, answer, (index, 2), brand::TEXT);
+                put(ui, answer, (index, 2), brand::text());
             });
         }
     });
@@ -597,7 +600,7 @@ pub(crate) fn slash_command(ui: &mut Ui, text: &str, time: Option<&str>) {
     ui.add_space(NOTE_GAP);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
-        let galley = ui.painter().layout_no_wrap(text.to_owned(), mono(13.0), brand::TEAL_TEXT);
+        let galley = ui.painter().layout_no_wrap(text.to_owned(), mono(13.0), brand::teal_text());
         let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(18.0, 8.0), Sense::hover());
         ui.painter().rect_stroke(
             rect,
@@ -605,12 +608,12 @@ pub(crate) fn slash_command(ui: &mut Ui, text: &str, time: Option<&str>) {
             Stroke::new(1.0, USER_LINE),
             StrokeKind::Inside,
         );
-        ui.painter().galley(rect.min + vec2(9.0, 4.0), galley, brand::TEAL_TEXT);
+        ui.painter().galley(rect.min + vec2(9.0, 4.0), galley, brand::teal_text());
         let said = match time {
             Some(time) => format!("You ran a command \u{b7} {time}"),
             None => "You ran a command".to_owned(),
         };
-        ui.label(RichText::new(said).size(12.0).color(brand::FAINT));
+        ui.label(RichText::new(said).size(12.0).color(brand::faint()));
     });
     ui.add_space(NOTE_GAP);
 }
@@ -622,13 +625,13 @@ pub(crate) fn command_output(ui: &mut Ui, text: &str) {
         background_row(ui, &name, &result);
     } else {
         Frame::new()
-            .fill(brand::SUNKEN)
-            .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+            .fill(brand::sunken())
+            .stroke(Stroke::new(1.0, brand::item_line()))
             .corner_radius(CornerRadius::same(10))
             .inner_margin(Margin::symmetric(14, 10))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.add(Label::new(RichText::new(text).font(body(13.0)).color(brand::STEP_TEXT)));
+                ui.add(Label::new(RichText::new(text).font(body(13.0)).color(brand::step_text())));
             });
     }
     ui.add_space(NOTE_GAP);
@@ -636,8 +639,8 @@ pub(crate) fn command_output(ui: &mut Ui, text: &str) {
 
 fn background_row(ui: &mut Ui, name: &str, result: &TaskResult) {
     Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(CornerRadius::same(12))
         .inner_margin(Margin::symmetric(14, 10))
         .show(ui, |ui| {
@@ -645,26 +648,26 @@ fn background_row(ui: &mut Ui, name: &str, result: &TaskResult) {
                 ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
             let painter = ui.painter();
             let mid = rect.center().y;
-            paint_icon(painter, pos2(rect.left() + 8.0, mid), ToolKind::Command, brand::MUTED);
-            let tag = painter.layout_no_wrap("background".to_owned(), body(12.0), brand::FAINT);
+            paint_icon(painter, pos2(rect.left() + 8.0, mid), ToolKind::Command, brand::muted());
+            let tag = painter.layout_no_wrap("background".to_owned(), body(12.0), brand::faint());
             let tag_x = rect.right() - tag.size().x;
-            painter.galley(pos2(tag_x, mid - tag.size().y / 2.0), tag, brand::FAINT);
+            painter.galley(pos2(tag_x, mid - tag.size().y / 2.0), tag, brand::faint());
             let (ink, text, mark) = match result {
-                TaskResult::Done(text) => (brand::GREEN, text.as_str(), Some(true)),
-                TaskResult::Failed(text) => (brand::RED, text.as_str(), Some(false)),
-                TaskResult::Stopped => (brand::MUTED, "Stopped", None),
+                TaskResult::Done(text) => (brand::green(), text.as_str(), Some(true)),
+                TaskResult::Failed(text) => (brand::red(), text.as_str(), Some(false)),
+                TaskResult::Stopped => (brand::muted(), "Stopped", None),
             };
             let said = painter.layout_no_wrap(text.to_owned(), body(13.0), ink);
             let lead = if mark.is_some() { 19.0 } else { 0.0 };
             let said_w = said.size().x + lead;
             let said_x = tag_x - 16.0 - said_w;
             let room = said_x - 12.0 - (rect.left() + 28.0);
-            let title = ellipsized(painter, name, body(14.0), brand::TEXT, room.max(40.0));
+            let title = ellipsized(painter, name, body(14.0), brand::text(), room.max(40.0));
             let title_w = title.size().x;
             painter.galley(
                 pos2(rect.left() + 28.0, mid - title.size().y / 2.0),
                 title,
-                brand::TEXT,
+                brand::text(),
             );
             let at = (rect.left() + 28.0 + title_w + 12.0).min(said_x);
             let stroke = Stroke::new(1.6, ink);
@@ -810,20 +813,20 @@ fn pager(
 ) -> Option<bool> {
     const ARROW_W: f32 = 18.0;
     let painter = ui.painter().clone();
-    let galley = painter.layout_no_wrap(label.to_owned(), body(12.0), brand::SOFT);
+    let galley = painter.layout_no_wrap(label.to_owned(), body(12.0), brand::soft());
     let newer = Rect::from_min_size(pos2(row.right() - ARROW_W, row.top()), vec2(ARROW_W, META_H));
     let text_x = newer.left() - 4.0 - galley.size().x;
     let older = Rect::from_min_size(pos2(text_x - 4.0 - ARROW_W, row.top()), vec2(ARROW_W, META_H));
-    painter.galley(pos2(text_x, row.center().y - galley.size().y / 2.0), galley, brand::SOFT);
+    painter.galley(pos2(text_x, row.center().y - galley.size().y / 2.0), galley, brand::soft());
     let mut clicked = None;
     for (rect, is_older, can) in [(older, true, back + 1 < count), (newer, false, back > 0)] {
         let id = ui.id().with(("page", key, is_older));
         let response =
             ui.interact(rect.expand(4.0), id, if can { Sense::click() } else { Sense::hover() });
         let ink = match (can, response.hovered()) {
-            (false, _) => brand::FAINT,
-            (true, true) => brand::TEAL_TEXT,
-            (true, false) => brand::SOFT,
+            (false, _) => brand::faint(),
+            (true, true) => brand::teal_text(),
+            (true, false) => brand::soft(),
         };
         let c = rect.center();
         let tip = if is_older { -2.5 } else { 2.5 };
@@ -842,8 +845,8 @@ fn bubble(ui: &mut Ui, list: &[&Row], answers: &[usize], column: f32, fresh: boo
         return;
     }
     Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(AGENT_RADIUS)
         .inner_margin(BUBBLE_PAD)
         .show(ui, |ui| {
@@ -866,13 +869,16 @@ fn bubble(ui: &mut Ui, list: &[&Row], answers: &[usize], column: f32, fresh: boo
 fn summary_row(ui: &mut Ui, group: &Group, open: bool, column: f32) -> bool {
     let (rect, _) = ui.allocate_exact_size(vec2(column, TOGGLE_H), Sense::hover());
     let painter = ui.painter().clone();
-    let label = painter.layout_no_wrap(group.steps_label(), body(12.0), brand::SOFT);
+    let label = painter.layout_no_wrap(group.steps_label(), body(12.0), brand::soft());
     let chip =
         Rect::from_min_size(rect.min, vec2(11.0 + 12.0 + 6.0 + label.size().x + 11.0, TOGGLE_H));
     let response = ui.interact(chip, ui.id().with(("steps", group.key)), Sense::click());
     let hot = open || response.hovered();
-    let (line, ink) =
-        if hot { (brand::TEAL, brand::TEAL_TEXT) } else { (brand::FIELD_LINE, brand::SOFT) };
+    let (line, ink) = if hot {
+        (brand::teal(), brand::teal_text())
+    } else {
+        (brand::field_line(), brand::soft())
+    };
     painter.rect_stroke(
         chip,
         CornerRadius::same(crate::screen_kit::Size::Compact.radius()),
@@ -892,23 +898,27 @@ fn summary_row(ui: &mut Ui, group: &Group, open: bool, column: f32) -> bool {
     let mut right = rect.right();
     if let Some(took) = group.elapsed_ms() {
         let galley =
-            painter.layout_no_wrap(reader_turns::duration_label(took), body(12.0), brand::FAINT);
+            painter.layout_no_wrap(reader_turns::duration_label(took), body(12.0), brand::faint());
         right -= galley.size().x;
-        painter.galley(pos2(right, rect.center().y - galley.size().y / 2.0), galley, brand::FAINT);
+        painter.galley(
+            pos2(right, rect.center().y - galley.size().y / 2.0),
+            galley,
+            brand::faint(),
+        );
         right -= 10.0;
     }
     let mut x = chip.right() + 10.0;
     let failed = group.failed();
     let tail = (failed > 0).then(|| {
-        painter.layout_no_wrap(format!("\u{b7} {failed} failed"), body(12.0), brand::ORANGE)
+        painter.layout_no_wrap(format!("\u{b7} {failed} failed"), body(12.0), brand::orange())
     });
     let room = right - x - tail.as_ref().map_or(0.0, |galley| galley.size().x + 6.0);
-    let galley = ellipsized(&painter, &group.summary(), body(12.0), brand::MUTED, room.max(0.0));
+    let galley = ellipsized(&painter, &group.summary(), body(12.0), brand::muted(), room.max(0.0));
     let width = galley.size().x;
-    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::MUTED);
+    painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::muted());
     x += width + 6.0;
     if let Some(galley) = tail {
-        painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::ORANGE);
+        painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, brand::orange());
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
@@ -924,24 +934,24 @@ fn pill_chip(
     (failed, open): (bool, bool),
     icon: impl FnOnce(&Painter, Pos2, Color32),
 ) -> Response {
-    let ink = if failed { brand::ORANGE } else { brand::SOFT };
+    let ink = if failed { brand::orange() } else { brand::soft() };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), body(13.0), ink);
     let icon_w = 14.0;
     let width = 12.0 + icon_w + 6.0 + galley.size().x + 12.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, CHIP_H), Sense::click());
     let line = match (failed, response.hovered() || open) {
-        (true, true) => brand::ORANGE,
-        (true, false) => brand::ORANGE.gamma_multiply(0.55),
-        (false, true) => brand::FIELD_LINE,
-        (false, false) => brand::CARD_LINE,
+        (true, true) => brand::orange(),
+        (true, false) => brand::orange().gamma_multiply(0.55),
+        (false, true) => brand::field_line(),
+        (false, false) => brand::card_line(),
     };
     let painter = ui.painter();
     let radius = CornerRadius::same(crate::screen_kit::Size::Compact.radius());
     if failed {
-        painter.rect_filled(rect, radius, brand::ORANGE.gamma_multiply(0.08));
+        painter.rect_filled(rect, radius, brand::orange().gamma_multiply(0.08));
     }
     painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
-    let icon_ink = if failed { brand::ORANGE } else { brand::MUTED };
+    let icon_ink = if failed { brand::orange() } else { brand::muted() };
     icon(painter, pos2(rect.left() + 12.0 + icon_w / 2.0, rect.center().y), icon_ink);
     let text_at = pos2(rect.left() + 12.0 + icon_w + 6.0, rect.center().y - galley.size().y / 2.0);
     painter.galley(text_at, galley, ink);
@@ -1038,14 +1048,14 @@ fn live_row(ui: &mut Ui, scene: &Scene<'_>, list: &[&Row], group: &Group, column
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
         let count_w = so_far.as_ref().map_or(0.0, |text| {
-            ui.painter().layout_no_wrap(text.clone(), body(13.0), brand::FAINT).size().x + 10.0
+            ui.painter().layout_no_wrap(text.clone(), body(13.0), brand::faint()).size().x + 10.0
         });
         pill(ui, verb, command.as_deref(), waiting, (column - count_w).max(120.0));
         if let Some(text) = so_far {
-            let galley = ui.painter().layout_no_wrap(text, body(13.0), brand::FAINT);
+            let galley = ui.painter().layout_no_wrap(text, body(13.0), brand::faint());
             let (rect, response) =
                 ui.allocate_exact_size(vec2(galley.size().x, LIVE_H), Sense::click());
-            let ink = if response.hovered() { brand::SOFT } else { brand::FAINT };
+            let ink = if response.hovered() { brand::soft() } else { brand::faint() };
             ui.painter().galley(
                 pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
                 galley,
@@ -1060,16 +1070,16 @@ fn live_row(ui: &mut Ui, scene: &Scene<'_>, list: &[&Row], group: &Group, column
 
 fn pill(ui: &mut Ui, verb: &str, command: Option<&str>, waiting: bool, max_w: f32) {
     let (ink, fill, line) = if waiting {
-        (brand::ORANGE, brand::ORANGE.gamma_multiply(0.08), brand::ORANGE.gamma_multiply(0.4))
+        (brand::orange(), brand::orange().gamma_multiply(0.08), brand::orange().gamma_multiply(0.4))
     } else {
-        (brand::TEAL_TEXT, LIVE_FILL, USER_LINE)
+        (brand::teal_text(), LIVE_FILL, USER_LINE)
     };
     let verb_galley = ui.painter().layout_no_wrap(verb.to_owned(), body(TEXT_TAG), ink);
     let lead = 12.0 + 8.0 + 8.0;
     let room = (max_w - lead - verb_galley.size().x - 8.0 - 12.0).max(0.0);
     let command_galley = command
         .filter(|text| !text.is_empty() && room > 24.0)
-        .map(|text| ellipsized(ui.painter(), text, mono(12.0), brand::SOFT, room));
+        .map(|text| ellipsized(ui.painter(), text, mono(12.0), brand::soft(), room));
     let command_w = command_galley.as_ref().map_or(0.0, |galley| galley.size().x + 8.0);
     let width = lead + verb_galley.size().x + command_w + 12.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, LIVE_H), Sense::hover());
@@ -1088,19 +1098,23 @@ fn pill(ui: &mut Ui, verb: &str, command: Option<&str>, waiting: bool, max_w: f3
     );
     x += verb_galley.size().x + 8.0;
     if let Some(galley) = command_galley {
-        painter.galley(pos2(x, body_rect.center().y - galley.size().y / 2.0), galley, brand::SOFT);
+        painter.galley(
+            pos2(x, body_rect.center().y - galley.size().y / 2.0),
+            galley,
+            brand::soft(),
+        );
     }
 }
 
 fn notes_list(ui: &mut Ui, list: &[&Row], group: &Group, column: f32) {
     Frame::new()
-        .fill(brand::SUNKEN)
-        .stroke(Stroke::new(1.0, brand::SIDEBAR_LINE))
+        .fill(brand::sunken())
+        .stroke(Stroke::new(1.0, brand::sidebar_line()))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_width(column - 26.0);
-            ui.visuals_mut().override_text_color = Some(brand::MUTED);
+            ui.visuals_mut().override_text_color = Some(brand::muted());
             chat_text(ui, |ui| {
                 for (n, index) in group.notes().iter().enumerate() {
                     if n > 0 {
@@ -1127,8 +1141,8 @@ fn call_list(ui: &mut Ui, root: Option<&Path>, list: &[&Row], group: &Group, col
         .collect();
     let sections = reader_turns::sections(&calls);
     Frame::new()
-        .fill(brand::SUNKEN)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .fill(brand::sunken())
+        .stroke(Stroke::new(1.0, brand::item_line()))
         .corner_radius(CornerRadius::same(12))
         .inner_margin(Margin::symmetric(0, 6))
         .show(ui, |ui| {
@@ -1152,7 +1166,7 @@ fn call_list(ui: &mut Ui, root: Option<&Path>, list: &[&Row], group: &Group, col
                     ui.painter().hline(
                         rect.x_range(),
                         rect.bottom(),
-                        Stroke::new(1.0, brand::SIDEBAR_LINE),
+                        Stroke::new(1.0, brand::sidebar_line()),
                     );
                 }
             }
@@ -1161,12 +1175,17 @@ fn call_list(ui: &mut Ui, root: Option<&Path>, list: &[&Row], group: &Group, col
 
 fn section_head(ui: &mut Ui, section: &Section) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
-    paint_icon(ui.painter(), pos2(rect.left() + 6.5, rect.center().y), section.kind, brand::MUTED);
-    let galley = ui.painter().layout_no_wrap(section.head.clone(), body(12.0), brand::MUTED);
+    paint_icon(
+        ui.painter(),
+        pos2(rect.left() + 6.5, rect.center().y),
+        section.kind,
+        brand::muted(),
+    );
+    let galley = ui.painter().layout_no_wrap(section.head.clone(), body(12.0), brand::muted());
     ui.painter().galley(
         pos2(rect.left() + 21.0, rect.center().y - galley.size().y / 2.0),
         galley,
-        brand::MUTED,
+        brand::muted(),
     );
 }
 
@@ -1186,25 +1205,28 @@ fn section_body(ui: &mut Ui, section: &Section, calls: &[Call<'_>]) {
                 for file in files {
                     let at = file.rfind('/').map_or(0, |at| at + 1);
                     let (dir, leaf) = file.split_at(at);
-                    ui.add(Label::new(mono_job(&[(dir, brand::FAINT), (leaf, brand::STEP_TEXT)])));
+                    ui.add(Label::new(mono_job(&[
+                        (dir, brand::faint()),
+                        (leaf, brand::step_text()),
+                    ])));
                 }
             });
         }
         Body::Lines(indices) => {
             for index in indices {
                 let call = &calls[*index];
-                let ink = if call.tool.error { brand::RED } else { brand::STEP_TEXT };
+                let ink = if call.tool.error { brand::red() } else { brand::step_text() };
                 let job = if call.tool.kind == ToolKind::Command {
-                    mono_job(&[("$ ", brand::FAINT), (&call.argument, ink)])
+                    mono_job(&[("$ ", brand::faint()), (&call.argument, ink)])
                 } else {
                     let text = reader_turns::list_line(call.tool, call.name, &call.argument);
                     mono_job(&[(&text, ink)])
                 };
                 ui.add(Label::new(job).truncate()).on_hover_ui(|ui| {
                     ui.set_max_width(480.0);
-                    ui.label(RichText::new(&call.tool.label).font(mono(12.0)).color(brand::TEXT));
+                    ui.label(RichText::new(&call.tool.label).font(mono(12.0)).color(brand::text()));
                     if !call.tool.output.is_empty() {
-                        let ink = if call.tool.error { brand::RED } else { brand::MUTED };
+                        let ink = if call.tool.error { brand::red() } else { brand::muted() };
                         ui.label(
                             RichText::new(output_preview(&call.tool.output))
                                 .font(mono(TEXT_TAG))
@@ -1218,13 +1240,13 @@ fn section_body(ui: &mut Ui, section: &Section, calls: &[Call<'_>]) {
             for (server, tools) in servers {
                 let mut job = LayoutJob::default();
                 if tools.is_empty() {
-                    job.append(server, 0.0, TextFormat::simple(body(12.0), brand::STEP_TEXT));
+                    job.append(server, 0.0, TextFormat::simple(body(12.0), brand::step_text()));
                 } else {
-                    job.append(server, 0.0, TextFormat::simple(body(12.0), brand::MUTED));
+                    job.append(server, 0.0, TextFormat::simple(body(12.0), brand::muted()));
                     job.append(
                         &format!(" {}", tools.join(", ")),
                         0.0,
-                        TextFormat::simple(body(12.0), brand::STEP_TEXT),
+                        TextFormat::simple(body(12.0), brand::step_text()),
                     );
                 }
                 ui.add(Label::new(job));
@@ -1483,7 +1505,7 @@ mod tests {
                 })
                 .map(|section| section.format.color)
         };
-        assert_eq!(ink("localhost"), Some(brand::TEAL_TEXT));
+        assert_eq!(ink("localhost"), Some(brand::teal_text()));
         assert_eq!(ink("plain"), Some(Color32::WHITE));
     }
 
@@ -1509,7 +1531,7 @@ mod tests {
             .iter()
             .filter_map(|shape| match shape {
                 Shape::Rect(rect)
-                    if rect.fill == brand::SUNKEN && rect.rect.height() == Size::Tag.height() =>
+                    if rect.fill == brand::sunken() && rect.rect.height() == Size::Tag.height() =>
                 {
                     Some(rect.rect)
                 }
@@ -1560,14 +1582,14 @@ mod tests {
         let bubble = shapes
             .iter()
             .find_map(|shape| match shape {
-                Shape::Rect(rect) if rect.fill == USER_FILL => Some(rect.rect),
+                Shape::Rect(rect) if rect.fill == user_fill() => Some(rect.rect),
                 _ => None,
             })
             .expect("bubble");
         let chips = shapes
             .iter()
             .filter_map(|shape| match shape {
-                Shape::Rect(rect) if rect.fill == brand::ITEM => Some(rect.rect),
+                Shape::Rect(rect) if rect.fill == brand::item() => Some(rect.rect),
                 _ => None,
             })
             .collect();
@@ -1701,12 +1723,12 @@ mod tests {
                 _ => None,
             })
             .collect();
-        let card = rects.iter().position(|rect| rect.fill == brand::CARD).unwrap();
+        let card = rects.iter().position(|rect| rect.fill == brand::card()).unwrap();
         assert_eq!(rects[card].fill.a(), 255);
         assert!(
             rects
                 .iter()
-                .any(|rect| rect.stroke.width == 1.0 && rect.stroke.color == brand::CARD_LINE)
+                .any(|rect| rect.stroke.width == 1.0 && rect.stroke.color == brand::card_line())
         );
         assert!(rects[..card].iter().any(|rect| rect.fill.a() < 255), "the shadow is under it");
     }
@@ -1998,7 +2020,7 @@ mod tests {
         told.shapes
             .iter()
             .filter_map(|shape| match shape {
-                Shape::Circle(circle) if circle.fill == brand::GROUND => Some(circle.center),
+                Shape::Circle(circle) if circle.fill == brand::ground() => Some(circle.center),
                 _ => None,
             })
             .collect()

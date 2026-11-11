@@ -239,16 +239,16 @@ pub(crate) fn controls(ui: &mut Ui, desktop: &Desktop) {
     let painter = ui.painter();
     let x = rect.left() + DIVIDER_W / 2.0;
     let half = DIVIDER_H / 2.0;
-    painter.vline(x, rect.center().y - half..=rect.center().y + half, (1.0, brand::SIDEBAR_LINE));
-    let idle = if ui.ctx().input(|i| i.focused) { brand::MUTED } else { brand::FAINT };
+    painter.vline(x, rect.center().y - half..=rect.center().y + half, (1.0, brand::sidebar_line()));
+    let idle = if ui.ctx().input(|i| i.focused) { brand::muted() } else { brand::faint() };
     for (i, button) in desktop.drawn_buttons(maximized(ui.ctx())).enumerate() {
         let min = pos2(rect.left() + DIVIDER_W + BUTTON_W * i as f32, rect.top());
         let slot = Rect::from_min_size(min, vec2(BUTTON_W, BUTTON_H));
         let resp = ui.interact(slot, Id::new(("window_button", i)), Sense::click());
         let hovered = resp.hovered();
         let (fill, ink) = match (button, hovered) {
-            (Button::Close, true) => (brand::RED_FILL, brand::RED),
-            (_, true) => (brand::BUTTON, brand::TEXT),
+            (Button::Close, true) => (brand::red_fill(), brand::red()),
+            (_, true) => (brand::button(), brand::text()),
             (_, false) => (egui::Color32::TRANSPARENT, idle),
         };
         painter.rect_filled(slot, 6.0, fill);
@@ -305,7 +305,7 @@ pub(crate) fn edges(ctx: &Context) {
     ctx.layer_painter(layer).rect_stroke(
         window,
         0.0,
-        Stroke::new(1.0, brand::SIDEBAR_LINE),
+        Stroke::new(1.0, brand::sidebar_line()),
         StrokeKind::Inside,
     );
     let ui = Ui::new(

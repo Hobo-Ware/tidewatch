@@ -15,7 +15,7 @@ impl Tidewatch {
         let bar = self.status_bar(ui.ctx(), active_id);
         let clicks = Panel::bottom("statusbar")
             .exact_size(status_bar::HEIGHT)
-            .frame(Frame::new().fill(brand::SIDEBAR))
+            .frame(Frame::new().fill(brand::sidebar()))
             .show(ui, |ui| status_bar::show(ui, ui.max_rect(), &bar))
             .inner;
         if clicks.open_review {

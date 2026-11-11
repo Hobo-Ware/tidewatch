@@ -55,9 +55,9 @@ fn chip_text(count: usize) -> String {
 
 /// "N leftovers" in the tab strip. True when clicked.
 pub(crate) fn chip(ui: &mut egui::Ui, leftovers: &[Leftover]) -> bool {
-    let parts = [ChipPart { text: &chip_text(leftovers.len()), ink: brand::SOFT }];
-    let lines = (brand::FIELD_LINE, brand::MUTED);
-    status_chip(ui, &parts, brand::MUTED, lines, egui::Sense::click())
+    let parts = [ChipPart { text: &chip_text(leftovers.len()), ink: brand::soft() }];
+    let lines = (brand::field_line(), brand::muted());
+    status_chip(ui, &parts, brand::muted(), lines, egui::Sense::click())
         .on_hover_text(tip(leftovers))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
@@ -72,17 +72,17 @@ fn name_of(row: &Row) -> String {
 
 fn dot_of(state: &RowState) -> Color32 {
     match state {
-        RowState::Inspecting | RowState::Removing => brand::MUTED,
-        RowState::Failed(_) => brand::RED,
-        RowState::Ready(Safety::Safe) => brand::GREEN,
-        RowState::Unreadable | RowState::Ready(_) => brand::ORANGE,
+        RowState::Inspecting | RowState::Removing => brand::muted(),
+        RowState::Failed(_) => brand::red(),
+        RowState::Ready(Safety::Safe) => brand::green(),
+        RowState::Unreadable | RowState::Ready(_) => brand::orange(),
     }
 }
 
 fn right_ink(state: &RowState) -> Color32 {
     match state {
-        RowState::Failed(_) => brand::RED,
-        _ => brand::MUTED,
+        RowState::Failed(_) => brand::red(),
+        _ => brand::muted(),
     }
 }
 
@@ -98,18 +98,19 @@ fn row_ui(ui: &mut egui::Ui, row: &Row, now_ms: i64, answer: &mut Option<Answer>
     painter.circle_filled(pos2(rect.left() + ROW_PAD + DOT_R, mid), DOT_R, dot_of(&row.state));
     let name_at = pos2(rect.left() + ROW_PAD + 2.0 * DOT_R + DOT_GAP, mid);
     let mut left =
-        painter.text(name_at, Align2::LEFT_CENTER, &name, mono(13.0), brand::TEXT).right();
+        painter.text(name_at, Align2::LEFT_CENTER, &name, mono(13.0), brand::text()).right();
     if let Some(branch) = shown_branch(row, &name) {
         let at = pos2(left + DOT_GAP, mid);
-        left = painter.text(at, Align2::LEFT_CENTER, branch, body(TEXT_TAG), brand::MUTED).right();
+        left =
+            painter.text(at, Align2::LEFT_CENTER, branch, body(TEXT_TAG), brand::muted()).right();
     }
     if !row.leftover.recorded && row.state != RowState::Unreadable {
         let tag = paint_tag(
             painter,
             (left + DOT_GAP, mid),
             "unrecorded",
-            brand::ORANGE,
-            TagFill::Tint(brand::ORANGE.gamma_multiply(0.14)),
+            brand::orange(),
+            TagFill::Tint(brand::orange().gamma_multiply(0.14)),
         );
         left = tag.right();
     }
@@ -159,10 +160,10 @@ fn discard_buttons(ui: &mut egui::Ui, row: &Row, answer: &mut Option<Answer>) {
 
 fn summary_job(summary: &Summary) -> LayoutJob {
     let mut job = LayoutJob::default();
-    job.append(&summary.lead, 0.0, TextFormat::simple(heading(TEXT_BODY), brand::TEXT));
+    job.append(&summary.lead, 0.0, TextFormat::simple(heading(TEXT_BODY), brand::text()));
     if !summary.rest.is_empty() {
         let rest = format!(" {}", summary.rest);
-        job.append(&rest, 0.0, TextFormat::simple(body(TEXT_BODY), brand::SOFT));
+        job.append(&rest, 0.0, TextFormat::simple(body(TEXT_BODY), brand::soft()));
     }
     job
 }
@@ -185,7 +186,7 @@ pub(crate) fn dialog(ctx: &egui::Context, cleanup: &Cleanup, now_ms: i64) -> Opt
             ui.add_space(2.0);
             disclosure(ui, "leftover_rules", "What counts as safe", |ui| {
                 ui.add_space(4.0);
-                ui.label(RichText::new(RULES).size(TEXT_SECONDARY).color(brand::MUTED));
+                ui.label(RichText::new(RULES).size(TEXT_SECONDARY).color(brand::muted()));
             });
         },
         |ui, answer| {

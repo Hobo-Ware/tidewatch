@@ -71,13 +71,16 @@ fn chip_rect(ui: &Ui, field: Rect) -> Rect {
 pub(crate) const CHIP_HEIGHT: f32 = CHIP_H;
 
 pub(crate) fn chip_width(ui: &Ui, label: &str) -> f32 {
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(CHIP_FONT), brand::MUTED);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), body(CHIP_FONT), brand::muted());
     CHIP_PAD + galley.size().x + CHEVRON_GAP + CHEVRON_W + CHIP_PAD
 }
 
 pub(crate) fn paint_chip(ui: &Ui, chip: Rect, label: &str, lit: bool) {
-    let (ink, line) =
-        if lit { (brand::TEXT, brand::FIELD_LINE) } else { (brand::MUTED, brand::SEGMENT_LINE) };
+    let (ink, line) = if lit {
+        (brand::text(), brand::field_line())
+    } else {
+        (brand::muted(), brand::segment_line())
+    };
     let painter = ui.painter();
     painter.rect_stroke(
         chip,
@@ -111,7 +114,7 @@ fn show_scope(ui: &mut Ui, chip: Rect, view: &mut TabView) {
     egui::Popup::menu(&response).show(|ui| {
         ui.set_width(MENU_W);
         for (index, label) in SCOPES.iter().enumerate() {
-            let tint = if index == active { brand::TEAL_TEXT } else { brand::TEXT };
+            let tint = if index == active { brand::teal_text() } else { brand::text() };
             let row = egui::Button::new(RichText::new(*label).size(CHIP_FONT + 1.0).color(tint))
                 .frame(false)
                 .min_size(vec2(ui.available_width(), 0.0));
@@ -143,7 +146,7 @@ fn show_field(ui: &mut Ui, field: Rect, view: &mut TabView) {
     if focus == Some(Focus::SelectAll) {
         select_all(ui, id, &view.search.query);
     }
-    ui.painter().rect_filled(field, CornerRadius::same(CORNER), brand::SEGMENT);
+    ui.painter().rect_filled(field, CornerRadius::same(CORNER), brand::segment());
     let mut child = ui.new_child(UiBuilder::new().max_rect(text_rect));
     let response = child.add(
         TextEdit::singleline(&mut view.search.query)
@@ -152,11 +155,11 @@ fn show_field(ui: &mut Ui, field: Rect, view: &mut TabView) {
             .margin(egui::Margin::ZERO)
             .return_key(None)
             .font(body(FONT))
-            .text_color(brand::TEXT)
+            .text_color(brand::text())
             .desired_width(text_rect.width()),
     );
     let holds_keyboard = ui.memory(|memory| memory.has_focus(id));
-    let line = if holds_keyboard { brand::TEAL } else { brand::FIELD_LINE };
+    let line = if holds_keyboard { brand::teal() } else { brand::field_line() };
     let painter = ui.painter();
     painter.rect_stroke(
         field,
@@ -170,7 +173,7 @@ fn show_field(ui: &mut Ui, field: Rect, view: &mut TabView) {
             Align2::LEFT_CENTER,
             HINT,
             body(FONT),
-            brand::FAINT,
+            brand::faint(),
         );
     }
     paint_magnifier(painter, pos2(field.left() + ICON_PAD + ICON_R, field.center().y - 1.0));
@@ -183,7 +186,7 @@ fn show_field(ui: &mut Ui, field: Rect, view: &mut TabView) {
         _ => None,
     };
     let count = commit_search::count_text(view.search.matches(), view.search.position(selected));
-    let tint = if view.search.matches() == Some(0) { brand::RED } else { brand::MUTED };
+    let tint = if view.search.matches() == Some(0) { brand::red() } else { brand::muted() };
     ui.painter().text(
         pos2(count_right, field.center().y),
         Align2::RIGHT_CENTER,
@@ -218,7 +221,7 @@ fn select_all(ui: &Ui, id: Id, text: &str) {
 }
 
 fn paint_magnifier(painter: &egui::Painter, center: egui::Pos2) {
-    let stroke = Stroke::new(1.5, brand::MUTED);
+    let stroke = Stroke::new(1.5, brand::muted());
     painter.circle_stroke(center, ICON_R, stroke);
     let from = center + vec2(ICON_R * 0.72, ICON_R * 0.72);
     painter.line_segment([from, from + vec2(3.5, 3.5)], stroke);

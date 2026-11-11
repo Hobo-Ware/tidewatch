@@ -122,11 +122,11 @@ fn mix(from: Color32, to: Color32, amount: f64) -> Color32 {
 }
 
 fn off_colors(hover: f64) -> (Color32, Color32, Color32) {
-    (mix(brand::GROUND, brand::TEAL_NAV, hover), brand::TEAL_TEXT, brand::TEAL_TEXT)
+    (mix(brand::ground(), brand::teal_nav(), hover), brand::teal_text(), brand::teal_text())
 }
 
 fn on_colors() -> (Color32, Color32, Color32) {
-    (brand::TEAL, brand::TEAL_TEXT, mix(brand::TEAL, brand::GROUND, 0.6))
+    (brand::teal(), brand::teal_text(), mix(brand::teal(), brand::ground(), 0.6))
 }
 
 /// The tablet for `look` while the pointer is `hover` (0 to 1) over it.
@@ -307,7 +307,7 @@ fn between(seed: u32, slot: i64, salt: u32, low: f32, high: f32) -> f32 {
 }
 
 fn ink(index: usize) -> Color32 {
-    if index.is_multiple_of(2) { brand::TEAL_TEXT } else { OFF_WHITE }
+    if index.is_multiple_of(2) { brand::teal_text() } else { OFF_WHITE }
 }
 
 fn on_rim(degrees: f32, radius: f32, travel: f32) -> Vec2 {

@@ -70,10 +70,10 @@ pub(crate) fn kind_letter(kind: ChangeKind) -> &'static str {
 
 pub(crate) fn kind_color(kind: ChangeKind) -> Color32 {
     match kind {
-        ChangeKind::Added => brand::GREEN,
-        ChangeKind::Modified => brand::ORANGE,
-        ChangeKind::Deleted => brand::RED,
-        ChangeKind::Renamed => brand::TEAL_TEXT,
+        ChangeKind::Added => brand::green(),
+        ChangeKind::Modified => brand::orange(),
+        ChangeKind::Deleted => brand::red(),
+        ChangeKind::Renamed => brand::teal_text(),
     }
 }
 
@@ -126,7 +126,7 @@ pub(crate) fn show(
         }
         let inner = rect.shrink2(vec2(1.0, 0.0));
         let header = Rect::from_min_size(rect.min, vec2(rect.width(), CHROME_H));
-        ui.painter().hline(inner.x_range(), header.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+        ui.painter().hline(inner.x_range(), header.bottom(), Stroke::new(1.0, brand::card_line()));
         show_header(ui, header, view, extras, &mut out.actions);
         let mut top = header.bottom();
         let files_h = FILE_ROW_H * (view.files.len() as f32).min(FILES_MAX_ROWS);
@@ -143,9 +143,9 @@ pub(crate) fn show(
             out.actions.extend(actions.into_iter().map(PaneAction::Strip));
             top += strip_h;
         }
-        ui.painter().hline(inner.x_range(), top, Stroke::new(1.0, brand::CARD_LINE));
+        ui.painter().hline(inner.x_range(), top, Stroke::new(1.0, brand::card_line()));
         let body = Rect::from_min_max(pos2(inner.left(), top + 1.0), rect.max - vec2(1.0, 1.0));
-        out.notes_changed = show_body(ui, body, view, DiffStyle::embedded(brand::TEAL));
+        out.notes_changed = show_body(ui, body, view, DiffStyle::embedded(brand::teal()));
         history_pane::round_bottom(ui, rect);
     });
     out
@@ -209,20 +209,20 @@ fn show_title(ui: &Ui, area: Rect, view: &TabView) {
         painter.layout_job(job)
     };
     let plain = |font: FontId, color| TextFormat { font_id: font, color, ..TextFormat::default() };
-    let heading_job = LayoutJob::simple_singleline(title, heading(14.0), brand::TEXT);
+    let heading_job = LayoutJob::simple_singleline(title, heading(14.0), brand::text());
     let mut meta = LayoutJob::default();
-    meta.append(&what, 0.0, plain(mono(TEXT_TAG), brand::SOFT));
-    meta.append(&format!(" · {who}"), 0.0, plain(body(12.0), brand::MUTED));
+    meta.append(&what, 0.0, plain(mono(TEXT_TAG), brand::soft()));
+    meta.append(&format!(" · {who}"), 0.0, plain(body(12.0), brand::muted()));
     if let Some(open) = &view.open {
-        meta.append(&format!("  +{}", open.diff.added), 0.0, plain(body(12.0), brand::GREEN));
-        meta.append(&format!(" -{}", open.diff.removed), 0.0, plain(body(12.0), brand::RED));
+        meta.append(&format!("  +{}", open.diff.added), 0.0, plain(body(12.0), brand::green()));
+        meta.append(&format!(" -{}", open.diff.removed), 0.0, plain(body(12.0), brand::red()));
     }
     let (title, meta) = (one_line(heading_job), one_line(meta));
     let block = title.size().y + TITLE_GAP + meta.size().y;
     let top = area.center().y - block / 2.0;
     let x = area.left() + SIDE_PAD;
-    painter.galley(pos2(x, top), title.clone(), brand::TEXT);
-    painter.galley(pos2(x, top + title.size().y + TITLE_GAP), meta, brand::MUTED);
+    painter.galley(pos2(x, top), title.clone(), brand::text());
+    painter.galley(pos2(x, top + title.size().y + TITLE_GAP), meta, brand::muted());
 }
 
 fn show_caption(ui: &Ui, rect: Rect, view: &TabView) {
@@ -231,14 +231,14 @@ fn show_caption(ui: &Ui, rect: Rect, view: &TabView) {
         Align2::LEFT_CENTER,
         notes_summary(&view.notes),
         body(12.0),
-        brand::FAINT,
+        brand::faint(),
     );
 }
 
 pub(crate) fn message(ui: &mut Ui, rect: Rect, error: Option<&str>, idle: &str) {
     let (text, color) = match error {
-        Some(error) => (error, brand::RED),
-        None => (idle, brand::FAINT),
+        Some(error) => (error, brand::red()),
+        None => (idle, brand::faint()),
     };
     ui.painter().text(
         rect.center(),
@@ -310,7 +310,7 @@ fn file_row(ui: &mut Ui, change: &FileChange, selected: bool) -> bool {
         mono(TEXT_TAG),
         kind_color(change.kind),
     );
-    let ink = if selected { brand::TEAL_TEXT } else { brand::SOFT };
+    let ink = if selected { brand::teal_text() } else { brand::soft() };
     let left = row.left() + ROW_PAD + LETTER_W;
     paint_path(ui, &painter, &change.path, (left, row.right() - ROW_PAD, row.center().y), ink);
     response.clicked()

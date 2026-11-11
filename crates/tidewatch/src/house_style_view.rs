@@ -3,10 +3,11 @@
 use egui::{Align, Layout, RichText, Ui};
 use tidewatch_core::dead_tools::DeadLine;
 
+use crate::brand;
 use crate::screen_kit::Size;
 use crate::screen_kit::TEXT_BODY;
 use crate::settings_ui::{
-    Control, FAINT, MUTED, TEXT, Tone, button, caption, page_header, path_line, row_with, section,
+    Control, Tone, button, caption, page_header, path_line, row_with, section,
 };
 use crate::settings_view::Action;
 
@@ -28,8 +29,8 @@ pub(crate) fn page(ui: &mut Ui, file: &str, dead: &[DeadLine]) -> Option<Action>
             ),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                ui.label(RichText::new("house-style.md").size(TEXT_BODY).color(TEXT));
-                path_line(ui, file, (12.0, FAINT), ui.available_width());
+                ui.label(RichText::new("house-style.md").size(TEXT_BODY).color(brand::text()));
+                path_line(ui, file, (12.0, brand::faint()), ui.available_width());
             },
             |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -61,13 +62,15 @@ pub(crate) fn page(ui: &mut Ui, file: &str, dead: &[DeadLine]) -> Option<Action>
             Control::button(ui, ARMED, Size::Compact),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                ui.label(RichText::new("Tidewatch's own text").size(TEXT_BODY).color(TEXT));
+                ui.label(
+                    RichText::new("Tidewatch's own text").size(TEXT_BODY).color(brand::text()),
+                );
                 ui.label(
                     RichText::new(
                         "Replaces the file with the text Tidewatch ships. Your edits are lost.",
                     )
                     .size(13.0)
-                    .color(MUTED),
+                    .color(brand::muted()),
                 );
             },
             |ui| {
@@ -100,11 +103,11 @@ fn dead_lines(ui: &mut Ui, dead: &[DeadLine]) -> Option<Action> {
                             line.number, line.tool.name, line.tool.since
                         ))
                         .size(TEXT_BODY)
-                        .color(TEXT),
+                        .color(brand::text()),
                     );
                     ui.add(
                         egui::Label::new(
-                            RichText::new(&line.text).monospace().size(12.0).color(FAINT),
+                            RichText::new(&line.text).monospace().size(12.0).color(brand::faint()),
                         )
                         .truncate(),
                     );

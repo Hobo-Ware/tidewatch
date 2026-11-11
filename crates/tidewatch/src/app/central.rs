@@ -115,7 +115,7 @@ impl Tidewatch {
         now: f64,
         frame: &mut FrameIntent,
     ) {
-        egui::CentralPanel::default().frame(Frame::new().fill(brand::GROUND)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(brand::ground())).show(ui, |ui| {
             let area = ui.max_rect();
             if self.overview && self.settings.is_none() && self.welcome.is_none() {
                 self.show_overview(ui, area, ctx, now, frame);

@@ -295,7 +295,7 @@ fn draw_meters(ui: &Ui, meters: &[Meter], y: f32, left: f32, right: f32) -> f32 
         .iter()
         .map(|meter| {
             let layout =
-                |text: String| ui.painter().layout_no_wrap(text, mono(TEXT_TAG), brand::MUTED);
+                |text: String| ui.painter().layout_no_wrap(text, mono(TEXT_TAG), brand::muted());
             let label = layout(meter.label.clone());
             let widest = layout(meter.widest.to_owned());
             MeterLayout {
@@ -328,19 +328,19 @@ fn draw_meters(ui: &Ui, meters: &[Meter], y: f32, left: f32, right: f32) -> f32 
         ui.painter().galley(
             pos2(x + part.label_slot - part.label.size().x, y - part.label.size().y / 2.0),
             part.label.clone(),
-            brand::MUTED,
+            brand::muted(),
         );
         x += part.label_slot + METER_PART_GAP;
         let track = Rect::from_min_size(pos2(x, y - TRACK_H / 2.0), vec2(TRACK_W, TRACK_H));
-        ui.painter().rect_filled(track, CornerRadius::same(TRACK_RADIUS), brand::FIELD_LINE);
+        ui.painter().rect_filled(track, CornerRadius::same(TRACK_RADIUS), brand::field_line());
         let fill = Rect::from_min_size(track.min, vec2(TRACK_W * meter.fraction(), TRACK_H));
-        let ink = if meter.hot { brand::ORANGE } else { brand::TEAL };
+        let ink = if meter.hot { brand::orange() } else { brand::teal() };
         ui.painter().rect_filled(fill, CornerRadius::same(TRACK_RADIUS), ink);
         x += TRACK_W + METER_PART_GAP;
         ui.painter().galley(
             pos2(x, y - part.percent.size().y / 2.0),
             part.percent.clone(),
-            brand::MUTED,
+            brand::muted(),
         );
         x += part.percent.size().x + METER_GAP;
         ui.interact(hit, Id::new(("status-bar-meter", meter.key)), Sense::hover())
@@ -359,25 +359,25 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
     };
     let mut x = rect.left() + PAD;
     let dots = [
-        (bar.counts.working, brand::WORKING, "working"),
-        (bar.counts.needs, brand::NEEDS, "needs you"),
+        (bar.counts.working, brand::working(), "working"),
+        (bar.counts.needs, brand::needs(), "needs you"),
     ];
     for (count, color, word) in dots.into_iter().filter(|(count, ..)| *count > 0) {
         painter.circle_filled(pos2(x + DOT / 2.0, y), DOT / 2.0, color);
         x += DOT + 6.0;
         let label = format!("{count} {word}");
-        x += put(pos2(x, y), Align2::LEFT_CENTER, &label, body(FONT), brand::MUTED) + GAP;
+        x += put(pos2(x, y), Align2::LEFT_CENTER, &label, body(FONT), brand::muted()) + GAP;
     }
     if let Some(tip) = &bar.awake {
         let center = pos2(x + AWAKE_R + 1.0, y);
-        painter.circle_stroke(center, AWAKE_R, Stroke::new(1.2, brand::SOFT));
-        painter.circle_filled(center, 1.6, brand::SOFT);
+        painter.circle_stroke(center, AWAKE_R, Stroke::new(1.2, brand::soft()));
+        painter.circle_filled(center, 1.6, brand::soft());
         let mark = Rect::from_center_size(center, vec2(2.0 * AWAKE_R + 8.0, HEIGHT));
         ui.interact(mark, Id::new("status-bar-awake"), Sense::hover()).on_hover_text(tip.as_str());
         x += 2.0 * AWAKE_R + GAP;
     }
     if let Some(why) = &bar.fetch_failed {
-        let width = put(pos2(x, y), Align2::LEFT_CENTER, FETCH_FAILED, body(FONT), brand::MUTED);
+        let width = put(pos2(x, y), Align2::LEFT_CENTER, FETCH_FAILED, body(FONT), brand::muted());
         let label = Rect::from_min_size(pos2(x, y - HEIGHT / 2.0), vec2(width, HEIGHT));
         ui.interact(label, Id::new("status-bar-fetch"), Sense::hover()).on_hover_text(why.as_str());
         x += width + GAP;
@@ -386,21 +386,21 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
         let ink = tone_ink(*tone);
         painter.circle_filled(pos2(x + DOT / 2.0, y), DOT / 2.0, ink);
         x += DOT + 6.0;
-        x += put(pos2(x, y), Align2::LEFT_CENTER, text, body(FONT), brand::MUTED) + GAP;
+        x += put(pos2(x, y), Align2::LEFT_CENTER, text, body(FONT), brand::muted()) + GAP;
     }
     if let Some(place) = &bar.place {
-        x += put(pos2(x, y), Align2::LEFT_CENTER, place, body(FONT), brand::MUTED) + GAP;
+        x += put(pos2(x, y), Align2::LEFT_CENTER, place, body(FONT), brand::muted()) + GAP;
     }
     if let Some(review) = &bar.review {
-        let galley = ui.painter().layout_no_wrap(review.clone(), body(FONT), brand::TEAL_TEXT);
+        let galley = ui.painter().layout_no_wrap(review.clone(), body(FONT), brand::teal_text());
         let chip = Rect::from_min_size(
             pos2(x, y - CHIP_H / 2.0),
             vec2(galley.size().x + 2.0 * CHIP_PAD, CHIP_H),
         );
         let response = ui.interact(chip, Id::new("status-bar-review"), Sense::click());
-        let fill = brand::TEAL.gamma_multiply(if response.hovered() { 0.2 } else { 0.1 });
+        let fill = brand::teal().gamma_multiply(if response.hovered() { 0.2 } else { 0.1 });
         ui.painter().rect_filled(chip, CornerRadius::same(Size::Tag.radius()), fill);
-        ui.painter().galley(chip.center() - galley.size() / 2.0, galley, brand::TEAL_TEXT);
+        ui.painter().galley(chip.center() - galley.size() / 2.0, galley, brand::teal_text());
         clicks.open_review = response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_text("Open your review above the agent's chat box")
@@ -410,19 +410,19 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
     let mut hints_left = rect.right() - PAD;
     for hint in bar.hints.iter().rev() {
         hints_left -=
-            put(pos2(hints_left, y), Align2::RIGHT_CENTER, hint.label, body(FONT), brand::MUTED);
+            put(pos2(hints_left, y), Align2::RIGHT_CENTER, hint.label, body(FONT), brand::muted());
         hints_left -= 6.0;
         hints_left -=
-            put(pos2(hints_left, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::SOFT);
+            put(pos2(hints_left, y), Align2::RIGHT_CENTER, &hint.keys, mono(FONT), brand::soft());
         hints_left -= GAP;
     }
     hints_left = draw_meters(ui, &bar.meters, y, x, hints_left);
     if let Some(mark) = &bar.budget {
-        let galley = ui.painter().layout_no_wrap(mark.text.clone(), body(FONT), brand::MUTED);
+        let galley = ui.painter().layout_no_wrap(mark.text.clone(), body(FONT), brand::muted());
         if x + galley.size().x + GAP <= hints_left {
             let area =
                 Rect::from_min_size(pos2(x, y - HEIGHT / 2.0), vec2(galley.size().x, HEIGHT));
-            ui.painter().galley(pos2(x, y - galley.size().y / 2.0), galley, brand::MUTED);
+            ui.painter().galley(pos2(x, y - galley.size().y / 2.0), galley, brand::muted());
             ui.interact(area, Id::new("status-bar-budget"), Sense::hover())
                 .on_hover_text(mark.tip.as_str());
             x += area.width() + GAP;
@@ -436,21 +436,22 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
             agent_avatar::paint_face(ui.ctx(), ui.painter(), plate, face);
             x += FACE + FACE_GAP;
         }
-        x += put(pos2(x, y), Align2::LEFT_CENTER, &switching.text, body(FONT), brand::TEAL_TEXT)
+        x += put(pos2(x, y), Align2::LEFT_CENTER, &switching.text, body(FONT), brand::teal_text())
             + 10.0;
         cancels.push((Cancelling::Switch, x));
         x += cancel_w + GAP;
     }
     if let Some(line) = &bar.slow {
-        let galley = ui.painter().layout_no_wrap(line.text.clone(), body(FONT), brand::ORANGE);
+        let galley = ui.painter().layout_no_wrap(line.text.clone(), body(FONT), brand::orange());
         if slow::fits(x, galley.size().x, cancel_w, hints_left) {
-            x += put(pos2(x, y), Align2::LEFT_CENTER, &line.text, body(FONT), brand::ORANGE) + 10.0;
+            x += put(pos2(x, y), Align2::LEFT_CENTER, &line.text, body(FONT), brand::orange())
+                + 10.0;
             cancels.push((Cancelling::Slow(line.id), x));
             x += cancel_w + GAP;
         }
     }
     if let Some(hint) = bar.note_hint {
-        put(pos2(x, y), Align2::LEFT_CENTER, hint, body(FONT), brand::MUTED);
+        put(pos2(x, y), Align2::LEFT_CENTER, hint, body(FONT), brand::muted());
     }
     for (which, at) in cancels {
         let slot = Rect::from_min_size(
@@ -801,7 +802,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(ink, [brand::MUTED]);
+        assert_eq!(ink, [brand::muted()]);
     }
 
     #[test]
@@ -881,10 +882,10 @@ mod tests {
         let ctx = context();
         let shapes = drawn(&ctx, &two(), 1200.0);
         let want = [
-            (brand::FIELD_LINE, TRACK_W),
-            (brand::TEAL, TRACK_W * 0.31),
-            (brand::FIELD_LINE, TRACK_W),
-            (brand::ORANGE, TRACK_W * 0.84),
+            (brand::field_line(), TRACK_W),
+            (brand::teal(), TRACK_W * 0.31),
+            (brand::field_line(), TRACK_W),
+            (brand::orange(), TRACK_W * 0.84),
         ];
         let got = track_fills(&shapes);
         assert_eq!(got.len(), want.len());

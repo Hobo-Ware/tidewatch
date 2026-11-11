@@ -53,15 +53,15 @@ pub(super) fn draw<T>(
     } else {
         FontId::proportional(TAB_FONT_PX)
     };
-    let ink = if selected { brand::TEAL_TEXT } else { brand::SOFT };
+    let ink = if selected { brand::teal_text() } else { brand::soft() };
     let galley = ui.painter().layout_no_wrap(LABEL.to_owned(), font, ink);
     let width = PAD + GLYPH_SIZE + GAP + galley.size().x + PAD;
     let (rect, resp) = ui.allocate_exact_size(vec2(width, TAB_H), Sense::click());
     let painter = ui.painter().clone();
     let line = if selected {
-        Some(brand::TEAL)
+        Some(brand::teal())
     } else if resp.hovered() {
-        Some(brand::FIELD_LINE)
+        Some(brand::field_line())
     } else {
         None
     };
@@ -87,8 +87,8 @@ pub(super) fn draw<T>(
     painter.galley(pos2(glyph.right() + GAP, rect.center().y - galley.size().y / 2.0), galley, ink);
     if running {
         let center = dot_center(rect);
-        painter.circle_filled(center, DOT_RING / 2.0, brand::SIDEBAR);
-        painter.circle_filled(center, DOT / 2.0, brand::TEAL);
+        painter.circle_filled(center, DOT_RING / 2.0, brand::sidebar());
+        painter.circle_filled(center, DOT / 2.0, brand::teal());
     }
     let rect = resp.rect;
     if resp.on_hover_text(tip).clicked() {

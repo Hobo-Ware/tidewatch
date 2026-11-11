@@ -96,7 +96,7 @@ pub(crate) fn paint(ctx: &Context, painter: &Painter, rect: Rect) {
         }
         Some(Me::Picture(picture)) => {
             let px = ((rect.width() * ctx.pixels_per_point()).round() as u32).max(1);
-            plate(painter, rect, brand::FACE_PLATE);
+            plate(painter, rect, brand::face_plate());
             let art = texture(ctx, &picture, px);
             painter.image(
                 art.id(),

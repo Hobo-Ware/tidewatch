@@ -253,11 +253,11 @@ fn clicking_a_segment_sets_the_agent_the_effort_or_the_level_and_marks_the_page_
 fn yolo_keeps_its_red_ink_in_the_segment() {
     let mut harness = Harness::new(claude_draft());
     harness.frame(vec![]);
-    assert_eq!(harness.on_card("YOLO").unwrap().color, crate::brand::RED);
-    assert_ne!(harness.on_card("Auto").unwrap().color, crate::brand::RED);
+    assert_eq!(harness.on_card("YOLO").unwrap().color, crate::brand::red());
+    assert_ne!(harness.on_card("Auto").unwrap().color, crate::brand::red());
     harness.editor.drafts[0].level = Level::Yolo;
     harness.frame(vec![]);
-    assert_eq!(harness.on_card("YOLO").unwrap().color, crate::brand::RED);
+    assert_eq!(harness.on_card("YOLO").unwrap().color, crate::brand::red());
 }
 
 #[test]
@@ -342,7 +342,10 @@ fn group_headers_say_what_the_probe_found() {
     let found = Availability::Found(Some("2.1.299".into()));
     assert_eq!(probe_label(Some(&found)).0, "2.1.299 found");
     assert_eq!(probe_label(Some(&Availability::Found(None))).0, "found");
-    assert_eq!(probe_label(Some(&Availability::Missing)), ("not installed".to_owned(), ORANGE));
+    assert_eq!(
+        probe_label(Some(&Availability::Missing)),
+        ("not installed".to_owned(), brand::orange())
+    );
     assert_eq!(probe_label(Some(&Availability::Probing)).0, "checking...");
     assert_eq!(probe_label(None).0, "checking...");
 }
@@ -445,7 +448,7 @@ fn delete_in_the_more_menu_is_in_danger_ink_and_removes_the_profile() {
     let count = harness.editor.drafts.len();
     harness.open_more_menu();
     let delete = harness.seen.iter().find(|painted| painted.text == "Delete").unwrap();
-    assert_eq!(delete.color, crate::brand::RED);
+    assert_eq!(delete.color, crate::brand::red());
     let at = delete.rect.center();
     harness.click(at);
     assert_eq!(harness.editor.drafts.len(), count - 1);

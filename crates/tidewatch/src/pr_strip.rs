@@ -120,11 +120,11 @@ pub(crate) fn mode_label(mode: PrMode) -> &'static str {
 
 pub(crate) fn tone_ink(tone: Tone) -> Color32 {
     match tone {
-        Tone::Bad => brand::RED,
-        Tone::Warn => brand::AMBER,
-        Tone::Good => brand::GREEN,
-        Tone::Quiet => brand::SOFT,
-        Tone::Waiting => brand::BLUE,
+        Tone::Bad => brand::red(),
+        Tone::Warn => brand::amber(),
+        Tone::Good => brand::green(),
+        Tone::Quiet => brand::soft(),
+        Tone::Waiting => brand::blue(),
     }
 }
 
@@ -158,34 +158,37 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
     painter.rect(
         card,
         CornerRadius::same(10),
-        brand::CARD,
-        Stroke::new(1.0, brand::CARD_LINE),
+        brand::card(),
+        Stroke::new(1.0, brand::card_line()),
         StrokeKind::Inside,
     );
     let summary = strip.summary;
     let y = card.center().y;
     let icon = match summary.state {
-        State::Open => (Icon::Opened, brand::TEAL),
-        State::Merged => (Icon::Merged, brand::TEAL),
-        State::Closed => (Icon::Closed, brand::MUTED),
+        State::Open => (Icon::Opened, brand::teal()),
+        State::Merged => (Icon::Merged, brand::teal()),
+        State::Closed => (Icon::Closed, brand::muted()),
     };
     paint_icon(&painter, pos2(card.left() + 22.0, y), icon.0, icon.1);
     let number =
-        painter.layout_no_wrap(format!("#{}", summary.number), mono(TEXT_SECONDARY), brand::TEXT);
+        painter.layout_no_wrap(format!("#{}", summary.number), mono(TEXT_SECONDARY), brand::text());
     let number_w = number.size().x;
     let number_rect = Rect::from_min_size(pos2(card.left() + 38.0, y - 11.0), vec2(number_w, 22.0));
-    painter.galley(pos2(card.left() + 38.0, y - number.size().y / 2.0), number, brand::TEXT);
+    painter.galley(pos2(card.left() + 38.0, y - number.size().y / 2.0), number, brand::text());
     ui.interact(number_rect, ui.id().with("pr-strip-updates"), Sense::hover())
         .on_hover_text(&strip.updates);
     let mut action = None;
 
     let mut right = card.right() - 14.0;
-    let link =
-        painter.layout_no_wrap("Open on GitHub".to_owned(), body(TEXT_SECONDARY), brand::TEAL_TEXT);
+    let link = painter.layout_no_wrap(
+        "Open on GitHub".to_owned(),
+        body(TEXT_SECONDARY),
+        brand::teal_text(),
+    );
     right -= link.size().x;
     let link_rect = Rect::from_min_size(pos2(right, y - 11.0), vec2(link.size().x, 22.0));
     let link_response = ui.interact(link_rect, ui.id().with("pr-strip-open"), Sense::click());
-    let link_ink = if link_response.hovered() { brand::TEXT } else { brand::TEAL_TEXT };
+    let link_ink = if link_response.hovered() { brand::text() } else { brand::teal_text() };
     painter.galley(pos2(right, y - link.size().y / 2.0), link, link_ink);
     if link_response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
         action = Some(Action::Open(summary.url.clone()));
@@ -219,22 +222,24 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, strip: &Strip<'_>) -> Option<Action>
     }
     let room = (right - title_left - 4.0).min(TITLE_MAX_W);
     if room > 30.0 {
-        let title = ellipsized(&painter, &summary.title, body(TEXT_BODY), brand::SOFT, room);
-        painter.galley(pos2(title_left, y - title.size().y / 2.0), title, brand::SOFT);
+        let title = ellipsized(&painter, &summary.title, body(TEXT_BODY), brand::soft(), room);
+        painter.galley(pos2(title_left, y - title.size().y / 2.0), title, brand::soft());
     }
     action
 }
 
 fn mode_chip(ui: &mut Ui, painter: &egui::Painter, mode: PrMode, right: f32, y: f32) -> Response {
     let label = mode_label(mode);
-    let galley = painter.layout_no_wrap(label.to_owned(), body(Size::Compact.font()), brand::SOFT);
+    let galley =
+        painter.layout_no_wrap(label.to_owned(), body(Size::Compact.font()), brand::soft());
     let width = galley.size().x + 2.0 * Size::Compact.pad() + CHEVRON_ROOM;
     let rect = Rect::from_min_size(
         pos2(right - width, y - Size::Compact.height() / 2.0),
         vec2(width, Size::Compact.height()),
     );
     let response = ui.interact(rect, ui.id().with("pr-strip-mode"), Sense::click());
-    let line = if response.hovered() { brand::TEAL.gamma_multiply(0.5) } else { brand::FIELD_LINE };
+    let line =
+        if response.hovered() { brand::teal().gamma_multiply(0.5) } else { brand::field_line() };
     painter.rect(
         rect,
         CornerRadius::same(Size::Compact.radius()),
@@ -242,7 +247,7 @@ fn mode_chip(ui: &mut Ui, painter: &egui::Painter, mode: PrMode, right: f32, y: 
         Stroke::new(1.0, line),
         StrokeKind::Inside,
     );
-    let ink = if response.hovered() { brand::TEXT } else { brand::SOFT };
+    let ink = if response.hovered() { brand::text() } else { brand::soft() };
     painter.galley(pos2(rect.left() + Size::Compact.pad(), y - galley.size().y / 2.0), galley, ink);
     let chevron = pos2(rect.right() - Size::Compact.pad() - 3.0, y);
     let stroke = Stroke::new(1.3, ink);
@@ -261,12 +266,14 @@ fn popover(chip: &Response, number: u64, policy: GithubPrefs) -> Option<GithubPr
             ui.spacing_mut().item_spacing.y = 10.0;
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("PR #{number}")).size(TEXT_BODY).color(brand::TEXT),
+                    egui::RichText::new(format!("PR #{number}"))
+                        .size(TEXT_BODY)
+                        .color(brand::text()),
                 );
                 ui.label(
                     egui::RichText::new("what Tidewatch does when GitHub changes")
                         .size(TEXT_SECONDARY)
-                        .color(brand::FAINT),
+                        .color(brand::faint()),
                 );
             });
             let labels: Vec<&str> = MODES.iter().map(|(_, label)| *label).collect();
@@ -275,13 +282,15 @@ fn popover(chip: &Response, number: u64, policy: GithubPrefs) -> Option<GithubPr
                 changed = Some(GithubPrefs { mode: MODES[index].0, ..policy });
             }
             ui.label(
-                egui::RichText::new(mode_help(policy.mode)).size(TEXT_SECONDARY).color(brand::SOFT),
+                egui::RichText::new(mode_help(policy.mode))
+                    .size(TEXT_SECONDARY)
+                    .color(brand::soft()),
             );
             ui.label(
                 egui::RichText::new("AUTO MAY")
                     .size(TEXT_TAG)
                     .extra_letter_spacing(0.8)
-                    .color(brand::FAINT),
+                    .color(brand::faint()),
             );
             for job in JOBS {
                 let on = policy.allows(job.which);
@@ -292,7 +301,7 @@ fn popover(chip: &Response, number: u64, policy: GithubPrefs) -> Option<GithubPr
             ui.label(
                 egui::RichText::new("Default for new tabs: Settings, General, GitHub")
                     .size(TEXT_SECONDARY)
-                    .color(brand::FAINT),
+                    .color(brand::faint()),
             );
             if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
                 ui.close();
@@ -307,8 +316,8 @@ fn tick_row(ui: &mut Ui, label: &str, on: bool) -> bool {
     let boxed = Rect::from_min_size(pos2(rect.left(), rect.center().y - 8.0), vec2(16.0, 16.0));
     let painter = ui.painter();
     if on {
-        painter.rect_filled(boxed, CornerRadius::same(4), brand::TEAL);
-        let stroke = Stroke::new(1.8, brand::KEY_EDGE);
+        painter.rect_filled(boxed, CornerRadius::same(4), brand::teal());
+        let stroke = Stroke::new(1.8, brand::key_edge());
         painter.line_segment(
             [boxed.center() + vec2(-4.0, 0.5), boxed.center() + vec2(-1.2, 3.3)],
             stroke,
@@ -321,7 +330,7 @@ fn tick_row(ui: &mut Ui, label: &str, on: bool) -> bool {
         painter.rect_stroke(
             boxed,
             CornerRadius::same(4),
-            Stroke::new(1.0, brand::FIELD_LINE),
+            Stroke::new(1.0, brand::field_line()),
             StrokeKind::Inside,
         );
     }
@@ -330,7 +339,7 @@ fn tick_row(ui: &mut Ui, label: &str, on: bool) -> bool {
         Align2::LEFT_CENTER,
         label,
         body(TEXT_BODY),
-        brand::TEXT,
+        brand::text(),
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }

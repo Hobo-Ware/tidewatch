@@ -16,7 +16,7 @@ use crate::segmented;
 
 pub(crate) mod editor;
 
-pub(crate) use crate::brand::*;
+use crate::brand;
 
 const SECTION_GAP: f32 = 22.0;
 const ROW_GAP: f32 = 16.0;
@@ -25,7 +25,7 @@ const INLINE_MAX: usize = 5;
 pub(crate) const HEADER_H: f32 = 48.0;
 
 pub(crate) fn heading(text: impl Into<String>, size: f32) -> RichText {
-    RichText::new(text).family(semibold()).size(size).color(TEXT)
+    RichText::new(text).family(semibold()).size(size).color(brand::text())
 }
 
 pub(crate) fn font_semibold(size: f32) -> FontId {
@@ -33,7 +33,7 @@ pub(crate) fn font_semibold(size: f32) -> FontId {
 }
 
 pub(crate) fn caption(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).size(13.0).color(MUTED));
+    ui.label(RichText::new(text).size(13.0).color(brand::muted()));
 }
 
 /// A caption that closes a card: set off by a divider and inset like the rows above it.
@@ -65,16 +65,21 @@ pub(crate) fn header_at(
     subtitle: &str,
 ) -> Rect {
     let painter = ui.painter_at(Rect::from_min_max(bar.min, pos2(text_right, bar.bottom())));
-    let title =
-        painter.text(bar.left_center(), Align2::LEFT_CENTER, title, font_semibold(16.0), TEXT);
+    let title = painter.text(
+        bar.left_center(),
+        Align2::LEFT_CENTER,
+        title,
+        font_semibold(16.0),
+        brand::text(),
+    );
     painter.text(
         pos2(title.right() + 14.0, bar.center().y + 1.0),
         Align2::LEFT_CENTER,
         subtitle,
         FontId::proportional(13.0),
-        MUTED,
+        brand::muted(),
     );
-    ui.painter().hline(divider, bar.bottom(), Stroke::new(1.0, CARD_LINE));
+    ui.painter().hline(divider, bar.bottom(), Stroke::new(1.0, brand::card_line()));
     title
 }
 
@@ -125,20 +130,20 @@ pub(crate) fn path_with_copy(ui: &mut Ui, path: &str, (size, ink): (f32, Color32
 
 pub(crate) fn footer_note(ui: &mut Ui, text: &str) {
     ui.add_space(SECTION_GAP);
-    path_with_copy(ui, text, (TEXT_SECONDARY, FAINT));
+    path_with_copy(ui, text, (TEXT_SECONDARY, brand::faint()));
 }
 
 pub(crate) fn section<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.add_space(SECTION_GAP);
-    ui.label(heading(title, 14.0).color(SOFT));
+    ui.label(heading(title, 14.0).color(brand::soft()));
     ui.add_space(8.0);
     card(ui, add)
 }
 
 pub(crate) fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     Frame::new()
-        .fill(CARD)
-        .stroke(Stroke::new(1.0, CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -151,7 +156,7 @@ pub(crate) fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 pub(crate) fn divider(ui: &Ui) {
     if ui.min_rect().height() > 0.5 {
         let rect = ui.available_rect_before_wrap();
-        ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, CARD_LINE));
+        ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, brand::card_line()));
     }
 }
 
@@ -187,9 +192,9 @@ pub(crate) fn row<R>(
         control,
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new(title).size(TEXT_BODY).color(TEXT));
+            ui.label(RichText::new(title).size(TEXT_BODY).color(brand::text()));
             if !desc.is_empty() {
-                ui.label(RichText::new(desc).size(13.0).color(MUTED));
+                ui.label(RichText::new(desc).size(13.0).color(brand::muted()));
             }
         },
         add_control,
@@ -250,7 +255,7 @@ pub(crate) fn switch_line(ui: &mut Ui, label: &str, on: &mut bool) -> bool {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let changed = switch(ui, on).changed();
-        ui.label(RichText::new(label).size(14.0).color(TEXT));
+        ui.label(RichText::new(label).size(14.0).color(brand::text()));
         changed
     })
     .inner
@@ -266,8 +271,8 @@ pub(crate) fn switch(ui: &mut Ui, on: &mut bool) -> Response {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "")
     });
     let t = ui.ctx().animate_bool(response.id, *on);
-    let track = lerp_color(FIELD_LINE, TEAL, t);
-    let knob = lerp_color(MUTED, KEY_EDGE, t);
+    let track = lerp_color(brand::field_line(), brand::teal(), t);
+    let knob = lerp_color(brand::muted(), brand::key_edge(), t);
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(11), track);
     let travel = rect.width() - 6.0 - 16.0;
@@ -304,7 +309,7 @@ pub(crate) fn button(ui: &mut Ui, label: &str, tone: Tone, size: Size) -> Respon
 
 pub(crate) fn choice_width(ui: &Ui, label: &str) -> f32 {
     let font = font_semibold(13.0);
-    ui.painter().layout_no_wrap(label.to_owned(), font, SOFT).size().x + 28.0
+    ui.painter().layout_no_wrap(label.to_owned(), font, brand::soft()).size().x + 28.0
 }
 
 pub(crate) fn inline_width(ui: &Ui, labels: &[&str]) -> f32 {
@@ -385,10 +390,10 @@ fn fade(painter: &Painter, rect: Rect, ground: Color32, to_bottom: bool) {
 pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Response {
     ui.scope(|ui| {
         let visuals = ui.visuals_mut();
-        visuals.extreme_bg_color = GROUND;
-        visuals.selection.stroke = Stroke::new(1.0, TEAL);
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, FIELD_LINE);
-        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, FAINT);
+        visuals.extreme_bg_color = brand::ground();
+        visuals.selection.stroke = Stroke::new(1.0, brand::teal());
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, brand::field_line());
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, brand::faint());
         for widget in [
             &mut visuals.widgets.inactive,
             &mut visuals.widgets.hovered,
@@ -401,8 +406,8 @@ pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Respons
             egui::TextEdit::singleline(value)
                 .desired_width(ui.available_width())
                 .margin(Margin::symmetric(12, 10))
-                .text_color(TEXT)
-                .hint_text(RichText::new(hint).color(FAINT)),
+                .text_color(brand::text())
+                .hint_text(RichText::new(hint).color(brand::faint())),
         )
     })
     .inner
@@ -411,10 +416,10 @@ pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Respons
 pub(crate) fn text_area(ui: &mut Ui, value: &mut String, hint: &str, rows: usize) -> bool {
     ui.scope(|ui| {
         let visuals = ui.visuals_mut();
-        visuals.extreme_bg_color = GROUND;
-        visuals.selection.stroke = Stroke::new(1.0, TEAL);
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, FIELD_LINE);
-        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, FAINT);
+        visuals.extreme_bg_color = brand::ground();
+        visuals.selection.stroke = Stroke::new(1.0, brand::teal());
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, brand::field_line());
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, brand::faint());
         for widget in [
             &mut visuals.widgets.inactive,
             &mut visuals.widgets.hovered,
@@ -428,8 +433,8 @@ pub(crate) fn text_area(ui: &mut Ui, value: &mut String, hint: &str, rows: usize
                 .desired_width(ui.available_width())
                 .desired_rows(rows)
                 .margin(Margin::symmetric(12, 10))
-                .text_color(TEXT)
-                .hint_text(RichText::new(hint).color(FAINT)),
+                .text_color(brand::text())
+                .hint_text(RichText::new(hint).color(brand::faint())),
         )
         .changed()
     })
@@ -443,20 +448,22 @@ pub(crate) fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str) ->
 }
 
 pub(crate) fn key_cap_width(ui: &Ui, text: &str, size: f32) -> f32 {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(size), TEXT);
+    let galley =
+        ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(size), brand::text());
     (galley.size().x + 16.0).max(26.0)
 }
 
 pub(crate) fn key_cap(ui: &mut Ui, text: &str, size: f32) -> Response {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(size), TEXT);
+    let galley =
+        ui.painter().layout_no_wrap(text.to_owned(), FontId::monospace(size), brand::text());
     let width = (galley.size().x + 16.0).max(26.0);
     let (rect, response) =
         ui.allocate_exact_size(vec2(width, galley.size().y + 8.0 + 2.0), Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(6), KEY_EDGE);
+    painter.rect_filled(rect, CornerRadius::same(6), brand::key_edge());
     let face = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 2.0));
-    painter.rect_filled(face, CornerRadius::same(6), BUTTON);
-    painter.galley(face.center() - galley.size() / 2.0, galley, TEXT);
+    painter.rect_filled(face, CornerRadius::same(6), brand::button());
+    painter.galley(face.center() - galley.size() / 2.0, galley, brand::text());
     response
 }
 
@@ -471,7 +478,7 @@ pub(crate) fn disclosure<R>(
     let galley = ui.painter().layout(
         label.to_owned(),
         FontId::proportional(14.0),
-        SOFT,
+        brand::soft(),
         (ui.available_width() - 22.0).max(0.0),
     );
     let (rect, response) =
@@ -480,7 +487,7 @@ pub(crate) fn disclosure<R>(
         open = !open;
         ui.data_mut(|data| data.insert_temp(id, open));
     }
-    let color = if response.hovered() { TEXT } else { SOFT };
+    let color = if response.hovered() { brand::text() } else { brand::soft() };
     let c = egui::pos2(rect.left() + 6.0, rect.center().y);
     let stroke = Stroke::new(1.6, color);
     let points = if open {

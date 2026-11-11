@@ -54,13 +54,13 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, facts: Facts<'_>) -> Option<Out> {
         out = Some(Out::Back);
     }
     let painter = ui.painter();
-    let (dot, halo) = if line.running { (brand::TEAL, true) } else { (brand::GREEN, false) };
+    let (dot, halo) = if line.running { (brand::teal(), true) } else { (brand::green(), false) };
     let centre = pos2(back_right + GAP + 4.0, mid);
     if halo {
         painter.circle_filled(centre, 7.0, dot.gamma_multiply(0.13));
     }
     painter.circle_filled(centre, 4.0, dot);
-    let right = painter.layout_no_wrap(line.right.clone(), mono(TEXT_TAG), brand::MUTED);
+    let right = painter.layout_no_wrap(line.right.clone(), mono(TEXT_TAG), brand::muted());
     let right_left = header.right() - right.size().x;
     let what_left = centre.x + 4.0 + GAP;
     let tag_at = line.tag.as_deref().map(|tag| {
@@ -72,12 +72,12 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, facts: Facts<'_>) -> Option<Out> {
         _ => right_left - GAP,
     };
     let what =
-        ellipsized(painter, &line.what, body(TEXT_BODY), brand::TEXT, what_right - what_left);
-    painter.galley(pos2(what_left, mid - what.size().y / 2.0), what, brand::TEXT);
+        ellipsized(painter, &line.what, body(TEXT_BODY), brand::text(), what_right - what_left);
+    painter.galley(pos2(what_left, mid - what.size().y / 2.0), what, brand::text());
     if let Some((tag, at)) = tag_at.filter(|(_, at)| *at >= what_left + MIN_WHAT_W) {
-        paint_tag(painter, (at, mid), tag, brand::SOFT, TagFill::Line(brand::ITEM_LINE));
+        paint_tag(painter, (at, mid), tag, brand::soft(), TagFill::Line(brand::item_line()));
     }
-    painter.galley(pos2(right_left, mid - right.size().y / 2.0), right, brand::MUTED);
+    painter.galley(pos2(right_left, mid - right.size().y / 2.0), right, brand::muted());
     if line.running {
         ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
     }

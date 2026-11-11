@@ -97,14 +97,14 @@ fn header(ui: &mut Ui, rows: &[Row]) {
         Align2::CENTER_CENTER,
         icons::APP_WINDOW,
         egui::FontId::proportional(18.0),
-        brand::MUTED,
+        brand::muted(),
     );
     painter.text(
         pos2(rect.left() + SIDE + TICK + 12.0, mid),
         Align2::LEFT_CENTER,
         "Message all agents",
         heading(TEXT_TITLE),
-        brand::TEXT,
+        brand::text(),
     );
     let ticked = rows.iter().filter(|row| row.ticked).count();
     let count = if rows.is_empty() {
@@ -117,9 +117,9 @@ fn header(ui: &mut Ui, rows: &[Row]) {
         Align2::RIGHT_CENTER,
         count,
         body(TEXT_TAG),
-        brand::FAINT,
+        brand::faint(),
     );
-    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::card_line()));
 }
 
 fn compose(ui: &mut Ui, sheet: &mut Sheet) -> Option<String> {
@@ -149,7 +149,7 @@ fn compose(ui: &mut Ui, sheet: &mut Sheet) -> Option<String> {
 
 fn list(ui: &mut Ui, rows: &[Row], faces: &[Option<Face>]) -> Option<u64> {
     let (line, _) = ui.allocate_exact_size(vec2(WIDTH, 1.0), Sense::hover());
-    ui.painter().hline(line.x_range(), line.top(), Stroke::new(1.0, brand::CARD_LINE));
+    ui.painter().hline(line.x_range(), line.top(), Stroke::new(1.0, brand::card_line()));
     if rows.is_empty() {
         let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, ROW_H * 2.0), Sense::hover());
         ui.painter().text(
@@ -157,7 +157,7 @@ fn list(ui: &mut Ui, rows: &[Row], faces: &[Option<Face>]) -> Option<u64> {
             Align2::CENTER_CENTER,
             "No agent tabs in this repo",
             body(13.0),
-            brand::MUTED,
+            brand::muted(),
         );
         return None;
     }
@@ -209,14 +209,14 @@ fn paint_row(ui: &Ui, rect: Rect, row: &Row, face: Option<&Face>, response: &egu
             Align2::CENTER_CENTER,
             icons::TERMINAL_WINDOW,
             egui::FontId::proportional(16.0),
-            brand::SOFT,
+            brand::soft(),
         );
     }
-    let ink = if row.live == Live::Parked { brand::MUTED } else { brand::TEXT };
-    let word = painter.layout_no_wrap(row.live.word().to_owned(), body(TEXT_TAG), brand::MUTED);
+    let ink = if row.live == Live::Parked { brand::muted() } else { brand::text() };
+    let word = painter.layout_no_wrap(row.live.word().to_owned(), body(TEXT_TAG), brand::muted());
     let word_w = word.size().x;
     let right = rect.right() - ROW_PAD;
-    painter.galley(pos2(right - word_w, mid - word.size().y / 2.0), word, brand::MUTED);
+    painter.galley(pos2(right - word_w, mid - word.size().y / 2.0), word, brand::muted());
     let left = face_at.x + FACE / 2.0 + 10.0;
     let name = crate::reader_view::ellipsized(
         &painter,
@@ -231,16 +231,21 @@ fn paint_row(ui: &Ui, rect: Rect, row: &Row, face: Option<&Face>, response: &egu
 fn paint_tick(painter: &egui::Painter, rect: Rect, on: bool) {
     let radius = CornerRadius::same(4);
     if on {
-        painter.rect(rect, radius, brand::TEAL, Stroke::NONE, StrokeKind::Inside);
-        paint_check(painter, rect, brand::GROUND);
+        painter.rect(rect, radius, brand::teal(), Stroke::NONE, StrokeKind::Inside);
+        paint_check(painter, rect, brand::ground());
     } else {
-        painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::FIELD_LINE), StrokeKind::Inside);
+        painter.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, brand::field_line()),
+            StrokeKind::Inside,
+        );
     }
 }
 
 fn footer(ui: &mut Ui, sheet: &Sheet, rows: &[Row]) -> bool {
     let (line, _) = ui.allocate_exact_size(vec2(WIDTH, 1.0), Sense::hover());
-    ui.painter().hline(line.x_range(), line.top(), Stroke::new(1.0, brand::CARD_LINE));
+    ui.painter().hline(line.x_range(), line.top(), Stroke::new(1.0, brand::card_line()));
     let mut clicked = false;
     Frame::new().inner_margin(Margin::symmetric(SIDE as i8, FOOTER_PAD_Y as i8)).show(ui, |ui| {
         footer_row(ui, &HINTS, |ui| {

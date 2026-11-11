@@ -94,8 +94,8 @@ pub(crate) fn show(
 /// The card the palette and the Message all agents sheet share.
 pub(crate) fn card_frame() -> Frame {
     Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(14)
         .shadow(egui::Shadow {
             offset: [0, 16],
@@ -114,15 +114,15 @@ fn header(ui: &mut Ui, palette: &mut Palette, count: usize) {
         Align2::CENTER_CENTER,
         icons::MAGNIFYING_GLASS,
         FontId::proportional(18.0),
-        brand::MUTED,
+        brand::muted(),
     );
     let count_text = plural(count, "result");
-    let count_galley = ui.painter().layout_no_wrap(count_text, body(TEXT_TAG), brand::FAINT);
+    let count_galley = ui.painter().layout_no_wrap(count_text, body(TEXT_TAG), brand::faint());
     let count_w = count_galley.size().x;
     ui.painter().galley(
         pos2(rect.right() - SIDE - count_w, mid - count_galley.size().y / 2.0),
         count_galley,
-        brand::FAINT,
+        brand::faint(),
     );
     let field_rect = Rect::from_min_max(
         pos2(rect.left() + SIDE + ICON + 12.0, rect.top()),
@@ -135,8 +135,8 @@ fn header(ui: &mut Ui, palette: &mut Palette, count: usize) {
             .frame(Frame::NONE)
             .margin(Margin::ZERO)
             .font(body(TEXT_TITLE))
-            .text_color(brand::TEXT)
-            .hint_text(egui::RichText::new("Type a command").color(brand::FAINT))
+            .text_color(brand::text())
+            .hint_text(egui::RichText::new("Type a command").color(brand::faint()))
             .vertical_align(Align::Center)
             .desired_width(field_rect.width()),
     );
@@ -146,20 +146,20 @@ fn header(ui: &mut Ui, palette: &mut Palette, count: usize) {
     if palette.query != before {
         palette.typed();
     }
-    ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+    ui.painter().hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, brand::card_line()));
 }
 
 fn footer(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, FOOTER_H), Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, brand::CARD_LINE));
+    ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0, brand::card_line()));
     let mid = rect.center().y;
     let mut x = rect.left() + SIDE;
     for (keys, what) in HINTS {
         let width = caps_width(ui.painter(), keys);
         paint_caps(ui.painter(), x + width, mid, keys);
-        let label = ui.painter().layout_no_wrap(what.to_owned(), body(TEXT_TAG), brand::FAINT);
+        let label = ui.painter().layout_no_wrap(what.to_owned(), body(TEXT_TAG), brand::faint());
         let size = label.size();
-        ui.painter().galley(pos2(x + width + 6.0, mid - size.y / 2.0), label, brand::FAINT);
+        ui.painter().galley(pos2(x + width + 6.0, mid - size.y / 2.0), label, brand::faint());
         x += width + 6.0 + size.x + 16.0;
     }
 }
@@ -171,7 +171,7 @@ fn nothing_matches(ui: &mut Ui) {
         Align2::CENTER_CENTER,
         "Nothing matches",
         FontId::proportional(13.0),
-        brand::MUTED,
+        brand::muted(),
     );
 }
 
@@ -228,7 +228,7 @@ fn paint_row(ui: &Ui, rect: Rect, (item, face): (&Item, Option<&Face>), hit: &Hi
     let painter = ui.painter_at(rect);
     selection_row(&painter, rect, selected, false);
     let mid = rect.center().y;
-    let icon_ink = if selected { brand::TEAL_TEXT } else { brand::SOFT };
+    let icon_ink = if selected { brand::teal_text() } else { brand::soft() };
     let icon_at = pos2(rect.left() + ROW_PAD + ICON / 2.0, mid);
     if let Some(face) = face {
         let plate = Rect::from_center_size(icon_at, vec2(FACE, FACE));
@@ -242,19 +242,20 @@ fn paint_row(ui: &Ui, rect: Rect, (item, face): (&Item, Option<&Face>), hit: &Hi
             icon_ink,
         );
     }
-    let ink = crate::screen_kit::selected_ink(selected, brand::TEXT);
+    let ink = crate::screen_kit::selected_ink(selected, brand::text());
     let mut job = LayoutJob::default();
     let label_marks: &[usize] = if hit.alias.is_some() { &[] } else { &hit.positions };
     for (i, c) in item.label.chars().enumerate() {
         let marked = label_marks.contains(&i);
-        let color = if marked { brand::TEAL_TEXT } else { ink };
+        let color = if marked { brand::teal_text() } else { ink };
         job.append(&c.to_string(), 0.0, TextFormat::simple(body(TEXT_BODY), color));
     }
     if let Some(alias) = hit.alias {
-        let muted = TextFormat::simple(FontId::proportional(TEXT_TAG), brand::MUTED);
+        let muted = TextFormat::simple(FontId::proportional(TEXT_TAG), brand::muted());
         job.append("also called ", 8.0, muted);
         for (i, c) in alias.chars().enumerate() {
-            let color = if hit.positions.contains(&i) { brand::TEAL_TEXT } else { brand::MUTED };
+            let color =
+                if hit.positions.contains(&i) { brand::teal_text() } else { brand::muted() };
             job.append(
                 &c.to_string(),
                 0.0,

@@ -180,13 +180,13 @@ pub(crate) fn chips(pos: Pos2, galley: &Galley) -> Vec<(Token, Rect)> {
 }
 
 fn paint_glyph(painter: &Painter, rect: Rect, kind: Kind) {
-    let ink = Stroke::new(1.2, brand::SOFT);
+    let ink = Stroke::new(1.2, brand::soft());
     let c = rect.center();
     match kind {
         Kind::Picture => {
             let frame = Rect::from_center_size(c, vec2(GLYPH, GLYPH - 2.0));
             painter.rect_stroke(frame, CornerRadius::same(2), ink, StrokeKind::Inside);
-            painter.circle_filled(frame.left_top() + vec2(3.5, 3.5), 1.2, brand::SOFT);
+            painter.circle_filled(frame.left_top() + vec2(3.5, 3.5), 1.2, brand::soft());
             painter.line_segment(
                 [frame.left_bottom() + vec2(1.5, -1.5), frame.center() + vec2(0.0, 0.5)],
                 ink,
@@ -202,7 +202,7 @@ fn paint_glyph(painter: &Painter, rect: Rect, kind: Kind) {
             for dy in [-1.5, 1.5] {
                 painter.line_segment(
                     [c + vec2(-1.8, dy), c + vec2(1.8, dy)],
-                    Stroke::new(1.0, brand::SOFT),
+                    Stroke::new(1.0, brand::soft()),
                 );
             }
         }
@@ -231,7 +231,7 @@ fn paint_thumbnail(painter: &Painter, rect: Rect, texture: &egui::TextureHandle)
     painter.rect_stroke(
         rect,
         CornerRadius::same(2),
-        Stroke::new(1.0, brand::FIELD_LINE),
+        Stroke::new(1.0, brand::field_line()),
         StrokeKind::Inside,
     );
 }
@@ -249,9 +249,9 @@ fn open(ctx: &Context, target: &Target) {
 fn state_color(state: LinkState) -> Option<Color32> {
     match state {
         LinkState::Unknown => None,
-        LinkState::Open => Some(brand::GREEN),
-        LinkState::Merged => Some(brand::VIOLET_TEXT),
-        LinkState::Closed => Some(brand::RED),
+        LinkState::Open => Some(brand::green()),
+        LinkState::Merged => Some(brand::violet_text()),
+        LinkState::Closed => Some(brand::red()),
     }
 }
 
@@ -260,7 +260,7 @@ fn paint_link(painter: &Painter, rect: Rect, state: LinkState) {
         painter.circle_filled(rect.center(), 3.5, color);
         return;
     }
-    let ink = Stroke::new(1.2, brand::SOFT);
+    let ink = Stroke::new(1.2, brand::soft());
     for dx in [-2.5, 2.5] {
         let link = Rect::from_center_size(rect.center() + vec2(dx, 0.0), vec2(7.0, 5.0));
         painter.rect_stroke(link, CornerRadius::same(2), ink, StrokeKind::Inside);
@@ -306,10 +306,15 @@ pub(crate) fn paint(ui: &Ui, id: Id, (pos, galley): (Pos2, &Galley), clickable: 
             }
         }
         let painter = ui.painter();
-        let fill = if hovered { brand::ITEM } else { brand::SUNKEN };
+        let fill = if hovered { brand::item() } else { brand::sunken() };
         let radius = CornerRadius::same(Size::Tag.radius());
         painter.rect_filled(rect, radius, fill);
-        painter.rect_stroke(rect, radius, Stroke::new(1.0, brand::FIELD_LINE), StrokeKind::Inside);
+        painter.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(1.0, brand::field_line()),
+            StrokeKind::Inside,
+        );
         let glyph = Rect::from_center_size(
             pos2(rect.left() + Size::Tag.pad() + GLYPH / 2.0, rect.center().y),
             vec2(GLYPH, GLYPH),
@@ -332,7 +337,7 @@ pub(crate) fn paint(ui: &Ui, id: Id, (pos, galley): (Pos2, &Galley), clickable: 
             egui::Align2::LEFT_CENTER,
             name,
             label_font(),
-            brand::SOFT,
+            brand::soft(),
         );
     }
 }
