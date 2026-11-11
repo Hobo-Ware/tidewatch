@@ -8,6 +8,7 @@ mod amphetamine;
 mod autofetch;
 mod away;
 mod bar;
+mod broadcast;
 mod budget;
 mod central;
 mod closed;
@@ -194,6 +195,9 @@ pub(crate) struct Tidewatch {
     agent_jobs: Jobs<agent_jobs::Done>,
     settings: Option<Settings>,
     palette: Option<Palette>,
+    broadcast: Option<crate::broadcast::Sheet>,
+    broadcast_draft: String,
+    dev_broadcast: Option<String>,
     last_profile: Option<String>,
     new_tab_prefs: NewTabPrefs,
     guards: GuardPrefs,
@@ -461,6 +465,9 @@ impl Tidewatch {
             agent_jobs: Jobs::new(),
             settings: None,
             palette: None,
+            broadcast: None,
+            broadcast_draft: String::new(),
+            dev_broadcast: std::env::var("TIDEWATCH_DEV_BROADCAST").ok(),
             last_profile: None,
             new_tab_prefs: new_tab_prefs.clone(),
             guards,

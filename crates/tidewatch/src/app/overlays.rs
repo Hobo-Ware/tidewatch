@@ -100,6 +100,7 @@ impl Tidewatch {
         }
         self.updates.show_fix_dialog(ctx);
         self.show_palette(ctx);
+        self.show_broadcast(ctx);
         self.show_change_tab(ctx);
         self.show_open_link(ctx);
         self.show_service_dialog(ctx);

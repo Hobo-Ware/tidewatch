@@ -221,7 +221,7 @@ impl Tidewatch {
             dialog,
             settings: self.settings.is_some(),
             overview: self.overview,
-            palette: self.palette.is_some(),
+            palette: self.palette.is_some() || self.broadcast.is_some(),
             focus: if typing {
                 Focus::TextField
             } else if self.file_view_showing(active_id) {

@@ -83,6 +83,7 @@ pub(crate) enum Target {
     CloseRepo,
     Profile(String),
     ChangeTab,
+    MessageAll,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,11 +183,17 @@ pub(crate) fn items(sources: &Sources, platform: Platform) -> Vec<Item> {
         kind: "tabs",
         target: Target::ChangeTab,
     };
+    let message_all = Item {
+        label: "Message all agents".to_owned(),
+        keys: String::new(),
+        kind: "tabs",
+        target: Target::MessageAll,
+    };
     commands
         .chain(tabs)
         .chain(repos)
         .chain(repo_menu)
-        .chain(std::iter::once(change))
+        .chain([change, message_all])
         .chain(profiles)
         .collect()
 }
@@ -374,9 +381,19 @@ mod tests {
                 "Switch to tab 3: brave-otter",
                 "Open repo...",
                 "Change this tab...",
+                "Message all agents",
                 "New tab: Builder",
             ]
         );
+    }
+
+    #[test]
+    fn message_all_agents_is_always_listed_and_found_by_its_words() {
+        let items = items(&sources(), Platform::Mac);
+        let at = items.iter().position(|item| item.target == Target::MessageAll);
+        assert!(at.is_some());
+        let hits = filter(&items, "message all");
+        assert_eq!(hits.first().map(|hit| Some(hit.item) == at), Some(true));
     }
 
     #[test]

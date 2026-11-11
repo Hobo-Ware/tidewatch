@@ -177,6 +177,7 @@ impl Tidewatch {
             && !self.updates.dialog_open()
             && !self.flow.modal_open()
             && self.palette.is_none()
+            && self.broadcast.is_none()
             && self.closing.is_none()
     }
 

@@ -19,15 +19,15 @@ use crate::screen_kit::{
     FACE, TEXT_BODY, TEXT_TAG, TEXT_TITLE, body, caps_width, menu_label, paint_caps, selection_row,
 };
 
-const WIDTH: f32 = 600.0;
-const HEADER_H: f32 = 52.0;
+pub(crate) const WIDTH: f32 = 600.0;
+pub(crate) const HEADER_H: f32 = 52.0;
 const FOOTER_H: f32 = 36.0;
-const SIDE: f32 = 16.0;
+pub(crate) const SIDE: f32 = 16.0;
 const ROW_HEIGHT: f32 = 36.0;
 const ROW_PAD: f32 = 10.0;
 const LIST_PAD: f32 = 6.0;
 const LIST_MAX: f32 = 400.0;
-const TOP_GAP: f32 = 88.0;
+pub(crate) const TOP_GAP: f32 = 88.0;
 const ICON: f32 = 16.0;
 const HINTS: [(&str, &str); 3] = [("Up+Down", "pick"), ("Enter", "run"), ("Esc", "close")];
 
@@ -72,19 +72,7 @@ pub(crate) fn show(
                 .anchor(Align2::CENTER_TOP, vec2(0.0, TOP_GAP))
                 .order(egui::Order::Foreground),
         )
-        .frame(
-            Frame::new()
-                .fill(brand::CARD)
-                .stroke(Stroke::new(1.0, brand::CARD_LINE))
-                .corner_radius(14)
-                .shadow(egui::Shadow {
-                    offset: [0, 16],
-                    blur: 40,
-                    spread: 0,
-                    color: Color32::from_black_alpha(128),
-                })
-                .inner_margin(Margin::ZERO),
-        )
+        .frame(card_frame())
         .show(ctx, |ui| {
             ui.set_width(WIDTH);
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -101,6 +89,21 @@ pub(crate) fn show(
         return Some(Outcome::Run(items[hits[row].item].target.clone()));
     }
     modal.should_close().then_some(Outcome::Close)
+}
+
+/// The card the palette and the Message all agents sheet share.
+pub(crate) fn card_frame() -> Frame {
+    Frame::new()
+        .fill(brand::CARD)
+        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .corner_radius(14)
+        .shadow(egui::Shadow {
+            offset: [0, 16],
+            blur: 40,
+            spread: 0,
+            color: Color32::from_black_alpha(128),
+        })
+        .inner_margin(Margin::ZERO)
 }
 
 fn header(ui: &mut Ui, palette: &mut Palette, count: usize) {
@@ -420,6 +423,14 @@ mod tests {
             harness.frame(vec![key(Key::Enter)]),
             Some(Outcome::Run(Target::Profile("builder".into())))
         );
+    }
+
+    #[test]
+    fn message_all_agents_shows_in_the_list_and_enter_on_it_runs_it() {
+        let harness = Harness::new("");
+        harness.text("Message all agents");
+        let mut query = Harness::new("message all");
+        assert_eq!(query.frame(vec![key(Key::Enter)]), Some(Outcome::Run(Target::MessageAll)));
     }
 
     #[test]
