@@ -14,13 +14,24 @@ const STOP_WORDS: &[&str] = &[
     "who", "will", "with", "would", "you", "your",
 ];
 
+const RUDE_ROOTS: &[&str] = &["fuck", "shit", "cunt"];
+
+const RUDE_WORDS: &[&str] = &[
+    "arse", "arsehole", "ass", "asses", "asshole", "assholes", "bastard", "bastards", "bitch",
+    "bitches", "bitching", "bitchy", "bloody", "bollocks", "crap", "crappy", "cretin", "damn",
+    "damned", "damnit", "dick", "dickhead", "dicks", "dumb", "dumbass", "fck", "fk", "fu", "fuk",
+    "goddamn", "idiot", "idiotic", "idiots", "imbecile", "jackass", "moron", "moronic", "morons",
+    "piss", "pissed", "prick", "retard", "retarded", "screwed", "stupid", "sucks", "twat",
+    "wanker", "wtf",
+];
+
 const NOUNS_NEEDING_A_NUMBER: &[&str] = &["issue", "issues", "pr", "prs"];
 const MIN_BARE_NUMBER_DIGITS: usize = 3;
 
 const FORBIDDEN: [char; 8] = ['~', '^', ':', '?', '*', '[', '\\', '/'];
 
 /// Lowercase ascii words of `text` joined with `-`: stop words and one-letter words dropped,
-/// apostrophes removed, at most 4 words and 30 characters. A number is kept when it has 3 digits or
+/// rude words and apostrophes removed, at most 4 words and 30 characters. A number is kept when it has 3 digits or
 /// follows `issue` or `PR` (a version such as `6.3` is not), and `issue` and `PR` only when a number
 /// follows. A pull request link, an issue link or `#12` becomes `pr 12` or `issue 12`, any other
 /// link is dropped. Empty when no word is left.
@@ -59,7 +70,11 @@ fn skipped(word: &str, before: Option<&str>, next: Option<&String>) -> bool {
         return word.len() < MIN_BARE_NUMBER_DIGITS
             && !before.is_some_and(|before| NOUNS_NEEDING_A_NUMBER.contains(&before));
     }
-    word.len() < 2 || STOP_WORDS.contains(&word)
+    word.len() < 2 || STOP_WORDS.contains(&word) || is_rude(word)
+}
+
+fn is_rude(word: &str) -> bool {
+    RUDE_WORDS.contains(&word) || RUDE_ROOTS.iter().any(|root| word.contains(root))
 }
 
 fn words_of(text: &str) -> Vec<String> {
@@ -254,6 +269,21 @@ mod tests {
             ("Upgrade to node 22 and update the CI image", "upgrade-node-update-ci"),
             ("Fix the 2026 tax report", "fix-2026-tax-report"),
             ("Step 2 of the migration", "step-migration"),
+        ];
+        for (text, want) in cases {
+            assert_eq!(slug(text), want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_slug_drops_rude_words() {
+        let cases = [
+            ("moron reported shit, think it through", "reported-think-through"),
+            ("Fix this fucking stupid login bug", "fix-login-bug"),
+            ("WTF is the importer doing", "importer-doing"),
+            ("Assess the assets pipeline", "assess-assets-pipeline"),
+            ("shit crap damn", ""),
+            ("motherfucking horseshit migration", "migration"),
         ];
         for (text, want) in cases {
             assert_eq!(slug(text), want, "{text:?}");
