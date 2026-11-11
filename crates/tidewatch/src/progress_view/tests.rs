@@ -1527,3 +1527,39 @@ fn a_long_goal_wraps_and_the_out_of_date_mark_goes_under_it_when_there_is_no_roo
     assert!(tag.top() >= title.bottom() && tag.left() <= title.left() + 12.0, "{title:?} {tag:?}");
     assert!(!panel.texts.iter().any(|(t, _)| t.ends_with("...") || t.ends_with('\u{2026}')));
 }
+
+#[test]
+fn a_job_bar_keeps_its_place_when_a_turn_starts_or_the_tone_flips() {
+    use tidewatch_core::progress::State;
+    let checks = Card::Bar(crate::job_model::BarCard {
+        id: 1,
+        name: "checks".to_owned(),
+        right: Some("50%".to_owned()),
+        fraction: 0.5,
+        detail: String::new(),
+        stats: String::new(),
+    });
+    let mut panel = recap_panel("working", 520.0);
+    let mut ledger = recap_report("working");
+    ledger.status.state = Some(State::Waiting);
+    ledger.waiting_on =
+        Some(tidewatch_core::progress_report::WaitingOn::Job("recap-people-backfill".to_owned()));
+    panel.ledger = Some(TabLedger { ledger, updated_ms: Some(0) });
+    panel.jobs = vec![checks, backfill_job()];
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    let before = panel.center_of("recap-people-backfill");
+    let steps: [(&str, bool, Option<State>); 4] = [
+        ("a prompt starts a turn", true, None),
+        ("the agent finishes its turn, the job runs on", false, Some(State::Done)),
+        ("the next prompt", true, Some(State::Working)),
+        ("the report is saved again", false, None),
+    ];
+    for (name, stale, shown) in steps {
+        panel.stale = stale;
+        panel.shown = shown;
+        panel.frame(Vec::new());
+        panel.frame(Vec::new());
+        assert_eq!(panel.center_of("recap-people-backfill"), before, "{name}");
+    }
+}
