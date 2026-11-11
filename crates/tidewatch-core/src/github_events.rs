@@ -112,7 +112,9 @@ impl Host {
         self.epoch.elapsed().as_secs_f64()
     }
 
-    fn known_slug(&self, repo: &Path) -> Option<&str> {
+    /// The repo's GitHub `owner/name`, once its origin has been read.
+    #[must_use]
+    pub fn known_slug(&self, repo: &Path) -> Option<&str> {
         match self.origins.get(repo)? {
             Origin::Known(slug) => slug.as_deref(),
             Origin::Asked => None,

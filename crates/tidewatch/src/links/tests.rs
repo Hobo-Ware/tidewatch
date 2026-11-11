@@ -186,15 +186,38 @@ fn markdown_rewrites_every_web_link_as_a_markdown_link() {
         ),
     ];
     for (md, want) in cases {
-        assert_eq!(markdown(md), want, "markdown {md:?}");
+        assert_eq!(markdown(md, None), want, "markdown {md:?}");
     }
 }
 
 #[test]
+fn a_bare_number_links_to_the_repos_issue_only_when_the_repo_is_known() {
+    let repo = Some("acme/app");
+    let link = |n: &str| format!("[#{n}](https://github.com/acme/app/issues/{n})");
+    let cases = [
+        ("see #2900", format!("see {}", link("2900"))),
+        ("PR #12 and (#7).", format!("PR {} and ({}).", link("12"), link("7"))),
+        ("#5 first", format!("{} first", link("5"))),
+        ("## Fixed #3", format!("## Fixed {}", link("3"))),
+        ("color #fff", "color #fff".to_owned()),
+        ("issue#12", "issue#12".to_owned()),
+        ("a/b#12", "a/b#12".to_owned()),
+        ("&#12; ##12 #012 #12a #12345678", "&#12; ##12 #012 #12a #12345678".to_owned()),
+        ("`#12` and [x #12](https://x.dev)", "`#12` and [x #12](https://x.dev)".to_owned()),
+        ("```\n#12\n```", "```\n#12\n```".to_owned()),
+    ];
+    for (md, want) in cases {
+        assert_eq!(markdown(md, repo), want, "markdown {md:?}");
+    }
+    assert!(matches!(markdown("see #2900", None), Cow::Borrowed(_)));
+    assert_eq!(plain("see #2900").links, Vec::new());
+}
+
+#[test]
 fn markdown_borrows_when_nothing_changes() {
-    assert!(matches!(markdown("plain words, no links"), Cow::Borrowed(_)));
-    assert!(matches!(markdown("[ok](https://x.dev)"), Cow::Borrowed(_)));
-    assert!(matches!(markdown("see https://x.dev"), Cow::Owned(_)));
+    assert!(matches!(markdown("plain words, no links", None), Cow::Borrowed(_)));
+    assert!(matches!(markdown("[ok](https://x.dev)", None), Cow::Borrowed(_)));
+    assert!(matches!(markdown("see https://x.dev", None), Cow::Owned(_)));
 }
 
 #[test]
@@ -222,7 +245,7 @@ fn scanning_never_panics_on_odd_input() {
         for b in pieces {
             for c in pieces {
                 let text = format!("{a}{b}{c}x{a}{c}{b}");
-                let _ = markdown(&text);
+                let _ = markdown(&text, None);
                 let _ = plain(&text);
             }
         }
