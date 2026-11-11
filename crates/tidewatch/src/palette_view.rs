@@ -1,6 +1,6 @@
 //! Draws the command palette: a 52 px search header (a magnifier, the query, the result count),
-//! the results under small group labels with one icon per row, the matched letters in the accent
-//! colour and the chord as key caps at the right, and a footer strip with the key hints. Arrows
+//! the results under small group labels with one icon per row (a tab's own avatar for a tab row),
+//! the matched letters in the accent colour and the chord as key caps at the right, and a footer strip with the key hints. Arrows
 //! move, Enter runs, Esc or a click outside closes. The list is as tall as its rows, up to
 //! `LIST_MAX`.
 
@@ -11,11 +11,12 @@ use egui::{
 };
 use stdusk_egui::ui::icons;
 
+use crate::agent_avatar::{self, Face};
 use crate::brand;
 use crate::palette::{Hit, Item, Palette, Target, filter, group_title, grouped};
 use crate::review::plural;
 use crate::screen_kit::{
-    TEXT_BODY, TEXT_TAG, TEXT_TITLE, body, caps_width, menu_label, paint_caps, selection_row,
+    FACE, TEXT_BODY, TEXT_TAG, TEXT_TITLE, body, caps_width, menu_label, paint_caps, selection_row,
 };
 
 const WIDTH: f32 = 600.0;
@@ -36,7 +37,21 @@ pub(crate) enum Outcome {
     Close,
 }
 
-pub(crate) fn show(ctx: &egui::Context, palette: &mut Palette, items: &[Item]) -> Option<Outcome> {
+/// The face a row of the palette wears: the avatar of the tab a tab row switches to or opens.
+/// `faces` is indexed like `Target::Tab`; a tab without one, and every other row, keeps its icon.
+pub(crate) fn tab_face<'a>(item: &Item, faces: &'a [Option<Face>]) -> Option<&'a Face> {
+    match item.target {
+        Target::Tab(index) => faces.get(index)?.as_ref(),
+        _ => None,
+    }
+}
+
+pub(crate) fn show(
+    ctx: &egui::Context,
+    palette: &mut Palette,
+    items: &[Item],
+    faces: &[Option<Face>],
+) -> Option<Outcome> {
     let (down, up, enter) = ctx.input_mut(|i| {
         (
             i.consume_key(Modifiers::NONE, Key::ArrowDown),
@@ -77,7 +92,7 @@ pub(crate) fn show(ctx: &egui::Context, palette: &mut Palette, items: &[Item]) -
             if hits.is_empty() {
                 nothing_matches(ui);
             } else {
-                let clicked = list(ui, palette, items, &hits, &mut moved);
+                let clicked = list(ui, palette, (items, faces), &hits, &mut moved);
                 picked = picked.or(clicked);
             }
             footer(ui);
@@ -172,7 +187,7 @@ fn icon_of(kind: &str) -> &'static str {
 fn list(
     ui: &mut Ui,
     palette: &mut Palette,
-    items: &[Item],
+    (items, faces): (&[Item], &[Option<Face>]),
     hits: &[Hit],
     moved: &mut bool,
 ) -> Option<usize> {
@@ -199,25 +214,31 @@ fn list(
                 if row == selected && std::mem::take(moved) {
                     ui.scroll_to_rect(rect, None);
                 }
-                paint_row(ui, rect, item, hit, row == selected);
+                paint_row(ui, rect, (item, tab_face(item, faces)), hit, row == selected);
             }
         });
     });
     clicked
 }
 
-fn paint_row(ui: &Ui, rect: Rect, item: &Item, hit: &Hit, selected: bool) {
+fn paint_row(ui: &Ui, rect: Rect, (item, face): (&Item, Option<&Face>), hit: &Hit, selected: bool) {
     let painter = ui.painter_at(rect);
     selection_row(&painter, rect, selected, false);
     let mid = rect.center().y;
     let icon_ink = if selected { brand::TEAL_TEXT } else { brand::SOFT };
-    painter.text(
-        pos2(rect.left() + ROW_PAD + ICON / 2.0, mid),
-        Align2::CENTER_CENTER,
-        icon_of(item.kind),
-        FontId::proportional(ICON),
-        icon_ink,
-    );
+    let icon_at = pos2(rect.left() + ROW_PAD + ICON / 2.0, mid);
+    if let Some(face) = face {
+        let plate = Rect::from_center_size(icon_at, vec2(FACE, FACE));
+        agent_avatar::paint_face(ui.ctx(), &painter, plate, face);
+    } else {
+        painter.text(
+            icon_at,
+            Align2::CENTER_CENTER,
+            icon_of(item.kind),
+            FontId::proportional(ICON),
+            icon_ink,
+        );
+    }
     let ink = crate::screen_kit::selected_ink(selected, brand::TEXT);
     let mut job = LayoutJob::default();
     let label_marks: &[usize] = if hit.alias.is_some() { &[] } else { &hit.positions };
@@ -264,6 +285,7 @@ mod tests {
         ctx: egui::Context,
         palette: Palette,
         items: Vec<Item>,
+        faces: Vec<Option<Face>>,
         texts: Vec<(String, Rect)>,
     }
 
@@ -293,6 +315,7 @@ mod tests {
                 ctx: crate::fonts::test_context(),
                 palette: Palette::open(query),
                 items: items(&sources, Platform::CURRENT),
+                faces: vec![None, Some(Face::of("Zed", "claude", None))],
                 texts: Vec::new(),
             };
             harness.frame(Vec::new());
@@ -307,9 +330,9 @@ mod tests {
                 focused: true,
                 ..RawInput::default()
             };
-            let (palette, items) = (&mut self.palette, &self.items);
+            let (palette, items, faces) = (&mut self.palette, &self.items, &self.faces);
             let mut outcome = None;
-            let output = self.ctx.run_ui(raw, |ui| outcome = show(ui.ctx(), palette, items));
+            let output = self.ctx.run_ui(raw, |ui| outcome = show(ui.ctx(), palette, items, faces));
             self.texts.clear();
             for clipped in &output.shapes {
                 painted_text_rects(&clipped.shape, &mut self.texts);
@@ -323,6 +346,37 @@ mod tests {
                 .find(|(text, _)| text == wanted)
                 .map_or_else(|| panic!("{wanted:?} in {:?}", self.texts), |(_, rect)| *rect)
         }
+    }
+
+    #[test]
+    fn a_tab_row_wears_its_tab_face_and_every_other_row_keeps_its_icon() {
+        let harness = Harness::new("");
+        let faces = &harness.faces;
+        let worn: Vec<(String, bool)> = harness
+            .items
+            .iter()
+            .filter(|item| item.kind == "tab" || item.target == Target::OpenRepo)
+            .map(|item| (item.label.clone(), tab_face(item, faces).is_some()))
+            .collect();
+        assert_eq!(
+            worn,
+            [("Switch to tab 2: calm-comet".to_owned(), true), ("Open repo...".to_owned(), false)]
+        );
+        let item = harness.items.iter().find(|item| item.target == Target::Tab(1)).unwrap();
+        assert!(tab_face(item, &faces[..1]).is_none(), "no entry for that tab");
+    }
+
+    #[test]
+    fn the_face_of_a_tab_is_drawn_in_its_row_instead_of_the_icon() {
+        let mut harness = Harness::new("");
+        harness.faces = vec![None, Some(Face::of("Zed", "claude", None))];
+        harness.frame(Vec::new());
+        let letter = harness.text("Z");
+        let label = harness.text("Switch to tab 2: calm-comet");
+        assert!(letter.right() < label.left(), "{letter:?} left of {label:?}");
+        harness.faces = vec![None, None];
+        harness.frame(Vec::new());
+        assert!(harness.texts.iter().all(|(text, _)| text != "Z"));
     }
 
     #[test]

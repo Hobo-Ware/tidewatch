@@ -63,6 +63,7 @@ fn tab() -> Tab {
         label: String::new(),
         chosen_name: None,
         summary: None,
+        avatar: None,
     }
 }
 

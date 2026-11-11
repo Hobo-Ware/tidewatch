@@ -1,7 +1,7 @@
 //! `.state/closed-tabs.jsonl`: one JSON line for every agent tab Tidewatch closed, so the tab can
 //! come back with its conversation. The session file's history is gone once the tab closes, so
 //! the line keeps what a reopen needs: the worktree, its branch and commits, the profile, level,
-//! CLI, session id and title. The newest 100 lines stay; each rewrite is atomic.
+//! CLI, session id and title, and the avatar the tab wore. The newest 100 lines stay; each rewrite is atomic.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::Level;
+use crate::avatar::Avatar;
 use crate::fsutil::write_atomic;
 use crate::paths::TidewatchPaths;
 use crate::removal_log::Entry;
@@ -29,6 +30,7 @@ pub struct Tab {
     pub label: String,
     pub chosen_name: Option<String>,
     pub summary: Option<String>,
+    pub avatar: Option<Avatar>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +53,8 @@ pub struct Closed {
     pub chosen_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<Avatar>,
 }
 
 impl Closed {
@@ -73,6 +77,7 @@ impl Closed {
             label: tab.label.clone(),
             chosen_name: tab.chosen_name.clone(),
             summary: tab.summary.clone(),
+            avatar: tab.avatar.clone(),
         }
     }
 
@@ -95,6 +100,7 @@ impl Closed {
             label: tab.label.clone(),
             chosen_name: tab.chosen_name.clone(),
             summary: tab.summary.clone(),
+            avatar: tab.avatar.clone(),
         }
     }
 

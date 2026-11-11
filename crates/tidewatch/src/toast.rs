@@ -4,6 +4,8 @@
 use stdusk_egui::ui::toast_alpha;
 use tidewatch_core::amphetamine::Omen;
 
+use crate::agent_avatar::Face;
+
 pub(crate) const LIFETIME_S: f64 = 3.5;
 const FADE_WINDOW_S: f64 = 0.35;
 const FRAME_S: f64 = 1.0 / 60.0;
@@ -12,22 +14,32 @@ const FRAME_S: f64 = 1.0 / 60.0;
 pub(crate) struct Toast {
     text: String,
     lines: Vec<(Omen, String)>,
+    face: Option<Face>,
     expires: f64,
 }
 
 impl Toast {
     pub(crate) fn new(text: impl Into<String>, now: f64) -> Self {
-        Self { text: text.into(), lines: Vec::new(), expires: now + LIFETIME_S }
+        Self { text: text.into(), lines: Vec::new(), face: None, expires: now + LIFETIME_S }
+    }
+
+    /// A message that names an agent tab, with that tab's face beside the text.
+    pub(crate) fn about(face: Option<Face>, text: impl Into<String>, now: f64) -> Self {
+        Self { face, ..Self::new(text, now) }
     }
 
     /// A toast of lines that each open with an omen tag.
     pub(crate) fn voice(lines: Vec<(Omen, String)>, now: f64) -> Self {
         let text = lines.iter().map(|(_, line)| line.as_str()).collect::<Vec<_>>().join(" ");
-        Self { text, lines, expires: now + LIFETIME_S }
+        Self { text, lines, face: None, expires: now + LIFETIME_S }
     }
 
     pub(crate) fn lines(&self) -> &[(Omen, String)] {
         &self.lines
+    }
+
+    pub(crate) fn face(&self) -> Option<&Face> {
+        self.face.as_ref()
     }
 
     pub(crate) fn text(&self) -> &str {
@@ -57,6 +69,14 @@ impl Toast {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_about_a_tab_carries_its_face_and_a_plain_one_has_none() {
+        let face = Face::of("Zed", "claude", None);
+        assert_eq!(Toast::about(Some(face.clone()), "stuck", 0.0).face(), Some(&face));
+        assert_eq!(Toast::about(None, "stuck", 0.0).face(), None);
+        assert_eq!(Toast::new("stuck", 0.0).face(), None);
+    }
 
     #[test]
     fn lives_for_its_lifetime_then_expires() {

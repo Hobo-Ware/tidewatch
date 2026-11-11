@@ -2,9 +2,12 @@
 
 use super::Tidewatch;
 use super::repos::RepoCommand;
+use crate::agent_avatar::Face;
+use crate::avatar_glue::meeseeks_avatar;
 use crate::commands::Platform;
 use crate::palette::{self, Palette, Sources, TabRow, Target};
 use crate::palette_view::{self, Outcome};
+use crate::pane::Body;
 use crate::repo::Workspace;
 use crate::tabs::Action;
 
@@ -46,10 +49,29 @@ impl Tidewatch {
         }
     }
 
+    pub(super) fn tab_face(&self, id: u64) -> Option<Face> {
+        let tab = self.tabs.get(id)?;
+        match &tab.pane.agent {
+            Some(agent) => Some(Face::of(
+                &agent.profile_name,
+                &agent.run.agent_id,
+                self.avatar_live.get(id).cloned(),
+            )),
+            None if matches!(tab.pane.body, Body::Poofed(_)) => {
+                Some(Face::Picture(meeseeks_avatar()))
+            }
+            None => None,
+        }
+    }
+
+    fn palette_faces(&self) -> Vec<Option<Face>> {
+        self.tabs.in_group(self.tabs.active_group()).map(|(_, tab)| self.tab_face(tab.id)).collect()
+    }
+
     pub(super) fn show_palette(&mut self, ctx: &egui::Context) {
         let Some(mut open) = self.palette.take() else { return };
         let items = palette::items(&self.palette_sources(), Platform::CURRENT);
-        match palette_view::show(ctx, &mut open, &items) {
+        match palette_view::show(ctx, &mut open, &items, &self.palette_faces()) {
             Some(Outcome::Close) => {}
             Some(Outcome::Run(target)) => self.run_target(target, ctx),
             None => self.palette = Some(open),

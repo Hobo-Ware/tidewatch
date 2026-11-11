@@ -6,13 +6,14 @@ use egui::{
     UiBuilder, pos2, vec2,
 };
 
+use crate::agent_avatar::{self, Face};
 use crate::brand;
 use tidewatch_core::pr_status::Tone as PrTone;
 
 use crate::commands::{Command, Platform};
 use crate::new_tab::Kind;
 use crate::pr_strip::tone_ink;
-use crate::screen_kit::{Size, button_width, quiet_button};
+use crate::screen_kit::{FACE, Size, button_width, quiet_button};
 use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
 use crate::screen_kit::{body, mono};
 use crate::token_budget::{Mark, Meter};
@@ -21,6 +22,7 @@ use tidewatch_core::panel_view::Tone;
 pub(crate) const HEIGHT: f32 = 30.0;
 const PAD: f32 = crate::layout::EDGE;
 const GAP: f32 = 18.0;
+const FACE_GAP: f32 = 6.0;
 const DOT: f32 = 7.0;
 const FONT: f32 = TEXT_SECONDARY;
 const MOST_HINTS: usize = 4;
@@ -227,6 +229,13 @@ pub(crate) fn hints(screen: Screen, platform: Platform) -> Vec<Hint> {
         .collect()
 }
 
+/// The tab change that waits: its line and the face of the tab it is for, when there is one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Switching {
+    pub(crate) text: String,
+    pub(crate) face: Option<Face>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Bar {
     pub(crate) counts: Counts,
@@ -242,7 +251,7 @@ pub(crate) struct Bar {
     /// The tooltip of `Fetch failed`, which shows after a background fetch of the repo on show failed.
     pub(crate) fetch_failed: Option<String>,
     /// A tab change that waits for the agent's turn to end, with a Cancel.
-    pub(crate) switching: Option<String>,
+    pub(crate) switching: Option<Switching>,
     /// The oldest git or gh call that has run longer than 10 s, with a Cancel.
     pub(crate) slow: Option<slow::Line>,
     /// The active tab's tokens.
@@ -421,8 +430,14 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, bar: &Bar) -> Clicks {
     }
     let cancel_w = button_width(ui, "Cancel", Size::Tag);
     let mut cancels = Vec::new();
-    if let Some(text) = &bar.switching {
-        x += put(pos2(x, y), Align2::LEFT_CENTER, text, body(FONT), brand::TEAL_TEXT) + 10.0;
+    if let Some(switching) = &bar.switching {
+        if let Some(face) = &switching.face {
+            let plate = Rect::from_center_size(pos2(x + FACE / 2.0, y), vec2(FACE, FACE));
+            agent_avatar::paint_face(ui.ctx(), ui.painter(), plate, face);
+            x += FACE + FACE_GAP;
+        }
+        x += put(pos2(x, y), Align2::LEFT_CENTER, &switching.text, body(FONT), brand::TEAL_TEXT)
+            + 10.0;
         cancels.push((Cancelling::Switch, x));
         x += cancel_w + GAP;
     }
@@ -643,7 +658,7 @@ mod tests {
             pr: None,
             awake: None,
             fetch_failed: None,
-            switching: switching.map(switching_text),
+            switching: switching.map(|title| Switching { text: switching_text(title), face: None }),
             slow,
             budget: None,
             meters: Vec::new(),
@@ -696,6 +711,39 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_waiting_switch_wears_the_face_of_its_tab_left_of_the_line() {
+        let ctx = context();
+        let letter_and_line = |face: Option<Face>| {
+            let waiting = Bar {
+                switching: Some(Switching { text: switching_text("fix-ci"), face }),
+                ..bar(None)
+            };
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 120.0))),
+                focused: true,
+                ..egui::RawInput::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                show(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, HEIGHT)), &waiting);
+            });
+            let mut texts = Vec::new();
+            for clipped in &out.shapes {
+                crate::test_support::painted_text_rects(&clipped.shape, &mut texts);
+            }
+            texts
+        };
+        let line = "Switching fix-ci when its turn ends";
+        let bare = letter_and_line(None);
+        assert!(bare.iter().all(|(text, _)| text != "Z"));
+        let worn = letter_and_line(Some(Face::of("Zed", "claude", None)));
+        let rect = |texts: &[(String, Rect)], wanted: &str| {
+            texts.iter().find(|(text, _)| text == wanted).map(|(_, rect)| *rect).unwrap()
+        };
+        assert!(rect(&worn, "Z").right() < rect(&worn, line).left());
+        assert!(rect(&worn, line).left() > rect(&bare, line).left());
     }
 
     #[test]
@@ -952,7 +1000,10 @@ mod tests {
     #[test]
     fn the_meters_leave_the_slow_and_switch_lines_their_room() {
         let ctx = context();
-        let busy = Bar { switching: Some(switching_text("fix-ci")), ..two() };
+        let busy = Bar {
+            switching: Some(Switching { text: switching_text("fix-ci"), face: None }),
+            ..two()
+        };
         let texts = galley_texts(&ctx, &busy);
         assert_eq!(count(&texts, "Switching fix-ci when its turn ends"), 1, "{texts:?}");
         assert_eq!(count(&texts, "31%"), 1);

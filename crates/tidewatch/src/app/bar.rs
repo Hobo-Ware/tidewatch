@@ -7,7 +7,7 @@ use crate::brand;
 use crate::commands::Platform;
 use crate::pane::Body;
 use crate::reader::Shown;
-use crate::status_bar::{self, Bar, Input, Screen, Workspace};
+use crate::status_bar::{self, Bar, Input, Screen, Switching, Workspace};
 use crate::{agent_frame, reader_glue, reader_view};
 
 impl Tidewatch {
@@ -80,7 +80,9 @@ impl Tidewatch {
             awake: self.keep_awake.tip(),
             fetch_failed: self.fetch_failure().filter(|_| matches!(screen, Screen::Workspace(_))),
             pr: self.pr_bar_item(active_id).filter(|_| matches!(screen, Screen::Workspace(_))),
-            switching: self.switching_line().map(|(_, text)| text),
+            switching: self
+                .switching_line()
+                .map(|(tab, text)| Switching { text, face: self.tab_face(tab) }),
             slow: slow::line(ctx),
             budget: self.budget_mark(active_id),
             meters: self.budget_meters(),

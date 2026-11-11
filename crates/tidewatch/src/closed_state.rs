@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use tidewatch_core::avatar::Avatar;
 use tidewatch_core::closed_tabs::{self, Closed};
 use tidewatch_core::elsewhere::age_text;
 
@@ -17,6 +18,7 @@ pub(crate) struct Row {
     pub(crate) branch: String,
     pub(crate) closed: String,
     pub(crate) busy: bool,
+    pub(crate) avatar: Option<Avatar>,
 }
 
 #[derive(Default)]
@@ -85,6 +87,7 @@ impl State {
                     branch: closed.branch.clone(),
                     closed: closed_text(now, closed.at),
                     busy: self.busy.contains(id),
+                    avatar: closed.avatar.clone(),
                 })
             })
             .collect()
@@ -102,7 +105,7 @@ pub(crate) fn fake_requested() -> bool {
 
 /// `TIDEWATCH_FAKE_CLOSED=1`: three stand-in rows for captures; nothing is read or reopened.
 pub(crate) fn fake_rows() -> Vec<Row> {
-    let row = |n: &str, title: &str, summary: Option<&str>, closed: &str| Row {
+    let row = |n: &str, title: &str, summary: Option<&str>, closed: &str, art: usize| Row {
         session_id: format!("fake-{n}"),
         cli_id: "claude".to_owned(),
         title: title.to_owned(),
@@ -110,6 +113,9 @@ pub(crate) fn fake_rows() -> Vec<Row> {
         branch: format!("agent/{title}"),
         closed: closed.to_owned(),
         busy: false,
+        avatar: (art > 0)
+            .then(|| crate::avatar_glue::fake_icon_face(art).map(|avatar| Avatar::clone(&avatar)))
+            .flatten(),
     };
     vec![
         row(
@@ -119,14 +125,16 @@ pub(crate) fn fake_rows() -> Vec<Row> {
                 "Retry the stage gates when a runner drops, so one flaky host no longer fails a release",
             ),
             "closed 2h ago",
+            1,
         ),
         row(
             "b",
             "fix-login-redirect",
             Some("Send people back to the page they came from after they sign in"),
             "closed 1d ago",
+            2,
         ),
-        row("c", "upgrade-egui-0-36", None, "closed 5d ago"),
+        row("c", "upgrade-egui-0-36", None, "closed 5d ago", 0),
     ]
 }
 

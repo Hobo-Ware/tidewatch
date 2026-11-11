@@ -141,7 +141,7 @@ fn choices(picture: bool) -> &'static [(&'static str, Choice)] {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Face {
     Picture(Arc<Avatar>),
     Letter { letter: String, tint: (Color32, Color32) },

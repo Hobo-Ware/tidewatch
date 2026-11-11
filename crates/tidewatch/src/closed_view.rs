@@ -1,10 +1,11 @@
 //! Draws the Resume side of the new-tab form: the repo's closed sessions, one two-line row each
-//! (CLI badge, the label the tab had, when it closed, Resume; the goal it worked on, else its
+//! (the tab's avatar, else the CLI badge, the label the tab had, when it closed, Resume; the goal it worked on, else its
 //! branch, under it), the picked one highlighted. Drawn from plain data (`closed_state.rs`);
 //! reports which row was picked or resumed.
 
 use egui::{Align2, Rect, ScrollArea, Sense, Ui, UiBuilder, pos2, vec2};
 
+use crate::agent_avatar;
 use crate::brand;
 use crate::closed_state::Row;
 use crate::reader_view::ellipsized;
@@ -81,7 +82,13 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &Row, index: usize, picked: bool) -> O
     let top = rect.center().y - LINE_SHIFT;
     let bottom = rect.center().y + LINE_SHIFT;
     let face = Rect::from_center_size(pos2(rect.left() + PAD + FACE / 2.0, top), vec2(FACE, FACE));
-    paint_cli_badge(&painter, face, &row.cli_id);
+    let wears_avatar = row
+        .avatar
+        .as_ref()
+        .is_some_and(|avatar| agent_avatar::paint(ui.ctx(), &painter, face, avatar));
+    if !wears_avatar {
+        paint_cli_badge(&painter, face, &row.cli_id);
+    }
     let left = face.right() + FACE_GAP;
     let right = button.left() - WHEN_GAP;
     let when = painter.layout_no_wrap(row.closed.clone(), body(TEXT_TAG), brand::MUTED);
@@ -117,7 +124,38 @@ mod tests {
             branch: "agent/heron".into(),
             closed: "closed 2h ago".into(),
             busy: false,
+            avatar: None,
         }
+    }
+
+    fn painted(row: &Row) -> Vec<(String, Rect)> {
+        let ctx = crate::fonts::test_context();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 200.0))),
+            ..egui::RawInput::default()
+        };
+        let mut texts = Vec::new();
+        let output = ctx.run_ui(raw, |ui| {
+            let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, ROW_H));
+            draw_row(ui, rect, row, 0, false);
+        });
+        for clipped in &output.shapes {
+            crate::test_support::painted_text_rects(&clipped.shape, &mut texts);
+        }
+        texts
+    }
+
+    #[test]
+    fn a_row_wears_its_tabs_avatar_and_only_without_one_the_cli_badge() {
+        let mut worn = row(None);
+        worn.avatar = Some(tidewatch_core::avatar::Avatar {
+            svg: "<svg viewBox='0 0 64 64'><circle cx='32' cy='32' r='20' fill='teal'/></svg>"
+                .into(),
+            reason: "a teal dot".into(),
+        });
+        let letters = |row: &Row| painted(row).iter().filter(|(text, _)| text == "C").count();
+        assert_eq!(letters(&row(None)), 1);
+        assert_eq!(letters(&worn), 0);
     }
 
     #[test]
