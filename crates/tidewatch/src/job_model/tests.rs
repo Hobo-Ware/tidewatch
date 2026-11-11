@@ -533,3 +533,25 @@ fn only_a_working_tone_is_a_working_agent() {
         assert_eq!(agent_of(tone), want, "{tone:?}");
     }
 }
+
+#[test]
+fn a_finished_job_that_reports_again_keeps_its_slot_among_the_running_cards() {
+    let names = |board: &JobBoard| -> Vec<String> {
+        cards(board, NOON + 10 * MIN, Agent::Working, &TimeZone::UTC)
+            .into_iter()
+            .filter_map(|card| match card {
+                Card::Bar(bar) => Some(bar.name),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut board = JobBoard::default();
+    running(&mut board, "first", 100.0, &[(0, 10.0)]);
+    running(&mut board, "second", 100.0, &[(MIN, 10.0)]);
+    running(&mut board, "first", 100.0, &[(2 * MIN, 100.0)]);
+    assert_eq!(names(&board), ["second"]);
+    running(&mut board, "first", 100.0, &[(5 * MIN, 5.0)]);
+    assert_eq!(names(&board), ["first", "second"]);
+    running(&mut board, "second", 100.0, &[(6 * MIN, 2.0)]);
+    assert_eq!(names(&board), ["first", "second"], "a lower reading restarts it in place");
+}

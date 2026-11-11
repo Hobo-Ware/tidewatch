@@ -112,6 +112,8 @@ pub(crate) struct TabState {
     all_entries: [bool; 3],
     verified_open: bool,
     all_rows: bool,
+    /// The job whose bar the Now block showed last, so the bar keeps its place across turns.
+    lead: Option<u64>,
     pub(crate) links: LinkView,
 }
 
@@ -324,9 +326,10 @@ fn content(ui: &mut Ui, input: &Input<'_>, state: &mut TabState, stack: bool) ->
     let mut lead = None;
     if let Some(ledger) = ledger {
         gaps.before(ui);
-        let now = model::now_line(ledger, tone, input.jobs, old);
+        let now = model::now_line(ledger, tone, input.jobs, old, state.lead);
         blocks_view::now_block(ui, column, &now, &input.blocks);
         lead = now.job.map(|job| job.id);
+        state.lead = lead;
         if let Some(what) = model::waiting_for(ledger, tone) {
             ui.add_space(8.0);
             blocks_view::waiting_block(ui, column, &what);

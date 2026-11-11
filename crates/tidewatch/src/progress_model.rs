@@ -273,7 +273,9 @@ pub(crate) struct Now {
     pub(crate) job: Option<JobNow>,
 }
 
-fn lead_bar<'a>(ledger: &Ledger, jobs: &'a [Card]) -> Option<&'a BarCard> {
+/// The bar the Now block shows: the one it showed before while that job still runs, else the job
+/// the report waits on, else the first.
+fn lead_bar<'a>(ledger: &Ledger, jobs: &'a [Card], kept: Option<u64>) -> Option<&'a BarCard> {
     let mut bars = jobs.iter().filter_map(|card| match card {
         Card::Bar(bar) => Some(bar),
         _ => None,
@@ -283,7 +285,9 @@ fn lead_bar<'a>(ledger: &Ledger, jobs: &'a [Card]) -> Option<&'a BarCard> {
         _ => None,
     };
     let first = bars.clone().next();
-    named.and_then(|name| bars.find(|bar| bar.name.eq_ignore_ascii_case(name))).or(first)
+    let kept = kept.and_then(|id| bars.clone().find(|bar| bar.id == id));
+    kept.or_else(|| named.and_then(|name| bars.find(|bar| bar.name.eq_ignore_ascii_case(name))))
+        .or(first)
 }
 
 fn eta_of(bar: &BarCard) -> Option<&str> {
@@ -299,9 +303,16 @@ fn wait_text(waiting: &WaitingOn) -> String {
 }
 
 /// The Now block: the agent's note (else the step in progress), the steps done, and the running
-/// job with its percent and time left. A report from the last turn has no note here, since the
-/// note belongs to that turn.
-pub(crate) fn now_line(ledger: &Ledger, tone: Tone, jobs: &[Card], last_turn: bool) -> Now {
+/// job with its percent and time left, in every tone while that job runs. `kept` is the job it led
+/// with last time, so the bar stays put when the turn, the wait or the tone changes. A report from
+/// the last turn has no note here, since the note belongs to that turn.
+pub(crate) fn now_line(
+    ledger: &Ledger,
+    tone: Tone,
+    jobs: &[Card],
+    last_turn: bool,
+    kept: Option<u64>,
+) -> Now {
     let note = ledger.status.note.trim();
     let step = || {
         ledger
@@ -314,7 +325,7 @@ pub(crate) fn now_line(ledger: &Ledger, tone: Tone, jobs: &[Card], last_turn: bo
         (false, true) => step().unwrap_or_default(),
         (false, false) => note,
     };
-    let bar = lead_bar(ledger, jobs).filter(|_| tone != Tone::Done);
+    let bar = lead_bar(ledger, jobs, kept);
     let job = bar.map(|bar| {
         let parts: Vec<&str> = [bar.right.as_deref(), eta_of(bar)].into_iter().flatten().collect();
         JobNow {
@@ -1007,7 +1018,7 @@ mod tests {
             bar(1, "checks", "50%", 0.5, "3 of 5"),
             bar(2, "Recap-Backfill", "4%", 0.04, "12 of 300 rows \u{b7} about 9h 46m left"),
         ];
-        let now = now_line(&waiting_on("recap-backfill"), Tone::Waiting, &jobs, false);
+        let now = now_line(&waiting_on("recap-backfill"), Tone::Waiting, &jobs, false, None);
         assert_eq!((now.tone, now.text.as_str()), (Tone::Waiting, "Backfill step 2 is running"));
         assert_eq!(job_of(&now), Some((2, Some("4% \u{b7} about 9h 46m left"), 0.04)));
         assert_eq!(now.job.map(|job| job.name), Some("Recap-Backfill".to_owned()));
@@ -1018,7 +1029,7 @@ mod tests {
         let jobs = [bar(7, "import", "20%", 0.2, "")];
         let working = ledger("# Goal\nx\n\n## Status\nstate: working\nnote: Importing\n");
         assert_eq!(
-            job_of(&now_line(&working, Tone::Working, &jobs, false)),
+            job_of(&now_line(&working, Tone::Working, &jobs, false, None)),
             Some((7, Some("20%"), 0.2))
         );
         let cases = [
@@ -1030,7 +1041,7 @@ mod tests {
         for (waiting, want) in cases {
             let mut ledger = ledger("# Goal\nx\n\n## Status\nstate: waiting\nnote: Waiting\n");
             ledger.waiting_on = Some(waiting);
-            assert_eq!(now_line(&ledger, Tone::Waiting, &[], false).job, None);
+            assert_eq!(now_line(&ledger, Tone::Waiting, &[], false, None).job, None);
             assert_eq!(waiting_for(&ledger, Tone::Waiting).as_deref(), Some(want));
         }
     }
@@ -1041,7 +1052,7 @@ mod tests {
         ledger.waiting_on = Some(WaitingOn::Date(Date::parse("2026-11-02").unwrap()));
         let jobs = [bar(1, "import", "20%", 0.2, "")];
         assert_eq!(
-            job_of(&now_line(&ledger, Tone::Working, &jobs, false)),
+            job_of(&now_line(&ledger, Tone::Working, &jobs, false, None)),
             Some((1, Some("20%"), 0.2))
         );
         assert_eq!(waiting_for(&ledger, Tone::Working).as_deref(), Some("until 2026-11-02"));
@@ -1049,28 +1060,63 @@ mod tests {
     }
 
     #[test]
-    fn a_done_report_reads_as_a_summary_with_no_job_and_the_now_block_is_never_hidden() {
-        let jobs = [bar(1, "x", "9%", 0.09, "")];
+    fn a_done_report_reads_as_a_summary_and_the_now_block_is_never_hidden() {
         let done = ledger("# Goal\nx\n\n## Status\nstate: done\nnote: Shipped it\n");
-        let now = now_line(&done, Tone::Done, &jobs, false);
+        let now = now_line(&done, Tone::Done, &[], false, None);
         assert_eq!((now.tone, now.text.as_str(), now.job), (Tone::Done, "Shipped it", None));
-        let bare = now_line(&ledger("# Goal\nx\n"), Tone::Working, &[], false);
+        let bare = now_line(&ledger("# Goal\nx\n"), Tone::Working, &[], false, None);
         assert_eq!(bare, Now { tone: Tone::Working, text: String::new(), steps: None, job: None });
+    }
+
+    #[test]
+    fn the_lead_bar_stays_across_a_new_turn_and_a_change_of_tone() {
+        let jobs = [
+            bar(1, "checks", "50%", 0.5, ""),
+            bar(2, "recap-backfill", "4%", 0.04, ""),
+            bar(3, "import", "20%", 0.2, ""),
+        ];
+        let named = waiting_on("recap-backfill");
+        let turn_started = fresh(&named, true).into_owned();
+        let cases = [
+            ("waits on it, working", &named, Tone::Working, None, 2),
+            ("new turn drops the wait", &turn_started, Tone::Working, Some(2), 2),
+            ("new turn, nothing kept", &turn_started, Tone::Working, None, 1),
+            ("the agent finished, the job runs", &named, Tone::Done, Some(2), 2),
+            ("done, then working again", &turn_started, Tone::Working, Some(2), 2),
+            ("kept job is no longer a bar", &named, Tone::Working, Some(9), 2),
+            ("kept beats the wait", &named, Tone::Waiting, Some(3), 3),
+        ];
+        for (name, ledger, tone, kept, want) in cases {
+            let lead = now_line(ledger, tone, &jobs, false, kept).job.map(|job| job.id);
+            assert_eq!(lead, Some(want), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_lead_moves_on_only_when_its_job_leaves_the_bars() {
+        let ledger = ledger("# Goal\nx\n\n## Status\nstate: working\nnote: Importing\n");
+        let jobs = [bar(1, "checks", "50%", 0.5, ""), bar(2, "import", "20%", 0.2, "")];
+        let lead = |jobs: &[Card], kept| {
+            now_line(&ledger, Tone::Working, jobs, false, kept).job.map(|job| job.id)
+        };
+        assert_eq!(lead(&jobs, Some(2)), Some(2));
+        assert_eq!(lead(&jobs[..1], Some(2)), Some(1), "its job finished, the first bar leads");
+        assert_eq!(lead(&[], Some(2)), None);
     }
 
     #[test]
     fn with_no_note_the_step_in_progress_is_the_now_text() {
         let ledger =
             ledger("# Goal\nx\n\n## Checklist\n### 1. Build\n- [x] a\n- [~] Write the test\n");
-        assert_eq!(now_line(&ledger, Tone::Working, &[], false).text, "Write the test");
+        assert_eq!(now_line(&ledger, Tone::Working, &[], false, None).text, "Write the test");
     }
 
     #[test]
     fn the_now_block_counts_the_steps_done_and_leaves_the_last_turns_note_out() {
         let ledger = ledger(MIDDLE);
-        let now = now_line(&ledger, Tone::Working, &[], false);
+        let now = now_line(&ledger, Tone::Working, &[], false, None);
         assert_eq!((now.steps, now.text.as_str()), (Some((3, 6)), "writing the validator"));
-        let old = now_line(&ledger, Tone::Working, &[], true);
+        let old = now_line(&ledger, Tone::Working, &[], true, None);
         assert_eq!((old.steps, old.text.as_str()), (Some((3, 6)), ""));
     }
 
