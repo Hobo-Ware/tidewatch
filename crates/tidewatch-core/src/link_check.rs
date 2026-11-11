@@ -7,13 +7,15 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::link_board::{Access, Checks, Kind, LinkState, Reason, Review, Status, kind_of};
+use crate::link_board::{
+    Access, Checks, Kind, LinkState, MAX_TITLE_CHARS, Reason, Review, Status, kind_of, one_line,
+};
 use crate::pr_status::{Decision, State, Summary, SummaryChecks, parse_snapshot};
 use crate::rfc3339;
 use crate::tools::{GhError, Tools, run_gh};
 
-const PR_FIELDS: &str = "number,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,comments,isDraft,updatedAt";
-const ISSUE_FIELDS: &str = "state,stateReason,comments,updatedAt";
+const PR_FIELDS: &str = "number,title,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,comments,isDraft,updatedAt";
+const ISSUE_FIELDS: &str = "title,state,stateReason,comments,updatedAt";
 
 /// What a look at a link found.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +23,7 @@ pub enum Lookup {
     Found {
         state: LinkState,
         status: Status,
+        title: Option<String>,
     },
     /// GitHub does not show the repository to this account.
     NoAccess,
@@ -43,7 +46,11 @@ pub fn lookup(tools: &Tools, dir: &Path, url: &str, now_ms: i64) -> Lookup {
         Ok(json) => {
             let found =
                 if noun == "pr" { parse_pr(&json, now_ms) } else { parse_issue(&json, now_ms) };
-            found.map_or(Lookup::Failed, |(state, status)| Lookup::Found { state, status })
+            found.map_or(Lookup::Failed, |(state, status)| Lookup::Found {
+                state,
+                status,
+                title: title_of(&json),
+            })
         }
         Err(error) => sort_failure(&error),
     }
@@ -79,6 +86,13 @@ pub fn access_of(lookup: &Lookup) -> Option<Access> {
         Lookup::Gone => Some(Access::Gone),
         Lookup::Found { .. } | Lookup::Failed => None,
     }
+}
+
+/// The title in `gh pr view --json title,...` output, on one line and cut to the board's limit.
+#[must_use]
+pub fn title_of(json: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(json).ok()?;
+    one_line(value["title"].as_str()?, MAX_TITLE_CHARS)
 }
 
 fn stamp(value: &Value) -> Option<i64> {

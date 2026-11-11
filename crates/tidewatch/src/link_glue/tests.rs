@@ -666,3 +666,95 @@ fn each_change_a_lookup_finds_goes_once_into_the_tabs_events_feed() {
     fx.tick(&mut host, &[1]);
     assert_eq!(feed_urls(&fx), want, "a recheck that finds the same adds no line");
 }
+
+const CHIP_PR: &str = "https://github.com/o/r/pull/9";
+const CHIP_ISSUE: &str = "https://github.com/o/r/issues/10";
+const CHIP_ARTIFACT: &str = "https://claude.ai/artifact/abc";
+
+#[cfg(unix)]
+const CHIP_ANSWERS: &str = r#"d="$(dirname "$0")"
+echo "$@" >> "$d/gh.log"
+case "$3" in
+  */pull/9) echo '{"number":9,"title":"Fix the totals","state":"MERGED"}' ;;
+  */issues/10) echo '{"state":"CLOSED"}' ;;
+  *) exit 1 ;;
+esac"#;
+
+fn chip_info(fx: &Fx, url: &str) -> Option<crate::link_chip::Info> {
+    crate::link_chip::info(&fx.ctx, url)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_chip_address_is_looked_up_once_and_adds_no_row_to_the_links_card() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false, fx.fake_gh(CHIP_ANSWERS));
+    fx.until(&mut host, &[1], |host| host.tabs.get(&1).is_some_and(|tab| tab.loaded));
+    assert_eq!(chip_info(&fx, CHIP_PR), None);
+    crate::link_chip::want(&fx.ctx, CHIP_PR);
+    crate::link_chip::want(&fx.ctx, CHIP_ISSUE);
+    fx.until(&mut host, &[1], |_| {
+        chip_info(&fx, CHIP_PR).is_some_and(|info| info.title.is_some())
+            && chip_info(&fx, CHIP_ISSUE).is_some_and(|info| !info.state.is_unknown())
+    });
+    let pull = chip_info(&fx, CHIP_PR).unwrap();
+    assert_eq!((pull.title.as_deref(), pull.state), (Some("Fix the totals"), LinkState::Merged));
+    let issue = chip_info(&fx, CHIP_ISSUE).unwrap();
+    assert_eq!((issue.title, issue.state), (None, LinkState::Closed));
+    for _ in 0..3 {
+        crate::link_chip::want(&fx.ctx, CHIP_PR);
+        fx.tick_at(&mut host, &[1], NOW + 40 * MIN);
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        calls_of(&fx),
+        [format!("issue view {CHIP_ISSUE}"), format!("pr view {CHIP_PR}")],
+        "one lookup per address, however often the chip is drawn"
+    );
+    assert!(host.board(1).is_none(), "no Links card row for a chip");
+    assert_eq!(host.take_told(), Vec::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_chip_whose_link_a_board_holds_with_title_and_state_asks_nothing() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false, fx.fake_gh(CHIP_ANSWERS));
+    fx.until(&mut host, &[1], |host| host.tabs.get(&1).is_some_and(|tab| tab.loaded));
+    let held =
+        Link { state: LinkState::Merged, ..link(CHIP_PR, "The agent's title", TitleFrom::Agent) };
+    host.arrived(1, &[held]);
+    crate::link_chip::want(&fx.ctx, CHIP_PR);
+    fx.tick(&mut host, &[1]);
+    let info = chip_info(&fx, CHIP_PR).unwrap();
+    assert_eq!((info.title.as_deref(), info.state), (Some("The agent's title"), LinkState::Merged));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(calls_of(&fx), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_host_that_may_not_write_and_an_artifact_address_look_nothing_up() {
+    let fx = Fx::new();
+    let mut readonly = Host::new(false, false, fx.fake_gh(CHIP_ANSWERS));
+    crate::link_chip::want(&fx.ctx, CHIP_PR);
+    fx.tick(&mut readonly, &[1]);
+    assert_eq!(chip_info(&fx, CHIP_PR), Some(crate::link_chip::Info::default()));
+    let mut host = Host::new(true, false, fx.fake_gh(CHIP_ANSWERS));
+    crate::link_chip::want(&fx.ctx, CHIP_ARTIFACT);
+    fx.until(&mut host, &[1], |_| chip_info(&fx, CHIP_ARTIFACT).is_some());
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(chip_info(&fx, CHIP_ARTIFACT), Some(crate::link_chip::Info::default()));
+    assert_eq!(calls_of(&fx), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_chip_asked_for_before_any_tab_is_looked_up_from_a_scratch_folder() {
+    let fx = Fx::new();
+    let mut host = Host::new(true, false, fx.fake_gh(CHIP_ANSWERS));
+    crate::link_chip::want(&fx.ctx, CHIP_PR);
+    fx.tick(&mut host, &[]);
+    fx.until(&mut host, &[], |_| chip_info(&fx, CHIP_PR).is_some_and(|info| info.title.is_some()));
+    assert_eq!(chip_info(&fx, CHIP_PR).unwrap().state, LinkState::Merged);
+}

@@ -11,12 +11,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tidewatch_core::clock;
 use tidewatch_core::github_feed;
 use tidewatch_core::github_hook::Hit;
-use tidewatch_core::link_board::{Access, Kind, Link, LinkBoard, Status};
+use tidewatch_core::link_board::{Access, Kind, Link, LinkBoard, Status, TitleFrom};
 use tidewatch_core::link_check::{self, Lookup};
 use tidewatch_core::link_store;
 use tidewatch_core::paths::{events_feed_file_beside, links_file_beside};
@@ -24,12 +25,14 @@ use tidewatch_core::tools::Tools;
 
 use crate::job_glue::Facts;
 use crate::jobs::Jobs;
+use crate::link_chip::{self, Info, Known};
 use crate::link_model::{FAKE_LIVE_REPO, OwnPr, Reach, check_due, fake_board, pr_link};
 
 enum Done {
     Loaded { tab: u64, board: Option<Box<LinkBoard>> },
     Saved,
     Looked { key: String, lookup: Lookup, at_ms: i64 },
+    Chipped { key: String, lookup: Lookup },
 }
 
 struct Tab {
@@ -50,6 +53,8 @@ struct Looks {
 
 pub(crate) struct Host {
     tabs: HashMap<u64, Tab>,
+    chips: HashMap<String, Option<Info>>,
+    published: Known,
     jobs: Jobs<Done>,
     tools: Tools,
     writable: bool,
@@ -65,6 +70,8 @@ impl Host {
     pub(crate) fn new(writable: bool, fake: bool, tools: Tools) -> Self {
         Self {
             tabs: HashMap::new(),
+            chips: HashMap::new(),
+            published: Known::new(),
             jobs: Jobs::new(),
             tools,
             writable: writable && !fake,
@@ -147,6 +154,13 @@ impl Host {
                     tab.loaded = true;
                 }
                 Done::Looked { key, lookup, at_ms } => self.looked(&key, &lookup, at_ms, ctx),
+                Done::Chipped { key, lookup } => {
+                    if let (Some(chip), Lookup::Found { state, title, .. }) =
+                        (self.chips.get_mut(&key), lookup)
+                    {
+                        *chip = Some(Info { title, state });
+                    }
+                }
                 Done::Saved => {}
             }
         }
@@ -175,6 +189,69 @@ impl Host {
             self.tabs.insert(facts.id, tab);
         }
         self.check_due(ctx, now_ms);
+        self.serve_chips(ctx);
+    }
+
+    fn board_info(&self, key: &str) -> Option<Info> {
+        let link = self
+            .tabs
+            .values()
+            .flat_map(|tab| tab.board.links.iter())
+            .find(|link| link.key() == key)?;
+        let title = (link.title_from != TitleFrom::Guess && !link.title.trim().is_empty())
+            .then(|| link.title.clone());
+        Some(Info { title, state: link.state })
+    }
+
+    /// The link chips on screen: each address is looked up once on a `Jobs` thread when no tab's
+    /// board already holds its title and state (never added to a board), and what is known about
+    /// every chip so far, from the lookup or a board, is handed to the boxes through the context.
+    fn serve_chips(&mut self, ctx: &egui::Context) {
+        for url in link_chip::take_wants(ctx) {
+            let key = link_chip::key_of(&url);
+            if self.chips.contains_key(&key) {
+                continue;
+            }
+            let known = self
+                .board_info(&key)
+                .is_some_and(|info| info.title.is_some() && !info.state.is_unknown());
+            let lookable =
+                matches!(tidewatch_core::link_board::kind_of(&url), Kind::Pr | Kind::Issue);
+            if lookable && !known && self.writable {
+                let dir = self
+                    .tabs
+                    .values()
+                    .find_map(|tab| tab.file.parent().map(PathBuf::from))
+                    .unwrap_or_else(std::env::temp_dir);
+                let (tools, asked, key) = (self.tools.clone(), url.clone(), key.clone());
+                let now_ms = clock::now_ms();
+                self.jobs.spawn(ctx, move || Done::Chipped {
+                    lookup: link_check::lookup(&tools, &dir, &asked, now_ms),
+                    key,
+                });
+            }
+            self.chips.insert(key, None);
+        }
+        let known: Known = self
+            .chips
+            .iter()
+            .map(|(key, found)| {
+                let board = self.board_info(key).unwrap_or_default();
+                let info = match found {
+                    Some(found) => Info {
+                        title: found.title.clone().or(board.title),
+                        state: if found.state.is_unknown() { board.state } else { found.state },
+                    },
+                    None => board,
+                };
+                (key.clone(), info)
+            })
+            .collect();
+        if known != self.published {
+            self.published.clone_from(&known);
+            link_chip::publish(ctx, Arc::new(known));
+            ctx.request_repaint();
+        }
     }
 
     fn check_due(&mut self, ctx: &egui::Context, now_ms: i64) {
@@ -246,7 +323,7 @@ impl Host {
             .map(|(id, link)| (id, link.clone()))
             .collect();
         for (tab, known) in holders {
-            let incoming = if let Lookup::Found { state, status } = lookup {
+            let incoming = if let Lookup::Found { state, status, .. } = lookup {
                 Link { state: *state, status: status.clone(), ..known.clone() }
             } else {
                 let access = link_check::access_of(lookup).unwrap_or(Access::Readable);

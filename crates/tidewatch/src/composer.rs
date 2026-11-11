@@ -658,6 +658,21 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
             if shown_now != lit {
                 ui.ctx().request_repaint();
             }
+            let pasted = ui.input(|input| {
+                input.events.iter().any(|event| matches!(event, egui::Event::Paste(_)))
+            });
+            let linked =
+                if enabled { tokens::linkify(text, cursor.unwrap_or(0), pasted) } else { None };
+            let cursor = match (cursor, linked) {
+                (Some(_), Some(at)) => {
+                    bullets::place_cursor(ui, id, at);
+                    Some(at)
+                }
+                (cursor, _) => cursor,
+            };
+            if linked.is_some() {
+                ui.ctx().request_repaint();
+            }
             if edit.response.changed()
                 && let Some(at) = cursor
                 && let Some(closed) = emoji_pick::closed_before(text, byte_of(text, at))
@@ -1948,5 +1963,70 @@ mod tests {
         rig.settle(vec![]);
         let seen = rig.frame(vec![chord(Key::Enter, Modifiers::COMMAND)]);
         assert_eq!(seen.sent.as_deref(), Some(text));
+    }
+
+    const PR: &str = "https://github.com/trakt/trakt-workers/pull/2903";
+
+    fn pasted(text: &str) -> Event {
+        Event::Paste(text.to_owned())
+    }
+
+    fn token_count(text: &str) -> usize {
+        tokens::find(text).len()
+    }
+
+    #[test]
+    fn a_pasted_pull_request_address_becomes_one_chip_that_backspace_removes_whole() {
+        let mut rig = Rig::new();
+        rig.type_text("see ");
+        rig.settle(vec![pasted(PR)]);
+        assert_eq!(token_count(&rig.text), 1, "{:?}", rig.text);
+        assert_eq!(tokens::sendable(&rig.text), format!("see {PR}"));
+        rig.press(Key::Backspace);
+        assert_eq!(
+            token_count(&rig.text),
+            1,
+            "the first Backspace takes the space behind the chip"
+        );
+        rig.press(Key::Backspace);
+        assert_eq!((token_count(&rig.text), rig.text.as_str()), (0, "see "));
+    }
+
+    #[test]
+    fn a_typed_address_becomes_a_chip_once_a_space_follows_and_send_expands_it() {
+        let mut rig = Rig::new();
+        rig.type_text(PR);
+        assert_eq!((token_count(&rig.text), rig.text.as_str()), (0, PR), "still being typed");
+        rig.type_text(" ok");
+        assert_eq!(token_count(&rig.text), 1);
+        let seen = rig.frame(vec![key(Key::Enter)]);
+        assert_eq!(seen.sent.as_deref(), Some(format!("{PR} ok").as_str()));
+    }
+
+    #[test]
+    fn another_address_stays_text_drawn_as_a_link() {
+        let mut rig = Rig::new();
+        rig.type_text("see https://example.com/x ok");
+        assert_eq!(token_count(&rig.text), 0);
+        assert_eq!(rig.text, "see https://example.com/x ok");
+    }
+
+    #[test]
+    fn the_chip_reads_the_repo_until_the_title_arrives_then_the_number_and_title() {
+        let mut rig = Rig::new();
+        rig.settle(vec![pasted(PR)]);
+        let first = rig.settle(vec![]);
+        assert_ne!(first.text_rows("trakt-workers #2903").len(), 0);
+        let known = crate::link_chip::Known::from([(
+            crate::link_chip::key_of(PR),
+            crate::link_chip::Info {
+                title: Some("fix: round the totals".to_owned()),
+                state: tidewatch_core::link_board::LinkState::Open,
+            },
+        )]);
+        crate::link_chip::publish(&rig.ctx, std::sync::Arc::new(known));
+        let later = rig.settle(vec![]);
+        assert_ne!(later.text_rows("#2903 fix: round the totals").len(), 0);
+        assert_eq!(later.text_rows("trakt-workers #2903").len(), 0);
     }
 }
