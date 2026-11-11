@@ -1,6 +1,7 @@
 //! Finds the web links in text an agent wrote: `http(s)://` URLs, markdown links, and bare
-//! `localhost:<port>` / `127.0.0.1:<port>` (which open as `http://`). Only http and https ever
-//! come out; any other scheme is a plain word. `plain` serves painted text (the Progress panel),
+//! `localhost:<port>` / `127.0.0.1:<port>` (which open as `http://`), and in a chat message a bare
+//! `#123` of the tab's GitHub repo. Only http and https ever come out; any other scheme is a plain
+//! word. `plain` serves painted text (the Progress panel),
 //! `markdown` rewrites a chat message so the markdown renderer shows every link as one. Pure.
 
 use std::borrow::Cow;
@@ -64,7 +65,7 @@ pub(crate) fn plain(text: &str) -> Plain {
     let mut shown = String::with_capacity(text.len());
     let mut links = Vec::new();
     let mut last = 0;
-    for found in scan(text, Mode::Plain) {
+    for found in scan(text, Mode::Plain, None) {
         shown.push_str(&text[last..found.range.start]);
         last = found.range.end;
         let piece = match &found.kind {
@@ -82,9 +83,10 @@ pub(crate) fn plain(text: &str) -> Plain {
 
 /// `md` with every web link written as a markdown link and every non-web link (`javascript:`,
 /// `file:`, an email) turned into plain text, so the renderer can only ever open http and https.
-/// Fenced code and reference definitions are left alone.
-pub(crate) fn markdown(md: &str) -> Cow<'_, str> {
-    if !md.contains(['h', 'H', 'l', '1', '[', '<']) {
+/// Fenced code and reference definitions are left alone. With `repo` (`owner/name`), a bare `#123`
+/// links to that repo's issue 123, which GitHub forwards to the pull request when it is one.
+pub(crate) fn markdown<'a>(md: &'a str, repo: Option<&str>) -> Cow<'a, str> {
+    if !md.contains(['h', 'H', 'l', '1', '[', '<']) && (repo.is_none() || !md.contains('#')) {
         return Cow::Borrowed(md);
     }
     let mut out = String::with_capacity(md.len() + 32);
@@ -102,7 +104,7 @@ pub(crate) fn markdown(md: &str) -> Cow<'_, str> {
             fence.is_some() || is_definition(line)
         };
         if verbatim {
-            out.push_str(&rewrite(&md[prose.clone()]));
+            out.push_str(&rewrite(&md[prose.clone()], repo));
             prose = at + line.len()..at + line.len();
             out.push_str(line);
         } else {
@@ -110,7 +112,7 @@ pub(crate) fn markdown(md: &str) -> Cow<'_, str> {
         }
         at += line.len();
     }
-    out.push_str(&rewrite(&md[prose]));
+    out.push_str(&rewrite(&md[prose], repo));
     if out == md { Cow::Borrowed(md) } else { Cow::Owned(out) }
 }
 
@@ -140,8 +142,8 @@ fn is_definition(line: &str) -> bool {
         })
 }
 
-fn rewrite(chunk: &str) -> Cow<'_, str> {
-    let found = scan(chunk, Mode::Markdown);
+fn rewrite<'a>(chunk: &'a str, repo: Option<&str>) -> Cow<'a, str> {
+    let found = scan(chunk, Mode::Markdown, repo);
     let mut out = String::with_capacity(chunk.len() + 32);
     let mut last = 0;
     for item in &found {
@@ -205,7 +207,7 @@ fn escaped(text: &str, special: &str) -> String {
     out
 }
 
-fn scan(text: &str, mode: Mode) -> Vec<Found> {
+fn scan(text: &str, mode: Mode, repo: Option<&str>) -> Vec<Found> {
     let mut found = Vec::new();
     let mut i = 0;
     while let Some(c) = text[i..].chars().next() {
@@ -216,6 +218,7 @@ fn scan(text: &str, mode: Mode) -> Vec<Found> {
             }
             '<' if mode == Mode::Markdown => autolink(text, i).map(|f| (f.range.end, Some(f))),
             '`' if mode == Mode::Markdown => Some(code_span(text, i)),
+            '#' => repo.and_then(|repo| issue_ref(text, i, repo)).map(|f| (f.range.end, Some(f))),
             _ => None,
         };
         if let Some((end, item)) = step {
@@ -336,6 +339,25 @@ fn code_span(text: &str, open: usize) -> (usize, Option<Found>) {
         at = start + len;
     }
     (open + run, None)
+}
+
+fn issue_ref(text: &str, at: usize, repo: &str) -> Option<Found> {
+    let prev = text[..at].chars().next_back();
+    if prev.is_some_and(|prev| prev.is_alphanumeric() || "_-./@:&#".contains(prev)) {
+        return None;
+    }
+    let digits = text[at + 1..].bytes().take_while(u8::is_ascii_digit).count();
+    let end = at + 1 + digits;
+    let number = &text[at + 1..end];
+    let after = text[end..].chars().next();
+    if !(1..=7).contains(&digits)
+        || number.starts_with('0')
+        || after.is_some_and(|next| next.is_alphanumeric() || next == '_')
+    {
+        return None;
+    }
+    let url = format!("https://github.com/{repo}/issues/{number}");
+    Some(Found { range: at..end, kind: Kind::Bare, url: Some(url) })
 }
 
 fn boundary(text: &str, at: usize) -> bool {

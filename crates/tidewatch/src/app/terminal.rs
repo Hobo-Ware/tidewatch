@@ -21,6 +21,7 @@ use crate::mascot::{self, Pose};
 use crate::pane::{Body, Pane};
 use crate::reader::{Note, Shown};
 use crate::reader_view::Action;
+use crate::repo::Workspace;
 use crate::screen_kit::paint_pill_card;
 use crate::stopped_view;
 use crate::terminal_font::InUse;
@@ -328,6 +329,11 @@ impl Tidewatch {
                 let due = self.due_of(active_id);
                 let first = due.first().map(|item| (item, due.len() - 1));
                 let avatar = self.avatar_live.get(active_id).cloned();
+                let repo = match self.workspace_of_tab(active_id) {
+                    Workspace::Repo(repo) => self.github_events.known_slug(&repo.root),
+                    Workspace::Other { .. } => None,
+                };
+                crate::reader_chat_view::set_chat_repo(ctx, repo);
                 let pane = self.tabs.active_pane_mut();
                 let mut asked = reader_glue::draw(
                     ui,
@@ -342,6 +348,7 @@ impl Tidewatch {
                     avatar,
                     self.subagent_live.agents(active_id),
                 );
+                crate::reader_chat_view::set_chat_repo(ctx, None);
                 let agent_reads = reader_glue::take_agent_reads(&mut asked);
                 let clicks = reader_glue::take_pr_clicks(&mut asked);
                 let due_clicks = reader_glue::take_due_clicks(&mut asked);

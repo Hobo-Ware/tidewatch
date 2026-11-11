@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use egui::epaint::text::{LayoutJob, TextFormat};
@@ -158,9 +159,30 @@ pub(crate) fn agent_markdown(ui: &mut Ui, text: &str) {
     web_markdown(ui, text, true);
 }
 
+fn chat_repo_id() -> egui::Id {
+    egui::Id::new("tidewatch.chat_repo")
+}
+
+/// The GitHub repo (`owner/name`) whose `#123` the chat drawn next links to; `None` after the chat.
+pub(crate) fn set_chat_repo(ctx: &egui::Context, repo: Option<&str>) {
+    let id = chat_repo_id();
+    let held = ctx.data(|data| data.get_temp::<Arc<str>>(id));
+    if held.as_deref() == repo {
+        return;
+    }
+    ctx.data_mut(|data| {
+        if let Some(repo) = repo {
+            data.insert_temp(id, Arc::<str>::from(repo));
+        } else {
+            data.remove::<Arc<str>>(id);
+        }
+    });
+}
+
 /// `agent_markdown` for text that is not the agent's: `captions` turns the end block's headings into
 /// captions, which only an agent's message has.
 pub(crate) fn web_markdown(ui: &mut Ui, text: &str, captions: bool) {
+    let repo = ui.ctx().data(|data| data.get_temp::<Arc<str>>(chat_repo_id()));
     ui.scope(|ui| {
         let ink = ui.visuals().text_color();
         let visuals = ui.visuals_mut();
@@ -168,7 +190,7 @@ pub(crate) fn web_markdown(ui: &mut Ui, text: &str, captions: bool) {
         visuals.widgets.noninteractive.fg_stroke.color = ink;
         visuals.hyperlink_color = brand::TEAL_TEXT;
         ui.style_mut().url_in_tooltip = true;
-        reader_markdown::show(ui, &links::markdown(text), captions, Look::AGENT);
+        reader_markdown::show(ui, &links::markdown(text, repo.as_deref()), captions, Look::AGENT);
     });
     ui.ctx().output_mut(|out| {
         out.commands.retain(
@@ -1368,6 +1390,51 @@ mod tests {
         assert!(urls.iter().all(|u| links::is_web_url(u)), "{urls:?}");
         assert_eq!(hits[1].1.len(), 0, "a click on the first word");
         assert_eq!(hits[0].1.len(), 0);
+    }
+
+    #[test]
+    fn a_bare_issue_number_opens_on_the_tab_repo_only_while_the_repo_is_set() {
+        let sweep = |repo: Option<&str>| {
+            let ctx = egui::Context::default();
+            let mut opened = Vec::new();
+            for x in (0..200).step_by(4) {
+                let at = pos2(x as f32, 10.0);
+                let button = |pressed| Event::PointerButton {
+                    pos: at,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                for events in
+                    [vec![], vec![Event::PointerMoved(at)], vec![button(true)], vec![button(false)]]
+                {
+                    let raw = RawInput {
+                        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 200.0))),
+                        events,
+                        focused: true,
+                        ..RawInput::default()
+                    };
+                    let out = ctx.run_ui(raw, |ui| {
+                        set_chat_repo(ui.ctx(), repo);
+                        chat_text(ui, |ui| agent_markdown(ui, "see #2900 now"));
+                        set_chat_repo(ui.ctx(), None);
+                    });
+                    opened.extend(out.platform_output.commands.into_iter().filter_map(
+                        |c| match c {
+                            OutputCommand::OpenUrl(open) => Some(open.url),
+                            _ => None,
+                        },
+                    ));
+                }
+            }
+            opened
+        };
+        let opened = sweep(Some("acme/app"));
+        assert!(
+            opened.iter().any(|u| u == "https://github.com/acme/app/issues/2900"),
+            "{opened:?}"
+        );
+        assert_eq!(sweep(None), Vec::<String>::new());
     }
 
     #[test]
