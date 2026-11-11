@@ -16,7 +16,7 @@ fn page(prefs: &WindowPrefs, status: HotkeyStatus) -> Page {
 
 fn input(events: Vec<Event>) -> RawInput {
     RawInput {
-        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(700.0, 500.0))),
+        screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), Vec2::new(700.0, 620.0))),
         focused: true,
         events,
         ..RawInput::default()
@@ -183,6 +183,31 @@ fn the_panels_choice_applies_at_once_and_keeps_the_rest() {
     let applied = applied.expect("a click on Below applies it");
     assert_eq!(applied, WindowPrefs { panels: Panels::Below, ..WindowPrefs::default() });
     assert_eq!(page.editor.panels(), Panels::Below);
+}
+
+#[test]
+fn the_appearance_choice_applies_at_once_and_keeps_the_rest() {
+    let mut page = registered();
+    page.section(vec![], true);
+    let mut applied = None;
+    'scan: for y in (20..480).step_by(8) {
+        for x in (400..690).step_by(8) {
+            let at = pos2(x as f32, y as f32);
+            page.section(vec![Event::PointerMoved(at)], true);
+            page.section(vec![button(at, true)], true);
+            let answer = page.section(vec![button(at, false)], true);
+            if answer.as_ref().is_some_and(|prefs| prefs.appearance == Appearance::Light) {
+                applied = answer;
+                break 'scan;
+            }
+            if answer.is_some() {
+                page = registered();
+            }
+        }
+    }
+    let applied = applied.expect("a click on Light applies it");
+    assert_eq!(applied, WindowPrefs { appearance: Appearance::Light, ..WindowPrefs::default() });
+    assert_eq!(page.editor.appearance(), Appearance::Light);
 }
 
 fn height_click(page: &mut Page) -> WindowPrefs {

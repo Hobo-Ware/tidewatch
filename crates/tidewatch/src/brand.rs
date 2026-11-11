@@ -1,104 +1,174 @@
 //! The Night tide palette: the one set of colors every Tidewatch view reads, and how it is put on egui.
+#![allow(clippy::unreadable_literal)]
 
 use egui::{Color32, Stroke};
 use stdusk_egui::colors::{self, Chrome, Theme};
 
+/// Which of the two palettes every color function answers with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mode {
+    Dark,
+    Light,
+}
+
+#[cfg(not(test))]
+mod flag {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static LIGHT: AtomicBool = AtomicBool::new(false);
+
+    pub(super) fn light() -> bool {
+        LIGHT.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn set(light: bool) {
+        LIGHT.store(light, Ordering::Relaxed);
+    }
+}
+
+/// Tests each run on their own thread, so each gets its own mode and none can repaint another.
+#[cfg(test)]
+mod flag {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LIGHT: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn light() -> bool {
+        LIGHT.get()
+    }
+
+    pub(super) fn set(light: bool) {
+        LIGHT.set(light);
+    }
+}
+
+pub(crate) fn mode() -> Mode {
+    if flag::light() { Mode::Light } else { Mode::Dark }
+}
+
+pub(crate) fn set_mode(mode: Mode) {
+    flag::set(mode == Mode::Light);
+}
+
+const fn hex(rgb: u32) -> Color32 {
+    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+}
+
+fn pick(dark: Color32, light: Color32) -> Color32 {
+    if flag::light() { light } else { dark }
+}
+
 macro_rules! inks {
-    ($($name:ident = $r:literal $g:literal $b:literal;)*) => {
+    ($($name:ident = $dark:literal / $light:literal;)*) => {
         $(pub(crate) fn $name() -> Color32 {
-            Color32::from_rgb($r, $g, $b)
+            pick(hex($dark), hex($light))
         })*
     };
 }
 
 inks! {
-    ground = 0x10 0x13 0x1a;
-    sidebar = 0x0d 0x10 0x16;
-    sidebar_line = 0x1f 0x24 0x30;
-    card = 0x16 0x1b 0x24;
-    card_line = 0x22 0x29 0x37;
-    item = 0x1a 0x20 0x29;
-    item_line = 0x26 0x2e 0x3b;
-    bar = 0x12 0x16 0x1e;
-    answer_line = 0x33 0x3c 0x4b;
-    field_line = 0x2f 0x37 0x47;
-    segment = 0x0f 0x12 0x19;
-    segment_line = 0x26 0x2d 0x39;
-    segment_on = 0x1f 0x2a 0x31;
-    button = 0x1d 0x22 0x30;
-    key_edge = 0x0b 0x0e 0x13;
-    text = 0xe6 0xe8 0xec;
-    soft = 0xa7 0xb0 0xbf;
-    step_text = 0xc4 0xca 0xd4;
-    muted = 0x8b 0x93 0xa3;
-    faint = 0x6b 0x73 0x83;
-    teal = 0x2d 0xd4 0xbf;
-    teal_text = 0x5e 0xea 0xd4;
-    teal_nav = 0x16 0x25 0x2b;
-    green = 0x8f 0xd1 0x6a;
-    orange = 0xfb 0x92 0x3c;
-    orange_soft = 0xd6 0xa7 0x7a;
-    blue = 0x60 0xa5 0xfa;
-    blue_text = 0x93 0xc5 0xfd;
-    amber = 0xfb 0xbf 0x24;
-    red = 0xf8 0x71 0x71;
-    red_line = 0x3a 0x25 0x30;
-    red_fill = 0x24 0x17 0x1e;
-    needs_fill = 0x16 0x13 0x0f;
-    violet_text = 0xc4 0xb5 0xfd;
-    violet = 0x7c 0x6b 0xd6;
-    violet_fill = 0x22 0x1d 0x3d;
-    violet_line = 0x3b 0x34 0x66;
-    struggle_fill = 0x1c 0x16 0x10;
-    struggle_line = 0x4a 0x34 0x18;
-    sunken = 0x0f 0x14 0x1c;
-    done = 0xb2 0xe6 0x8a;
-    failed = 0xef 0x44 0x44;
+    ground = 0x10131a / 0xf6f7f9;
+    sidebar = 0x0d1016 / 0xeceff3;
+    sidebar_line = 0x1f2430 / 0xd8dee5;
+    card = 0x161b24 / 0xffffff;
+    card_line = 0x222937 / 0xd8dee5;
+    item = 0x1a2029 / 0xeef1f4;
+    item_line = 0x262e3b / 0xd3dae2;
+    bar = 0x12161e / 0xf0f2f5;
+    answer_line = 0x333c4b / 0xc3ccd6;
+    field_line = 0x2f3747 / 0xc9d1da;
+    segment = 0x0f1219 / 0xe8ecf0;
+    segment_line = 0x262d39 / 0xd3dae2;
+    segment_on = 0x1f2a31 / 0xffffff;
+    button = 0x1d2230 / 0xe8ecf1;
+    key_edge = 0x0b0e13 / 0xbcc5cf;
+    text = 0xe6e8ec / 0x1b2430;
+    soft = 0xa7b0bf / 0x5a6776;
+    step_text = 0xc4cad4 / 0x36424f;
+    muted = 0x8b93a3 / 0x626e7c;
+    faint = 0x6b7383 / 0x78828f;
+    teal = 0x2dd4bf / 0x0e8a80;
+    teal_text = 0x5eead4 / 0x0a7a71;
+    teal_nav = 0x16252b / 0xdcf2ef;
+    green = 0x8fd16a / 0x2e7d32;
+    orange = 0xfb923c / 0xb45309;
+    orange_soft = 0xd6a77a / 0x9a5b25;
+    blue = 0x60a5fa / 0x1d5fd6;
+    blue_text = 0x93c5fd / 0x1e4fb8;
+    amber = 0xfbbf24 / 0xa15c00;
+    red = 0xf87171 / 0xc62828;
+    red_line = 0x3a2530 / 0xf0c4c4;
+    red_fill = 0x24171e / 0xfdeeee;
+    needs_fill = 0x16130f / 0xfff4e0;
+    violet_text = 0xc4b5fd / 0x5b3fd0;
+    violet = 0x7c6bd6 / 0x6a58d6;
+    violet_fill = 0x221d3d / 0xefecfc;
+    violet_line = 0x3b3466 / 0xcdc5f0;
+    struggle_fill = 0x1c1610 / 0xfff1dc;
+    struggle_line = 0x4a3418 / 0xedcf9f;
+    sunken = 0x0f141c / 0xeef1f4;
+    row_ink = 0x4a5263 / 0xb9c3ce;
+    user_line = 0x1f3a3a / 0xb9ddd8;
+    live_fill = 0x12201f / 0xe8f6f4;
+    image_chip_line = 0x2f4a4a / 0xb3d6d1;
+    gradient_end = 0x15393a / 0xc4e8e3;
+    glyph_fill = 0x14191f / 0xf1f4f7;
+    done = 0xb2e68a / 0x2f7f3a;
+    failed = 0xef4444 / 0xa31515;
+    working = 0x2dd4bf / 0x0a6d66;
 }
 
+/// Avatar and face art sits on a dark plate in both modes.
 pub(crate) fn face_plate() -> Color32 {
-    card_line()
+    hex(0x222937)
 }
 
 pub(crate) fn face_ring() -> Color32 {
-    answer_line()
+    hex(0x333c4b)
+}
+
+pub(crate) fn user_code_fill() -> Color32 {
+    pick(Color32::from_black_alpha(90), Color32::from_black_alpha(14))
+}
+
+pub(crate) fn hover_wash() -> Color32 {
+    pick(Color32::from_white_alpha(16), Color32::from_black_alpha(10))
 }
 
 pub(crate) fn repo_inks() -> [Color32; 7] {
     [
-        Color32::from_rgb(0xf4, 0x72, 0xb6),
+        pick(hex(0xf472b6), hex(0xdb2777)),
         blue(),
-        Color32::from_rgb(0xa3, 0xe6, 0x35),
+        pick(hex(0xa3e635), hex(0x4d7c0f)),
         amber(),
-        Color32::from_rgb(0xc0, 0x84, 0xfc),
-        Color32::from_rgb(0x22, 0xd3, 0xee),
-        Color32::from_rgb(0xfb, 0x71, 0x85),
+        pick(hex(0xc084fc), hex(0x9333ea)),
+        pick(hex(0x22d3ee), hex(0x0e7490)),
+        pick(hex(0xfb7185), hex(0xe11d48)),
     ]
 }
 
 /// Each CLI's badge, as its fill and its letter's ink: the one place a hue outside the palette lives.
 pub(crate) fn claude_badge() -> (Color32, Color32) {
-    (Color32::from_rgb(0x3b, 0x24, 0x18), orange())
+    (pick(hex(0x3b2418), hex(0xf9e4d4)), orange())
 }
 
 pub(crate) fn codex_badge() -> (Color32, Color32) {
-    (Color32::from_rgb(0x1e, 0x2a, 0x22), green())
+    (pick(hex(0x1e2a22), hex(0xe3f1e4)), green())
 }
 
 pub(crate) fn gemini_badge() -> (Color32, Color32) {
-    (Color32::from_rgb(0x1c, 0x27, 0x40), Color32::from_rgb(0x7a, 0xa2, 0xf7))
+    (pick(hex(0x1c2740), hex(0xe0e8fb)), pick(hex(0x7aa2f7), hex(0x2f5fd0)))
 }
 
 pub(crate) fn copilot_badge() -> (Color32, Color32) {
-    (Color32::from_rgb(0x2a, 0x23, 0x33), Color32::from_rgb(0xc4, 0xb5, 0xfd))
+    (pick(hex(0x2a2333), hex(0xece7f7)), violet_text())
 }
 
-/// Agent status inks. They differ in lightness as well as hue, darkest to lightest failed, needs
-/// you, working, done, so a color-blind reader still tells them apart.
-pub(crate) fn working() -> Color32 {
-    teal()
-}
-
+/// Agent status inks. They differ in lightness as well as hue (failed, needs you, working, done
+/// run darkest to lightest on the dark ground and keep their gaps on the light one), so a
+/// color-blind reader still tells them apart.
 pub(crate) fn needs() -> Color32 {
     amber()
 }
@@ -115,8 +185,12 @@ pub(crate) fn link_rest() -> Color32 {
     teal_text().gamma_multiply(0.55)
 }
 
+/// The terminal's scheme: One Half of the mode's kind on the brand ground, ANSI palette untouched.
 pub(crate) fn theme() -> Theme {
-    let mut theme = colors::one_half_dark();
+    let mut theme = match mode() {
+        Mode::Dark => colors::one_half_dark(),
+        Mode::Light => colors::by_name("one-half-light"),
+    };
     theme.bg = ground();
     theme.fg = text();
     theme.cursor = teal();
@@ -125,6 +199,18 @@ pub(crate) fn theme() -> Theme {
 
 pub(crate) fn chrome() -> Chrome {
     Chrome { accent: Some(teal()), red: Some(red()), green: Some(green()), yellow: None }
+}
+
+/// Puts a mode on the whole app: the palette flag, stdusk's terminal scheme and chrome, the egui
+/// visuals and Kelp's palette, then a repaint.
+pub(crate) fn apply(ctx: &egui::Context, mode: Mode) {
+    set_mode(mode);
+    colors::set(theme());
+    colors::set_chrome(chrome());
+    stdusk_egui::ui::apply_theme(ctx);
+    tint_visuals(ctx);
+    kelp_ui::theme::sync(ctx);
+    ctx.request_repaint();
 }
 
 /// Teal selection, links and active widgets on top of what stdusk derived from the theme.
@@ -196,25 +282,79 @@ mod tests {
         d.min(360.0 - d)
     }
 
+    type Role = (&'static str, fn() -> Color32, f32);
+
+    fn in_each_mode(check: impl Fn(Mode)) {
+        for mode in [Mode::Dark, Mode::Light] {
+            set_mode(mode);
+            check(mode);
+        }
+        set_mode(Mode::Dark);
+    }
+
+    #[test]
+    fn the_palette_answers_for_the_mode_it_is_in() {
+        let cases = [
+            (Mode::Dark, [0xe6e8ec, 0x10131a, 0x2dd4bf, 0x161b24]),
+            (Mode::Light, [0x1b2430, 0xf6f7f9, 0x0e8a80, 0xffffff]),
+        ];
+        for (mode, [ink, ground_rgb, teal_rgb, card_rgb]) in cases {
+            set_mode(mode);
+            assert_eq!(super::mode(), mode);
+            let got = [text(), ground(), teal(), card()];
+            assert_eq!(got, [ink, ground_rgb, teal_rgb, card_rgb].map(hex), "{mode:?}");
+        }
+        set_mode(Mode::Dark);
+    }
+
     #[test]
     fn status_inks_differ_in_lightness_and_read_on_the_ground() {
-        let ramp = [failed(), working(), done()];
-        for pair in ramp.windows(2) {
-            assert!(contrast(pair[0], pair[1]) >= 1.2, "{:?} against {:?}", pair[0], pair[1]);
-        }
-        for ink in [failed(), needs(), waiting(), blocked(), working(), done()] {
-            assert!(contrast(ink, ground()) >= 4.5, "{ink:?} on the ground");
-        }
+        in_each_mode(|mode| {
+            let ramp = [failed(), working(), done()];
+            for pair in ramp.windows(2) {
+                assert!(
+                    contrast(pair[0], pair[1]) >= 1.2,
+                    "{mode:?}: {:?} against {:?}",
+                    pair[0],
+                    pair[1]
+                );
+            }
+            for ink in [failed(), needs(), waiting(), blocked(), working(), done()] {
+                assert!(contrast(ink, ground()) >= 4.5, "{mode:?}: {ink:?} on the ground");
+            }
+        });
+    }
+
+    #[test]
+    fn text_reads_on_the_ground_and_on_a_card_in_both_modes() {
+        in_each_mode(|mode| {
+            let roles: [Role; 6] = [
+                ("text", text, 4.5),
+                ("step_text", step_text, 4.5),
+                ("soft", soft, 4.5),
+                ("muted", muted, 4.5),
+                ("teal_text", teal_text, 4.5),
+                ("faint", faint, 3.0),
+            ];
+            for (name, ink, floor) in roles {
+                for (surface, under) in [("ground", ground()), ("card", card())] {
+                    let got = contrast(ink(), under);
+                    assert!(got >= floor, "{mode:?}: {name} on {surface} is {got:.2}");
+                }
+            }
+        });
     }
 
     #[test]
     fn the_five_state_inks_are_told_apart_by_hue() {
-        let inks = [working(), needs(), waiting(), blocked(), done()];
-        for (i, a) in inks.iter().enumerate() {
-            for b in &inks[i + 1..] {
-                assert!(apart(*a, *b) >= 25.0, "{a:?} and {b:?}");
+        in_each_mode(|mode| {
+            let inks = [working(), needs(), waiting(), blocked(), done()];
+            for (i, a) in inks.iter().enumerate() {
+                for b in &inks[i + 1..] {
+                    assert!(apart(*a, *b) >= 25.0, "{mode:?}: {a:?} and {b:?}");
+                }
             }
-        }
+        });
     }
 
     #[test]
@@ -236,9 +376,15 @@ mod tests {
 
     #[test]
     fn the_theme_makes_stdusk_read_teal_for_its_accent() {
-        let theme = theme();
-        assert_eq!((theme.bg, theme.ansi), (ground(), colors::one_half_dark().ansi));
-        assert_eq!(chrome().accent, Some(teal()));
+        in_each_mode(|mode| {
+            let scheme = match mode {
+                Mode::Dark => colors::one_half_dark(),
+                Mode::Light => colors::by_name("one-half-light"),
+            };
+            let theme = theme();
+            assert_eq!((theme.bg, theme.fg, theme.ansi), (ground(), text(), scheme.ansi));
+            assert_eq!(chrome().accent, Some(teal()));
+        });
     }
 
     #[test]

@@ -423,6 +423,19 @@ pub struct WindowPrefs {
     /// value that is not a number is `1.0`.
     #[serde(default = "default_ui_zoom", deserialize_with = "read_ui_zoom")]
     pub ui_zoom: f32,
+    /// Dark, light, or whichever the system is in.
+    #[serde(default)]
+    pub appearance: Appearance,
+}
+
+/// The color scheme: follow the system's dark mode, or hold one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Dark,
+    Light,
 }
 
 /// The tab layout: History beside the terminal, or the History and Diff panes under it.
@@ -499,6 +512,7 @@ impl Default for WindowPrefs {
             panels: Panels::Side,
             height_pct: QUAKE_HEIGHT_DEFAULT,
             ui_zoom: ui_zoom::DEFAULT,
+            appearance: Appearance::System,
         }
     }
 }
@@ -717,9 +731,31 @@ mod tests {
                 menu_bar: true,
                 panels: Panels::Side,
                 height_pct: QUAKE_HEIGHT_DEFAULT,
-                ui_zoom: 1.0
+                ui_zoom: 1.0,
+                appearance: Appearance::System,
             }
         );
+    }
+
+    #[test]
+    fn appearance_follows_the_system_when_the_file_does_not_say() {
+        let (_home, paths) = paths();
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.prefs_file(), "[window]\nquake = false\n").unwrap();
+        assert_eq!(Prefs::load(&paths).window.appearance, Appearance::System);
+        assert_eq!(Prefs::default().window.appearance, Appearance::System);
+    }
+
+    #[test]
+    fn appearance_survives_a_save_and_load() {
+        let (_home, paths) = paths();
+        for appearance in [Appearance::Dark, Appearance::Light, Appearance::System] {
+            Prefs::update(&paths, |p| p.window.appearance = appearance).unwrap();
+            assert_eq!(Prefs::load(&paths).window.appearance, appearance);
+        }
+        Prefs::update(&paths, |p| p.window.appearance = Appearance::Light).unwrap();
+        let text = std::fs::read_to_string(paths.prefs_file()).unwrap();
+        assert!(text.contains("appearance = \"light\""), "{text}");
     }
 
     #[test]
@@ -751,6 +787,7 @@ mod tests {
             panels: Panels::Below,
             height_pct: 0.505,
             ui_zoom: 1.25,
+            appearance: Appearance::Dark,
         };
         Prefs { window: window.clone(), ..Prefs::default() }.save(&paths).unwrap();
         assert_eq!(Prefs::load(&paths).window, window);

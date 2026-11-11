@@ -57,7 +57,7 @@ use kelp_ui::avatars::AvatarStore;
 use stdusk_core::config::TerminalConfig;
 use stdusk_core::terminal::PtyTerm;
 use stdusk_egui::colors;
-use stdusk_egui::ui::{BellFlash, apply_theme};
+use stdusk_egui::ui::BellFlash;
 use tidewatch_core::guards::GuardPrefs;
 use tidewatch_core::notes::NotesWriter;
 use tidewatch_core::paths::TidewatchPaths;
@@ -73,6 +73,7 @@ use crate::agent_events::{self, Hooks};
 use crate::agent_jobs;
 use crate::amphetamine_glue;
 use crate::amphetamine_view;
+use crate::appearance;
 use crate::autofetch_glue;
 use crate::avatar_glue;
 use crate::away_model::Presence;
@@ -290,15 +291,15 @@ impl Tidewatch {
         from_stdusk: Option<PathBuf>,
     ) -> Self {
         slow::start_dev();
-        colors::init(brand::theme());
-        colors::set_chrome(brand::chrome());
         let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
         let terminal_prefs = prefs.terminal.clone();
         cc.egui_ctx.options_mut(|options| options.zoom_with_keyboard = false);
         cc.egui_ctx.set_zoom_factor(tidewatch_core::ui_zoom::render_factor(prefs.window.ui_zoom));
         let terminal_font = terminal_font::Host::start(&cc.egui_ctx, prefs.terminal.font);
-        apply_theme(&cc.egui_ctx);
-        brand::tint_visuals(&cc.egui_ctx);
+        brand::apply(
+            &cc.egui_ctx,
+            appearance::resolve(prefs.window.appearance, cc.egui_ctx.system_theme()),
+        );
         if screenshot.is_some() {
             cc.egui_ctx.all_styles_mut(|s| s.animation_time = 0.0);
         }
@@ -686,6 +687,7 @@ fn wall_ms() -> u128 {
 impl eframe::App for Tidewatch {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        appearance::sync(&ctx, self.shell.prefs().appearance);
         self.drain_events_and_jobs(&ctx);
         let now = ctx.input(|i| i.time);
         self.drive_background_work(&ctx, now);

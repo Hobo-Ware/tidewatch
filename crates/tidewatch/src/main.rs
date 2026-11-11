@@ -18,6 +18,7 @@ mod amphetamine_motion;
 mod amphetamine_pill;
 mod amphetamine_view;
 mod app;
+mod appearance;
 mod ask_model;
 mod at_files;
 mod at_files_view;

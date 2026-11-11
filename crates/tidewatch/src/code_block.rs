@@ -37,7 +37,9 @@ impl Look {
     pub(crate) fn agent() -> Self {
         Self { fill: brand::sunken() }
     }
-    pub(crate) const USER: Self = Self { fill: Color32::from_black_alpha(90) };
+    pub(crate) fn user() -> Self {
+        Self { fill: brand::user_code_fill() }
+    }
 }
 
 /// Where the parts of a drawn block landed, left in egui's memory for the headless tests.

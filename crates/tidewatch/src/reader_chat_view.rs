@@ -67,8 +67,6 @@ const AGENT_RADIUS: CornerRadius = CornerRadius { nw: 4, ne: 16, se: 16, sw: 16 
 fn user_fill() -> Color32 {
     brand::teal_nav()
 }
-pub(crate) const USER_LINE: Color32 = Color32::from_rgb(0x1f, 0x3a, 0x3a);
-const USER_CODE_FILL: Color32 = Color32::from_black_alpha(90);
 const LIST_SLACK: f32 = 32.0;
 const TEXT_SLACK: f32 = 8.0;
 const NOTE_GAP: f32 = 6.0;
@@ -81,7 +79,6 @@ const ANSWER_PAIR_GAP: f32 = 12.0;
 const ANSWER_LINE_GAP: f32 = 6.0;
 const JUMP_SHADOW: Shadow =
     Shadow { offset: [0, 3], blur: 10, spread: 0, color: Color32::from_black_alpha(140) };
-const LIVE_FILL: Color32 = Color32::from_rgb(0x12, 0x20, 0x1f);
 
 /// What a drawn turn needs besides its rows.
 pub(crate) struct Scene<'a> {
@@ -390,7 +387,7 @@ fn user_bubble(
                 ui.set_opacity(dim);
                 let bubble = Frame::new()
                     .fill(user_fill())
-                    .stroke(Stroke::new(1.0, USER_LINE))
+                    .stroke(Stroke::new(1.0, brand::user_line()))
                     .corner_radius(USER_RADIUS)
                     .inner_margin(USER_PAD)
                     .show(ui, |ui| {
@@ -437,11 +434,16 @@ fn user_bubble(
                             });
                             if has_text {
                                 chat_text(ui, |ui| {
-                                    ui.visuals_mut().code_bg_color = USER_CODE_FILL;
+                                    ui.visuals_mut().code_bg_color = brand::user_code_fill();
                                     ui.push_id(row.seq, |ui| {
                                         let ctx = ui.ctx().clone();
                                         emoji_motion::fresh_scope(&ctx, fresh, || {
-                                            reader_markdown::show(ui, &markdown, false, Look::USER);
+                                            reader_markdown::show(
+                                                ui,
+                                                &markdown,
+                                                false,
+                                                Look::user(),
+                                            );
                                         });
                                         if let Some(number) = token_view::take_clicked(&ctx)
                                             && let Some(picture) = row
@@ -570,7 +572,7 @@ fn answers_block(ui: &mut Ui, pairs: &[(String, String)], room: f32, seq: u64) {
             if index > 0 {
                 let (line, _) =
                     ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-                ui.painter().rect_filled(line, CornerRadius::ZERO, USER_LINE);
+                ui.painter().rect_filled(line, CornerRadius::ZERO, brand::user_line());
                 ui.add_space(ANSWER_PAIR_GAP);
             }
             put(ui, question, (index, 1), brand::soft());
@@ -605,7 +607,7 @@ pub(crate) fn slash_command(ui: &mut Ui, text: &str, time: Option<&str>) {
         ui.painter().rect_stroke(
             rect,
             CornerRadius::same(6),
-            Stroke::new(1.0, USER_LINE),
+            Stroke::new(1.0, brand::user_line()),
             StrokeKind::Inside,
         );
         ui.painter().galley(rect.min + vec2(9.0, 4.0), galley, brand::teal_text());
@@ -1072,7 +1074,7 @@ fn pill(ui: &mut Ui, verb: &str, command: Option<&str>, waiting: bool, max_w: f3
     let (ink, fill, line) = if waiting {
         (brand::orange(), brand::orange().gamma_multiply(0.08), brand::orange().gamma_multiply(0.4))
     } else {
-        (brand::teal_text(), LIVE_FILL, USER_LINE)
+        (brand::teal_text(), brand::live_fill(), brand::user_line())
     };
     let verb_galley = ui.painter().layout_no_wrap(verb.to_owned(), body(TEXT_TAG), ink);
     let lead = 12.0 + 8.0 + 8.0;
