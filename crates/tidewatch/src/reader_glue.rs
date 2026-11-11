@@ -468,7 +468,7 @@ pub(crate) fn take_due_clicks(actions: &mut Vec<Action>) -> Vec<due_view::Action
 pub(crate) fn note(ui: &mut Ui, area: Rect, note: Note) {
     let text = note.text();
     let galley =
-        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), brand::MUTED);
+        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), brand::muted());
     let size = galley.size() + vec2(2.0 * NOTE_PAD, 0.0);
     let rect = Rect::from_min_size(
         pos2(area.right() - size.x - NOTE_PAD, area.top() + NOTE_PAD),
@@ -476,7 +476,7 @@ pub(crate) fn note(ui: &mut Ui, area: Rect, note: Note) {
     );
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
     reader_view::item_frame().inner_margin(egui::Margin::symmetric(8, 4)).show(&mut child, |ui| {
-        ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
+        ui.label(RichText::new(text).size(12.0).color(brand::muted()));
     });
 }
 
@@ -487,7 +487,7 @@ const BACK_TO_READER: &str = "Back to Reader";
 pub(crate) fn opened_note(ui: &mut Ui, area: Rect, command: &str) -> bool {
     let text = format!("/{command} opened in the terminal");
     let galley =
-        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), brand::MUTED);
+        ui.painter().layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), brand::muted());
     let button = button_width(ui, BACK_TO_READER, Size::Compact);
     let width = galley.size().x + ui.spacing().item_spacing.x + button + 2.0 * NOTE_MARGIN_X;
     let rect = Rect::from_min_size(
@@ -500,7 +500,7 @@ pub(crate) fn opened_note(ui: &mut Ui, area: Rect, command: &str) -> bool {
         .inner_margin(egui::Margin::symmetric(NOTE_MARGIN_X as i8, NOTE_MARGIN_Y as i8))
         .show(&mut child, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
+                ui.label(RichText::new(text).size(12.0).color(brand::muted()));
                 back = quiet_button(ui, BACK_TO_READER, true, Size::Compact).clicked();
             });
         });

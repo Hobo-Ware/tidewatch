@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use egui::{Id, Margin, Ui};
 use tidewatch_core::guards::{GuardPrefs, Rule, parse_private_repos};
 
+use crate::brand;
 use crate::screen_kit::Size;
 use crate::settings_ui::{self, Control, note, row, section, switch_row, text_area};
 
@@ -103,7 +104,7 @@ fn names_field(ui: &mut Ui, saved: &[String]) -> Option<Vec<String>> {
         ui,
         |ui| {
             text_area(ui, &mut draft, "acme/vault", 3);
-            note(ui, "Saved when you leave the box.", settings_ui::FAINT);
+            note(ui, "Saved when you leave the box.", brand::faint());
         },
     );
     let focused = ui.ctx().text_edit_focused();

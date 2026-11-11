@@ -428,16 +428,16 @@ pub(crate) enum Action {
 /// The look of an inline item: a card on the window ground.
 pub(crate) fn item_frame() -> Frame {
     Frame::new()
-        .fill(brand::ITEM)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .fill(brand::item())
+        .stroke(Stroke::new(1.0, brand::item_line()))
         .corner_radius(CornerRadius::same(CARD_RADIUS))
 }
 
 /// Paints `rect` as an inline item; a hot one (hovered) takes the stronger line.
 pub(crate) fn paint_item(painter: &Painter, rect: Rect, hot: bool) {
-    let line = if hot { brand::FIELD_LINE } else { brand::ITEM_LINE };
+    let line = if hot { brand::field_line() } else { brand::item_line() };
     let radius = CornerRadius::same(CARD_RADIUS);
-    painter.rect_filled(rect, radius, brand::ITEM);
+    painter.rect_filled(rect, radius, brand::item());
     painter.rect_stroke(rect, radius, Stroke::new(1.0, line), StrokeKind::Inside);
 }
 
@@ -489,14 +489,14 @@ pub(crate) fn field_frame_shaped(
     prepared.content_ui.set_width(prepared.content_ui.available_width());
     let response = add(&mut prepared.content_ui);
     let focused = response.has_focus();
-    let line = if focused { brand::TEAL } else { brand::FIELD_LINE };
+    let line = if focused { brand::teal() } else { brand::field_line() };
     prepared.frame.stroke = Stroke::new(1.0, line);
     let frame = prepared.end(ui);
     if ring && focused {
         ui.painter().rect_stroke(
             frame.rect.expand(1.5),
             CornerRadius::same(radius + 1),
-            Stroke::new(3.0, brand::TEAL.gamma_multiply(0.10)),
+            Stroke::new(3.0, brand::teal().gamma_multiply(0.10)),
             StrokeKind::Middle,
         );
     }
@@ -605,7 +605,7 @@ pub(crate) fn show(
     facts: &Facts<'_>,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
-    ui.painter().rect_filled(rect, 0.0, brand::GROUND);
+    ui.painter().rect_filled(rect, 0.0, brand::ground());
     let pass = ui.ctx().cumulative_pass_nr();
     if reader_scroll::returned(state.last_pass, pass) && state.scroll.following() {
         state.stick_pending = true;
@@ -806,7 +806,7 @@ pub(crate) fn show_chat(
     state: &mut ViewState,
     facts: &ChatFacts<'_>,
 ) {
-    ui.painter().rect_filled(body, 0.0, brand::GROUND);
+    ui.painter().rect_filled(body, 0.0, brand::ground());
     let pass = ui.ctx().cumulative_pass_nr();
     if reader_scroll::returned(state.last_pass, pass) && state.scroll.following() {
         state.stick_pending = true;
@@ -867,7 +867,7 @@ fn transcript(
             Align2::CENTER_CENTER,
             "Waiting for the agent's first message...",
             FontId::proportional(14.0),
-            brand::MUTED,
+            brand::muted(),
         );
         return;
     }
@@ -951,7 +951,7 @@ fn transcript(
                 let text = format!("{} earlier entries are not shown", rows.dropped());
                 ui.horizontal(|ui| {
                     ui.add_space(INSET);
-                    ui.label(RichText::new(text).size(12.0).color(brand::MUTED));
+                    ui.label(RichText::new(text).size(12.0).color(brand::muted()));
                 });
             }
             let clip = ui.clip_rect();
@@ -1267,13 +1267,13 @@ fn draw_row(
         Kind::CommandOutput => reader_chat_view::command_output(ui, &row.text),
         Kind::Notice => {
             Frame::new()
-                .fill(brand::RED_FILL)
-                .stroke(Stroke::new(1.0, brand::RED_LINE))
+                .fill(brand::red_fill())
+                .stroke(Stroke::new(1.0, brand::red_line()))
                 .corner_radius(CornerRadius::same(CARD_RADIUS))
                 .inner_margin(Margin::symmetric(12, 8))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(&row.text).color(brand::RED));
+                    ui.label(RichText::new(&row.text).color(brand::red()));
                 });
         }
     }
@@ -1308,18 +1308,18 @@ fn draw_compaction(ui: &mut Ui, time: Option<&str>) {
         Some(time) => format!("Earlier messages summarised to free up room \u{b7} {time}"),
         None => "Earlier messages summarised to free up room".to_owned(),
     };
-    let galley = painter.layout_no_wrap(text, body(12.0), brand::MUTED);
+    let galley = painter.layout_no_wrap(text, body(12.0), brand::muted());
     let width = 13.0 + 8.0 + galley.size().x;
     let left = rect.center().x - width / 2.0;
     let mid = rect.center().y;
-    let line = Stroke::new(1.0, brand::ITEM_LINE);
+    let line = Stroke::new(1.0, brand::item_line());
     painter.hline(rect.left()..=(left - 14.0).max(rect.left()), mid, line);
     painter.hline((left + width + 14.0).min(rect.right())..=rect.right(), mid, line);
-    let icon = Stroke::new(1.3, brand::MUTED);
+    let icon = Stroke::new(1.3, brand::muted());
     for (y, from, to) in [(-4.5, 0.0, 13.0), (0.0, 2.0, 11.0), (4.5, 4.0, 9.0)] {
         painter.line_segment([pos2(left + from, mid + y), pos2(left + to, mid + y)], icon);
     }
-    painter.galley(pos2(left + 21.0, mid - galley.size().y / 2.0), galley, brand::MUTED);
+    painter.galley(pos2(left + 21.0, mid - galley.size().y / 2.0), galley, brand::muted());
     ui.add_space(10.0);
 }
 
@@ -1399,7 +1399,7 @@ fn prompt_strip(
     }
     let card = strip.shrink2(vec2(INSET, 4.0));
     paint_item(ui.painter(), card, false);
-    paint_bar(ui.painter(), card, brand::ORANGE);
+    paint_bar(ui.painter(), card, brand::orange());
     let mut buttons = ui.new_child(
         UiBuilder::new()
             .max_rect(card.shrink2(vec2(12.0, 0.0)))
@@ -1429,10 +1429,10 @@ fn prompt_strip(
         ui.painter(),
         prompt_text(prompt, !answers.is_empty()),
         body(13.0),
-        brand::TEXT,
+        brand::text(),
         buttons.min_rect().left() - 12.0 - left,
     );
-    ui.painter().galley(pos2(left, card.center().y - galley.size().y / 2.0), galley, brand::TEXT);
+    ui.painter().galley(pos2(left, card.center().y - galley.size().y / 2.0), galley, brand::text());
     actions
 }
 
@@ -1600,7 +1600,7 @@ mod tests {
         };
         Painted {
             boxed: rect_of(&|shape| match shape {
-                egui::Shape::Rect(r) if r.fill == brand::CARD => Some(r.rect),
+                egui::Shape::Rect(r) if r.fill == brand::card() => Some(r.rect),
                 _ => None,
             }),
             text: text_rect(text),
@@ -1805,7 +1805,7 @@ mod tests {
         let (_, painted) = ghost_frame(&ctx, vec![], &mut text, &mut focus, Some(GHOST));
         assert_eq!(
             painted.iter().find(|(shown, _)| shown == GHOST).map(|(_, ink)| *ink),
-            Some(brand::MUTED)
+            Some(brand::muted())
         );
         let (_, none) = ghost_frame(&ctx, vec![], &mut text, &mut focus, None);
         assert_eq!(none.iter().filter(|(shown, _)| shown == GHOST).count(), 0);
@@ -3631,7 +3631,7 @@ mod tests {
             .iter()
             .filter_map(|clipped| match &clipped.shape {
                 egui::Shape::Rect(rect)
-                    if rect.fill == brand::CARD
+                    if rect.fill == brand::card()
                         && (rect.rect.width() - (column.width() - 2.0 * INSET)).abs() < 4.0 =>
                 {
                     Some(rect.rect)
@@ -3834,7 +3834,7 @@ mod tests {
                 .map(|(g, pos, _)| g.rect.translate(pos.to_vec2()));
             let boxed = out.shapes.iter().find_map(|c| match &c.shape {
                 egui::Shape::Rect(rect)
-                    if rect.fill == brand::CARD && rect.rect.width() > 700.0 =>
+                    if rect.fill == brand::card() && rect.rect.width() > 700.0 =>
                 {
                     Some(rect.rect)
                 }
@@ -4183,7 +4183,7 @@ mod tests {
             .iter()
             .filter_map(|shape| match shape {
                 egui::Shape::Rect(rect)
-                    if rect.fill == brand::SUNKEN
+                    if rect.fill == brand::sunken()
                         && rect.rect.height() == crate::screen_kit::Size::Tag.height() =>
                 {
                     Some(rect.rect)

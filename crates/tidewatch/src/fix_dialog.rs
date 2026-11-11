@@ -32,7 +32,7 @@ pub(crate) fn show(ctx: &egui::Context) -> Option<Answer> {
 fn body(ui: &mut egui::Ui) -> Option<Answer> {
     let mut answer = None;
     ui.spacing_mut().item_spacing.y = 8.0;
-    ui.label(RichText::new(MESSAGE).color(brand::MUTED));
+    ui.label(RichText::new(MESSAGE).color(brand::muted()));
     ui.add_space(6.0);
     footer_row(ui, &[("Esc", "cancels")], |ui| {
         if primary_button(ui, QUIT_AND_FIX, true, Size::Regular).clicked() {

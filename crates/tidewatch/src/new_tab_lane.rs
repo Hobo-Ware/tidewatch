@@ -140,22 +140,22 @@ fn top_row(ui: &mut Ui, rect: Rect, state: &NewTab) -> Option<String> {
             Align2::LEFT_CENTER,
             title,
             body(TEXT_TAG),
-            brand::MUTED,
+            brand::muted(),
         );
         return None;
     }
     let current = state.filter();
     let mut text = current.to_owned();
     let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
-    field_frame_on(&mut child, brand::SEGMENT, false, |ui| {
+    field_frame_on(&mut child, brand::segment(), false, |ui| {
         ui.add(
             TextEdit::singleline(&mut text)
                 .id(Id::new("new-tab-filter"))
                 .frame(egui::Frame::NONE)
                 .margin(egui::Margin::ZERO)
                 .font(body(TEXT_SECONDARY))
-                .text_color(brand::TEXT)
-                .hint_text(RichText::new("Filter").color(brand::FAINT))
+                .text_color(brand::text())
+                .hint_text(RichText::new("Filter").color(brand::faint()))
                 .desired_width(ui.available_width()),
         )
     });
@@ -172,8 +172,8 @@ fn paint_row(ui: &mut Ui, rect: Rect, row: &Row, selected: bool) -> bool {
         detail: &row.subtitle,
         key: key.as_deref(),
         detail_share: DETAIL_LESS,
-        name_ink: selected_ink(selected, brand::TEXT),
-        detail_ink: brand::MUTED,
+        name_ink: selected_ink(selected, brand::text()),
+        detail_ink: brand::muted(),
         reserve: 0.0,
     };
     paint_face_line(ui.painter(), rect, &line);
@@ -181,7 +181,7 @@ fn paint_row(ui: &mut Ui, rect: Rect, row: &Row, selected: bool) -> bool {
         ui.painter().rect_filled(
             rect,
             CornerRadius::same(ROW_RADIUS),
-            brand::GROUND.gamma_multiply(1.0 - NOT_INSTALLED),
+            brand::ground().gamma_multiply(1.0 - NOT_INSTALLED),
         );
     }
     response.on_hover_text(&row.subtitle).clicked()
@@ -199,7 +199,7 @@ pub(crate) fn show(
     let mut out = Out { picked: None, filter: top_row(ui, top, state), selected: None };
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
     if entries.is_empty() {
-        child.label(RichText::new(empty_text).size(13.0).color(brand::MUTED));
+        child.label(RichText::new(empty_text).size(13.0).color(brand::muted()));
         return out;
     }
     let (placed, total) = layout::lane_slots(&slots(entries));
@@ -221,7 +221,7 @@ pub(crate) fn show(
                             Align2::LEFT_BOTTOM,
                             label.to_uppercase(),
                             body(TEXT_TAG),
-                            brand::FAINT,
+                            brand::faint(),
                         );
                     }
                     Entry::Row(row) => {
@@ -239,7 +239,7 @@ pub(crate) fn show(
                 }
             }
         });
-    fade_edges(&child, &scroll, brand::GROUND);
+    fade_edges(&child, &scroll, brand::ground());
     out
 }
 

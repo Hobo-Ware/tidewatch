@@ -146,8 +146,8 @@ fn command_label() -> &'static str {
 
 fn card_frame(top: i8, bottom: i8) -> Frame {
     Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::FIELD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::field_line()))
         .corner_radius(CornerRadius::same(CARD_RADIUS))
         .inner_margin(Margin { left: CARD_PAD_X, right: CARD_PAD_X, top, bottom })
 }
@@ -157,7 +157,7 @@ fn paint_dot(painter: &Painter, at: Pos2, color: Color32) {
 }
 
 fn paint_key_badge(painter: &Painter, right_top: Pos2, text: &str) {
-    let galley = painter.layout_no_wrap(text.to_owned(), mono(12.0), brand::FAINT);
+    let galley = painter.layout_no_wrap(text.to_owned(), mono(12.0), brand::faint());
     let rect = Rect::from_min_size(
         pos2(right_top.x - galley.size().x - 12.0, right_top.y),
         galley.size() + vec2(12.0, 2.0),
@@ -165,10 +165,10 @@ fn paint_key_badge(painter: &Painter, right_top: Pos2, text: &str) {
     painter.rect_stroke(
         rect,
         CornerRadius::same(5),
-        Stroke::new(1.0, brand::ITEM_LINE),
+        Stroke::new(1.0, brand::item_line()),
         StrokeKind::Inside,
     );
-    painter.galley(rect.min + vec2(6.0, 1.0), galley, brand::FAINT);
+    painter.galley(rect.min + vec2(6.0, 1.0), galley, brand::faint());
 }
 
 fn paint_tick(painter: &Painter, center: Pos2, ink: Color32) {
@@ -233,22 +233,22 @@ struct OptionLayout {
 fn layout_option(painter: &Painter, option: &QuestionOption, text_w: f32) -> OptionLayout {
     let recommended = option
         .recommended()
-        .then(|| painter.layout_no_wrap("Recommended".to_owned(), body(12.0), brand::TEAL_TEXT));
+        .then(|| painter.layout_no_wrap("Recommended".to_owned(), body(12.0), brand::teal_text()));
     let label_room = text_w - recommended.as_ref().map_or(0.0, |tag| tag.size().x + 6.0);
     let label = painter.layout(
         option.shown().to_owned(),
         body(TEXT_BODY),
-        brand::TEXT,
+        brand::text(),
         label_room.max(40.0),
     );
     let description = option
         .description
         .as_ref()
-        .map(|text| painter.layout(text.clone(), body(13.0), brand::MUTED, text_w));
+        .map(|text| painter.layout(text.clone(), body(13.0), brand::muted(), text_w));
     let tradeoff = option
         .tradeoff
         .as_ref()
-        .map(|text| painter.layout(text.clone(), body(TEXT_SECONDARY), brand::MUTED, text_w));
+        .map(|text| painter.layout(text.clone(), body(TEXT_SECONDARY), brand::muted(), text_w));
     let height = ROW_PAD_Y * 2.0
         + label.size().y.max(20.0)
         + description.as_ref().map_or(0.0, |text| 3.0 + text.size().y)
@@ -258,20 +258,20 @@ fn layout_option(painter: &Painter, option: &QuestionOption, text_w: f32) -> Opt
 }
 
 fn paint_mark(painter: &Painter, at: Pos2, mark: Mark, selected: bool) {
-    let line = if selected { brand::TEAL } else { ROW_INK };
+    let line = if selected { brand::teal() } else { ROW_INK };
     match mark {
         Mark::Radio => {
             painter.circle_stroke(at, 7.75, Stroke::new(1.5, line));
             if selected {
-                painter.circle_filled(at, 4.0, brand::TEAL);
+                painter.circle_filled(at, 4.0, brand::teal());
             }
         }
         Mark::Check => {
             let rect = Rect::from_center_size(at, vec2(15.0, 15.0));
             let radius = CornerRadius::same(4);
             if selected {
-                painter.rect_filled(rect, radius, brand::TEAL);
-                let ink = Stroke::new(1.8, brand::GROUND);
+                painter.rect_filled(rect, radius, brand::teal());
+                let ink = Stroke::new(1.8, brand::ground());
                 painter.line_segment([at + vec2(-3.6, 0.2), at + vec2(-1.0, 2.9)], ink);
                 painter.line_segment([at + vec2(-1.0, 2.9), at + vec2(3.8, -2.8)], ink);
             } else {
@@ -283,9 +283,9 @@ fn paint_mark(painter: &Painter, at: Pos2, mark: Mark, selected: bool) {
 
 fn paint_row_box(painter: &Painter, rect: Rect, selected: bool, cursor: bool) {
     let line = match (selected, cursor) {
-        (true, _) => brand::TEAL,
-        (false, true) => brand::SOFT.gamma_multiply(0.5),
-        (false, false) => brand::ITEM_LINE,
+        (true, _) => brand::teal(),
+        (false, true) => brand::soft().gamma_multiply(0.5),
+        (false, false) => brand::item_line(),
     };
     painter.rect_stroke(
         rect,
@@ -315,21 +315,21 @@ fn paint_option(
     let top = rect.top() + ROW_PAD_Y + 1.0;
     paint_mark(painter, pos2(rect.left() + ROW_PAD_X + 8.0, top + 10.0), mark, pick.selected);
     let text_x = rect.left() + ROW_PAD_X + MARK_W;
-    painter.galley(pos2(text_x, top), layout.label.clone(), brand::TEXT);
+    painter.galley(pos2(text_x, top), layout.label.clone(), brand::text());
     if let Some(tag) = &layout.recommended {
         let at = pos2(
             text_x + layout.label.size().x + 6.0,
             top + (layout.label.size().y - tag.size().y) / 2.0 + 1.0,
         );
-        painter.galley(at, tag.clone(), brand::TEAL_TEXT);
+        painter.galley(at, tag.clone(), brand::teal_text());
     }
     let mut below = top + layout.label.size().y.max(20.0);
     if let Some(text) = &layout.description {
-        painter.galley(pos2(text_x, below + 3.0), text.clone(), brand::MUTED);
+        painter.galley(pos2(text_x, below + 3.0), text.clone(), brand::muted());
         below += 3.0 + text.size().y;
     }
     if let Some(text) = &layout.tradeoff {
-        painter.galley(pos2(text_x, below + 3.0), text.clone(), brand::MUTED);
+        painter.galley(pos2(text_x, below + 3.0), text.clone(), brand::muted());
     }
     if pick.number <= MAX_KEYED {
         paint_key_badge(painter, pos2(rect.right() - ROW_PAD_X, top), &pick.number.to_string());
@@ -390,13 +390,13 @@ fn draw_single(ui: &mut Ui, live: &mut Live, id: Id, cap: f32) -> Drawn {
                 let label = ui.painter().layout_no_wrap(
                     "Something else".to_owned(),
                     body(14.0),
-                    if on { brand::TEXT } else { brand::MUTED },
+                    if on { brand::text() } else { brand::muted() },
                 );
                 let text_x = rect.left() + ROW_PAD_X;
                 ui.painter().galley(
                     pos2(text_x, mid - label.size().y / 2.0),
                     label.clone(),
-                    brand::MUTED,
+                    brand::muted(),
                 );
                 if index < MAX_KEYED {
                     paint_key_badge(
@@ -448,7 +448,7 @@ fn paint_other_box(painter: &Painter, rect: Rect, on: bool, hot: bool) {
         paint_row_box(painter, rect, true, false);
         return;
     }
-    let line = if hot { brand::SOFT.gamma_multiply(0.5) } else { brand::FIELD_LINE };
+    let line = if hot { brand::soft().gamma_multiply(0.5) } else { brand::field_line() };
     painter.extend(Shape::dashed_line(
         &rounded_path(rect.shrink(0.5), f32::from(ROW_RADIUS)),
         Stroke::new(1.0, line),
@@ -460,9 +460,9 @@ fn paint_other_box(painter: &Painter, rect: Rect, on: bool, hot: bool) {
 fn paint_other_preview(ui: &Ui, live: &mut Live, rect: Rect, from: f32, mid: f32) {
     let typed = live.card.typed_mut().trim().lines().next().unwrap_or_default().to_owned();
     let (text, ink) = if typed.is_empty() {
-        ("Type your own answer".to_owned(), brand::FAINT)
+        ("Type your own answer".to_owned(), brand::faint())
     } else {
-        (crate::tokens::plain(&typed), brand::MUTED)
+        (crate::tokens::plain(&typed), brand::muted())
     };
     let room = rect.right() - ROW_PAD_X - NUMBER_W - from;
     let galley = ellipsized(ui.painter(), &text, body(14.0), ink, room);
@@ -556,7 +556,7 @@ fn headlines(question: &Question, why: Option<&str>) -> (String, Option<String>)
 fn card_header(ui: &mut Ui, label: &str, ink: Color32) -> (Rect, f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
     let painter = ui.painter();
-    paint_dot(painter, pos2(rect.left() + DOT / 2.0, rect.center().y), brand::ORANGE);
+    paint_dot(painter, pos2(rect.left() + DOT / 2.0, rect.center().y), brand::orange());
     let galley = painter.layout_no_wrap(label.to_owned(), body(12.0), ink);
     let left = rect.left() + DOT + 8.0;
     painter.galley(pos2(left, rect.center().y - galley.size().y / 2.0), galley.clone(), ink);
@@ -568,7 +568,7 @@ fn header_row(ui: &mut Ui, live: &Live, profile: &str) {
         Some(topic) => format!("{profile} asks \u{b7} {topic}"),
         None => format!("{profile} asks"),
     };
-    let (rect, _) = card_header(ui, &text, brand::MUTED);
+    let (rect, _) = card_header(ui, &text, brand::muted());
     let painter = ui.painter();
     let count = live.card.count();
     let multi = live.card.question().select == Select::Multi;
@@ -580,15 +580,19 @@ fn header_row(ui: &mut Ui, live: &Live, profile: &str) {
     };
     let mut right = rect.right() - FOLD_W - 10.0;
     if !text.is_empty() {
-        let galley = painter.layout_no_wrap(text, body(12.0), brand::FAINT);
+        let galley = painter.layout_no_wrap(text, body(12.0), brand::faint());
         right -= galley.size().x;
-        painter.galley(pos2(right, rect.center().y - galley.size().y / 2.0), galley, brand::FAINT);
+        painter.galley(
+            pos2(right, rect.center().y - galley.size().y / 2.0),
+            galley,
+            brand::faint(),
+        );
         right -= 10.0;
     }
     if count > 1 {
         for index in (0..count).rev() {
             right -= 18.0;
-            let color = if index <= live.card.step() { brand::TEAL } else { brand::ITEM_LINE };
+            let color = if index <= live.card.step() { brand::teal() } else { brand::item_line() };
             painter.rect_filled(
                 Rect::from_min_size(pos2(right, rect.center().y - 2.0), vec2(18.0, 4.0)),
                 CornerRadius::same(4),
@@ -601,8 +605,8 @@ fn header_row(ui: &mut Ui, live: &Live, profile: &str) {
 
 fn hint_job(live: &Live) -> LayoutJob {
     let card = &live.card;
-    let keys = TextFormat::simple(mono(12.0), brand::SOFT);
-    let words = TextFormat::simple(body(12.0), brand::FAINT);
+    let keys = TextFormat::simple(mono(12.0), brand::soft());
+    let words = TextFormat::simple(body(12.0), brand::faint());
     let mut job = LayoutJob::default();
     let pick = match card.question().select {
         Select::Single => format!("1-{}", card.rows().len().min(MAX_KEYED)),
@@ -672,7 +676,7 @@ fn footer(ui: &mut Ui, live: &mut Live, profile: &str) -> Effect {
         if spare >= 0.0 {
             ui.add_space(spare);
             let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
-            ui.painter().galley(rect.min, galley, brand::FAINT);
+            ui.painter().galley(rect.min, galley, brand::faint());
         }
     });
     effect
@@ -718,11 +722,13 @@ pub(crate) fn live_card(
         ui.add_space(BLOCK_GAP);
         let (headline, detail) = headlines(live.card.question(), live.why.as_deref());
         ui.label(
-            egui::RichText::new(headline).font(crate::screen_kit::heading(16.0)).color(brand::TEXT),
+            egui::RichText::new(headline)
+                .font(crate::screen_kit::heading(16.0))
+                .color(brand::text()),
         );
         if let Some(detail) = detail {
             ui.add_space(2.0);
-            ui.label(egui::RichText::new(detail).font(body(13.0)).color(brand::MUTED));
+            ui.label(egui::RichText::new(detail).font(body(13.0)).color(brand::muted()));
         }
         if !live.read.is_empty() {
             ui.add_space(8.0);
@@ -825,7 +831,7 @@ fn fold_button(ui: &mut Ui, at: Rect) -> Response {
     let mut child = ui.new_child(UiBuilder::new().max_rect(at));
     let response = icon_button(&mut child, "", "Fold", Size::Compact);
     let center = response.rect.center();
-    let stroke = Stroke::new(1.5, brand::SOFT);
+    let stroke = Stroke::new(1.5, brand::soft());
     let painter = ui.painter();
     painter.line_segment([center + vec2(-4.0, 1.5), center + vec2(0.0, -2.5)], stroke);
     painter.line_segment([center + vec2(0.0, -2.5), center + vec2(4.0, 1.5)], stroke);
@@ -862,27 +868,27 @@ fn folded_line(ui: &mut Ui, dock: Rect, live: &mut Live, profile: &str, reply_em
     painter.rect(
         region,
         radius,
-        brand::ITEM,
-        Stroke::new(1.0, brand::ITEM_LINE),
+        brand::item(),
+        Stroke::new(1.0, brand::item_line()),
         StrokeKind::Inside,
     );
     let bar = Rect::from_min_size(region.min, vec2(FOLDED_BAR, region.height()));
-    painter.with_clip_rect(bar).rect_filled(region, radius, brand::ORANGE);
+    painter.with_clip_rect(bar).rect_filled(region, radius, brand::orange());
     let mid = region.center().y;
     paint_dot(
         &painter,
         pos2(region.left() + FOLDED_BAR + FOLDED_PAD + DOT / 2.0, mid),
-        brand::ORANGE,
+        brand::orange(),
     );
     let text_left = region.left() + FOLDED_BAR + FOLDED_PAD + DOT + 8.0;
     let button_w = Size::Compact.pad() * 2.0
         + painter
-            .layout_no_wrap("Answer".to_owned(), body(Size::Compact.font()), brand::TEXT)
+            .layout_no_wrap("Answer".to_owned(), body(Size::Compact.font()), brand::text())
             .size()
             .x;
     let button_left = region.right() - FOLDED_GAP - button_w;
     let meta = options_text(live.card.question().options.len());
-    let meta_galley = painter.layout_no_wrap(meta, body(TEXT_TAG), brand::MUTED);
+    let meta_galley = painter.layout_no_wrap(meta, body(TEXT_TAG), brand::muted());
     let meta_left = button_left - FOLDED_GAP - meta_galley.size().x;
     let shows_meta = meta_left - FOLDED_GAP - text_left >= FOLDED_MIN_TEXT;
     let text_right = if shows_meta { meta_left } else { button_left } - FOLDED_GAP;
@@ -890,17 +896,17 @@ fn folded_line(ui: &mut Ui, dock: Rect, live: &mut Live, profile: &str, reply_em
     job.append(
         &format!("{profile} asks:"),
         0.0,
-        TextFormat::simple(heading(TEXT_BODY), brand::TEXT),
+        TextFormat::simple(heading(TEXT_BODY), brand::text()),
     );
-    job.append(&format!(" {headline}"), 0.0, TextFormat::simple(body(TEXT_BODY), brand::TEXT));
+    job.append(&format!(" {headline}"), 0.0, TextFormat::simple(body(TEXT_BODY), brand::text()));
     job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_left).max(1.0));
     let galley = painter.layout_job(job);
-    painter.galley(pos2(text_left, mid - galley.size().y / 2.0), galley, brand::TEXT);
+    painter.galley(pos2(text_left, mid - galley.size().y / 2.0), galley, brand::text());
     if shows_meta {
         painter.galley(
             pos2(meta_left, mid - meta_galley.size().y / 2.0),
             meta_galley,
-            brand::MUTED,
+            brand::muted(),
         );
     }
     let button_at = Rect::from_min_size(
@@ -941,13 +947,13 @@ fn answer_row(ui: &mut Ui, answer: Option<&str>, note: &str, label: &str) {
     let width = ui.available_width();
     let painter = ui.painter().clone();
     let label_galley = (!label.is_empty())
-        .then(|| painter.layout_no_wrap(label.to_owned(), body(12.0), brand::FAINT));
+        .then(|| painter.layout_no_wrap(label.to_owned(), body(12.0), brand::faint()));
     let lead = if answer.is_some() { 26.0 } else { 0.0 };
     let side = f32::from(ANSWER_ROW_PAD_X) * 2.0 + 2.0;
     let label_w = label_galley.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
     let (text, ink, font) = match answer {
-        Some(answer) => (answer, brand::TEXT, heading(TEXT_TITLE)),
-        None => (note, brand::FAINT, body(14.0)),
+        Some(answer) => (answer, brand::text(), heading(TEXT_TITLE)),
+        None => (note, brand::faint(), body(14.0)),
     };
     let galley =
         painter.layout(text.to_owned(), font, ink, (width - side - lead - label_w).max(60.0));
@@ -957,13 +963,13 @@ fn answer_row(ui: &mut Ui, answer: Option<&str>, note: &str, label: &str) {
     painter.rect(
         rect,
         CornerRadius::same(ROW_RADIUS),
-        brand::SUNKEN,
-        Stroke::new(1.0, brand::ITEM_LINE),
+        brand::sunken(),
+        Stroke::new(1.0, brand::item_line()),
         StrokeKind::Inside,
     );
     let left = rect.left() + f32::from(ANSWER_ROW_PAD_X) + 1.0;
     if answer.is_some() {
-        paint_tick(&painter, pos2(left + 8.0, rect.center().y), brand::TEAL);
+        paint_tick(&painter, pos2(left + 8.0, rect.center().y), brand::teal());
     }
     painter.galley(pos2(left + lead, rect.center().y - galley.size().y / 2.0), galley, ink);
     if let Some(galley) = label_galley {
@@ -973,7 +979,7 @@ fn answer_row(ui: &mut Ui, answer: Option<&str>, note: &str, label: &str) {
                 rect.center().y - galley.size().y / 2.0,
             ),
             galley,
-            brand::FAINT,
+            brand::faint(),
         );
     }
 }
@@ -1018,26 +1024,26 @@ pub(crate) fn summary(ui: &mut Ui, row: &QuestionRow, profile: &str, time: Optio
         let (head, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
         let painter = ui.painter();
-        paint_question_icon(painter, pos2(head.left() + 7.0, head.center().y), brand::MUTED);
-        let galley = painter.layout_no_wrap("Question".to_owned(), body(12.0), brand::MUTED);
+        paint_question_icon(painter, pos2(head.left() + 7.0, head.center().y), brand::muted());
+        let galley = painter.layout_no_wrap("Question".to_owned(), body(12.0), brand::muted());
         painter.galley(
             pos2(head.left() + 22.0, head.center().y - galley.size().y / 2.0),
             galley,
-            brand::MUTED,
+            brand::muted(),
         );
         if let Some(time) = time {
-            let galley = painter.layout_no_wrap(time.to_owned(), body(12.0), brand::FAINT);
+            let galley = painter.layout_no_wrap(time.to_owned(), body(12.0), brand::faint());
             painter.galley(
                 pos2(head.right() - galley.size().x, head.center().y - galley.size().y / 2.0),
                 galley,
-                brand::FAINT,
+                brand::faint(),
             );
         }
         for (question, answer) in &pairs {
             ui.label(
                 egui::RichText::new(question)
                     .font(body(TEXT_BODY))
-                    .color(brand::SOFT)
+                    .color(brand::soft())
                     .line_height(Some(23.0)),
             );
             answer_row(ui, answer.as_deref(), &note, label);
@@ -1067,23 +1073,23 @@ pub(crate) fn permission_card(
     child.spacing_mut().item_spacing.y = SECTION_GAP;
     card_frame(18, 20).show(&mut child, |ui| {
         ui.set_width(card.width() - 2.0 * f32::from(CARD_PAD_X) - 2.0);
-        let (head, label_right) = card_header(ui, "Needs your OK", brand::ORANGE);
+        let (head, label_right) = card_header(ui, "Needs your OK", brand::orange());
         let painter = ui.painter();
         if let Some((name, _)) = tool {
             let words = format!("\u{b7} {}", reader_turns::permission_words(ToolKind::of(name)));
-            let galley = painter.layout_no_wrap(words, body(12.0), brand::FAINT);
+            let galley = painter.layout_no_wrap(words, body(12.0), brand::faint());
             painter.galley(
                 pos2(label_right + 6.0, head.center().y - galley.size().y / 2.0),
                 galley,
-                brand::FAINT,
+                brand::faint(),
             );
         }
         if let Some(time) = time {
-            let galley = painter.layout_no_wrap(time.to_owned(), body(12.0), brand::FAINT);
+            let galley = painter.layout_no_wrap(time.to_owned(), body(12.0), brand::faint());
             painter.galley(
                 pos2(head.right() - galley.size().x, head.center().y - galley.size().y / 2.0),
                 galley,
-                brand::FAINT,
+                brand::faint(),
             );
         }
         if let Some((name, command)) = tool.filter(|(_, command)| !command.is_empty()) {
@@ -1094,26 +1100,32 @@ pub(crate) fn permission_card(
             ui.painter().rect(
                 rect,
                 CornerRadius::same(ROW_RADIUS),
-                brand::SUNKEN,
-                Stroke::new(1.0, brand::ITEM_LINE),
+                brand::sunken(),
+                Stroke::new(1.0, brand::item_line()),
                 StrokeKind::Inside,
             );
             let mut x = rect.left() + 15.0;
             if ToolKind::of(name) == ToolKind::Command {
-                let dollar = ui.painter().layout_no_wrap("$".to_owned(), mono(13.0), brand::FAINT);
+                let dollar =
+                    ui.painter().layout_no_wrap("$".to_owned(), mono(13.0), brand::faint());
                 ui.painter().galley(
                     pos2(x, rect.center().y - dollar.size().y / 2.0),
                     dollar.clone(),
-                    brand::FAINT,
+                    brand::faint(),
                 );
                 x += dollar.size().x + 10.0;
             }
-            let galley =
-                ellipsized(ui.painter(), command, mono(13.0), brand::TEXT, rect.right() - 15.0 - x);
+            let galley = ellipsized(
+                ui.painter(),
+                command,
+                mono(13.0),
+                brand::text(),
+                rect.right() - 15.0 - x,
+            );
             ui.painter().galley(
                 pos2(x, rect.center().y - galley.size().y / 2.0),
                 galley,
-                brand::TEXT,
+                brand::text(),
             );
         }
         ui.horizontal(|ui| {

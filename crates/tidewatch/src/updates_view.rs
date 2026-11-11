@@ -5,10 +5,11 @@ use egui::{Align, Layout, RichText, Ui};
 use tidewatch_core::prefs::UpdatePrefs;
 use tidewatch_core::update::Mode;
 
+use crate::brand;
 use crate::screen_kit::TEXT_BODY;
 use crate::screen_kit::TEXT_TAG;
 use crate::screen_kit::{Size, mono};
-use crate::settings_ui::{self, Control, MUTED, TEXT, Tone, button, row_with, switch_row};
+use crate::settings_ui::{self, Control, Tone, button, row_with, switch_row};
 use crate::updates::{INSTALL_HINT, NOTIFY_ONLY_HINT, Updates};
 
 const PILL_ROOM: f32 = 150.0;
@@ -57,9 +58,14 @@ fn repair_row(ui: &mut Ui, script: &str) {
         |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.label(
-                RichText::new("Fix runs this once Tidewatch has quit").size(13.0).color(MUTED),
+                RichText::new("Fix runs this once Tidewatch has quit")
+                    .size(13.0)
+                    .color(brand::muted()),
             );
-            ui.add(egui::Label::new(RichText::new(script).font(mono(TEXT_TAG)).color(TEXT)).wrap());
+            ui.add(
+                egui::Label::new(RichText::new(script).font(mono(TEXT_TAG)).color(brand::text()))
+                    .wrap(),
+            );
         },
         |_| {},
     );
@@ -73,9 +79,9 @@ fn status_row(ui: &mut Ui, updates: &mut Updates, mode: Mode) {
         Control::new(check.width + PILL_ROOM, check.height),
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new(&line).size(TEXT_BODY).color(TEXT));
+            ui.label(RichText::new(&line).size(TEXT_BODY).color(brand::text()));
             if mode == Mode::NotifyOnly {
-                ui.label(RichText::new(NOTIFY_ONLY_HINT).size(13.0).color(MUTED));
+                ui.label(RichText::new(NOTIFY_ONLY_HINT).size(13.0).color(brand::muted()));
             }
         },
         |ui| {

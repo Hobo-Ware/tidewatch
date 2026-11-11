@@ -111,17 +111,17 @@ fn repo_row(ui: &mut Ui, repo: &FolderRepo, picked: bool) -> bool {
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let painter = ui.painter_at(slot);
     if response.hovered() {
-        painter.rect_filled(slot, CornerRadius::same(6), brand::ITEM);
+        painter.rect_filled(slot, CornerRadius::same(6), brand::item());
     }
     let branch = repo.branch.as_deref().unwrap_or("detached HEAD");
-    let branch = painter.layout_no_wrap(short_name(branch, 28), mono(TEXT_TAG), brand::MUTED);
+    let branch = painter.layout_no_wrap(short_name(branch, 28), mono(TEXT_TAG), brand::muted());
     let branch_w = branch.size().x;
     painter.galley(
         pos2(slot.right() - ROW_PAD - branch_w, slot.center().y - branch.size().y / 2.0),
         branch,
-        brand::MUTED,
+        brand::muted(),
     );
-    let ink = if picked { brand::TEAL_TEXT } else { brand::TEXT };
+    let ink = if picked { brand::teal_text() } else { brand::text() };
     let room = (slot.width() - ROW_PAD * 2.0 - branch_w - 12.0).max(0.0);
     let name =
         crate::reader_view::ellipsized(&painter, &repo.name, body(TEXT_SECONDARY), ink, room);
@@ -149,7 +149,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, scan: &Scan, now_ms: i64) {
         Align2::LEFT_CENTER,
         &folder_title(&scan.folder),
         mono(TEXT_SECONDARY),
-        brand::TEXT,
+        brand::text(),
     );
     selectable::text(
         ui,
@@ -157,10 +157,10 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, scan: &Scan, now_ms: i64) {
         Align2::LEFT_CENTER,
         NO_REPO,
         body(TEXT_SECONDARY),
-        brand::MUTED,
+        brand::muted(),
     );
     let list = Rect::from_min_max(pos2(rect.left(), rect.top() + INTRO_H), rect.max);
-    ui.painter().hline(list.x_range(), list.top(), egui::Stroke::new(1.0, brand::CARD_LINE));
+    ui.painter().hline(list.x_range(), list.top(), egui::Stroke::new(1.0, brand::card_line()));
     let (header, body_area) = {
         let head = Rect::from_min_size(list.min, vec2(list.width(), ROW_H));
         (head, Rect::from_min_max(pos2(list.left(), head.bottom()), list.max))
@@ -173,7 +173,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, scan: &Scan, now_ms: i64) {
             Align2::CENTER_CENTER,
             NOTHING_RECENT,
             body(TEXT_SECONDARY),
-            brand::FAINT,
+            brand::faint(),
         );
         return;
     }
@@ -194,10 +194,18 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, scan: &Scan, now_ms: i64) {
 
 fn section_row(ui: &Ui, slot: Rect, count: usize) {
     let left = slot.left() + SIDE_PAD + ROW_PAD;
-    let title =
-        ui.painter().layout_no_wrap("Changed in the last hour".to_owned(), body(12.0), brand::SOFT);
+    let title = ui.painter().layout_no_wrap(
+        "Changed in the last hour".to_owned(),
+        body(12.0),
+        brand::soft(),
+    );
     let width = title.size().x;
-    selectable::galley(ui, pos2(left, slot.center().y - title.size().y / 2.0), title, brand::SOFT);
+    selectable::galley(
+        ui,
+        pos2(left, slot.center().y - title.size().y / 2.0),
+        title,
+        brand::soft(),
+    );
     let shown = if count >= MAX_RECENT { format!("{MAX_RECENT}+") } else { count.to_string() };
     selectable::text(
         ui,
@@ -205,7 +213,7 @@ fn section_row(ui: &Ui, slot: Rect, count: usize) {
         Align2::LEFT_CENTER,
         &shown,
         mono(TEXT_TAG),
-        brand::FAINT,
+        brand::faint(),
     );
 }
 
@@ -219,14 +227,14 @@ fn file_row(ui: &mut Ui, path: &str, age_secs: i64) {
         Align2::RIGHT_CENTER,
         age_text(age_secs),
         mono(12.0),
-        brand::FAINT,
+        brand::faint(),
     );
     changes_view::paint_name(
         ui,
         &painter,
         path,
         (rect.left() + ROW_PAD, right - AGE_W - 8.0),
-        (rect.center().y, brand::TEXT),
+        (rect.center().y, brand::text()),
     );
 }
 

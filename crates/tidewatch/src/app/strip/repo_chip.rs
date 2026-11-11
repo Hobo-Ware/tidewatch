@@ -51,7 +51,7 @@ pub(super) fn width_for<'a>(ui: &egui::Ui, labels: impl Iterator<Item = &'a str>
                 .layout_no_wrap(
                     label.to_owned(),
                     crate::screen_kit::heading(LABEL_SIZE),
-                    brand::TEXT,
+                    brand::text(),
                 )
                 .size()
                 .x
@@ -74,8 +74,8 @@ pub(super) fn show(ui: &mut egui::Ui, label: &str, width: f32) -> Response {
         let tint = Rect::from_min_max(rect.min, pos2(chevron.right() + PAD, rect.max.y));
         painter.rect_filled(tint, CornerRadius::same(RADIUS), colors::hover());
     }
-    painter.galley(pos2(text_left, rect.center().y - galley.size().y / 2.0), galley, brand::TEXT);
-    stroke_path(painter, &CHEVRON_POINTS, chevron, 24.0, Stroke::new(1.5, brand::MUTED));
+    painter.galley(pos2(text_left, rect.center().y - galley.size().y / 2.0), galley, brand::text());
+    stroke_path(painter, &CHEVRON_POINTS, chevron, 24.0, Stroke::new(1.5, brand::muted()));
     resp
 }
 
@@ -124,8 +124,8 @@ pub(super) fn dev_open() -> bool {
 
 fn menu_frame() -> egui::Frame {
     egui::Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(12)
         .shadow(egui::epaint::Shadow {
             offset: [0, 8],
@@ -203,16 +203,22 @@ fn paint_repo(painter: &Painter, rect: Rect, entry: &Entry, here: bool) -> Optio
     painter.rect_filled(swatch, CornerRadius::same(6), repo_ink(&entry.label));
     let letter =
         entry.label.chars().next().map_or_else(String::new, |c| c.to_uppercase().to_string());
-    painter.text(swatch.center(), Align2::CENTER_CENTER, letter, heading(TEXT_TAG), brand::GROUND);
+    painter.text(
+        swatch.center(),
+        Align2::CENTER_CENTER,
+        letter,
+        heading(TEXT_TAG),
+        brand::ground(),
+    );
     let check = Rect::from_center_size(
         pos2(rect.right() - MENU_ROW_PAD - CHECK_W / 2.0, mid),
         vec2(CHECK_W, CHECK_W),
     );
     let mut right = check.left() - ROW_GAP;
     let detail_ink = match (here, entry.tabs) {
-        (true, _) => brand::SOFT,
-        (false, 0) => brand::FAINT,
-        (false, _) => brand::MUTED,
+        (true, _) => brand::soft(),
+        (false, 0) => brand::faint(),
+        (false, _) => brand::muted(),
     };
     let detail = painter.layout_no_wrap(entry.detail.clone(), body(TEXT_SECONDARY), detail_ink);
     painter.galley(
@@ -223,16 +229,16 @@ fn paint_repo(painter: &Painter, rect: Rect, entry: &Entry, here: bool) -> Optio
     right -= detail.size().x;
     if entry.needs {
         right -= ROW_GAP;
-        painter.circle_filled(pos2(right - NEEDS_DOT / 2.0, mid), NEEDS_DOT / 2.0, brand::AMBER);
+        painter.circle_filled(pos2(right - NEEDS_DOT / 2.0, mid), NEEDS_DOT / 2.0, brand::amber());
         right -= NEEDS_DOT;
     }
     let left = swatch.right() + ROW_GAP;
     let font = if here { heading(TEXT_BODY) } else { body(TEXT_BODY) };
-    let ink = selected_ink(here, brand::TEXT);
+    let ink = selected_ink(here, brand::text());
     let name = ellipsized(painter, &entry.label, font, ink, right - ROW_GAP - left);
     painter.galley(pos2(left, mid - name.size().y / 2.0), name, ink);
     here.then(|| {
-        let ink = Stroke::new(2.0, brand::TEAL);
+        let ink = Stroke::new(2.0, brand::teal());
         let at = |x: f32, y: f32| check.min + vec2(x, y);
         painter.add(PathShape::line(vec![at(3.5, 8.5), at(6.5, 11.5), at(12.5, 4.5)], ink));
         check
@@ -254,24 +260,29 @@ fn paint_action(
         Align2::CENTER_CENTER,
         icon,
         egui::FontId::proportional(ACTION_ICON),
-        brand::SOFT.gamma_multiply(fade),
+        brand::soft().gamma_multiply(fade),
     );
     let mut right = rect.right() - MENU_ROW_PAD;
     if target == Pick::Open && !note.is_empty() {
         right = paint_caps(painter, right, mid, note) - ROW_GAP;
     } else if !note.is_empty() {
-        let galley = painter.layout_no_wrap(note.to_owned(), body(TEXT_TAG), brand::FAINT);
+        let galley = painter.layout_no_wrap(note.to_owned(), body(TEXT_TAG), brand::faint());
         painter.galley(
             pos2(right - galley.size().x, mid - galley.size().y / 2.0),
             galley.clone(),
-            brand::FAINT,
+            brand::faint(),
         );
         right -= galley.size().x + ROW_GAP;
     }
     let left = slot.x + SWATCH / 2.0 + ROW_GAP;
-    let text =
-        ellipsized(painter, label, body(TEXT_BODY), brand::TEXT.gamma_multiply(fade), right - left);
-    painter.galley(pos2(left, mid - text.size().y / 2.0), text, brand::TEXT);
+    let text = ellipsized(
+        painter,
+        label,
+        body(TEXT_BODY),
+        brand::text().gamma_multiply(fade),
+        right - left,
+    );
+    painter.galley(pos2(left, mid - text.size().y / 2.0), text, brand::text());
 }
 
 fn text_room(width: f32) -> f32 {
@@ -282,7 +293,7 @@ fn cut(label: &str, room: f32) -> LayoutJob {
     let mut job = LayoutJob::simple_singleline(
         label.to_owned(),
         crate::screen_kit::heading(LABEL_SIZE),
-        brand::TEXT,
+        brand::text(),
     );
     job.wrap = TextWrapping {
         max_width: room,
@@ -556,7 +567,9 @@ mod tests {
 
     fn collect_amber(shape: &egui::Shape, found: &mut Vec<Pos2>) {
         match shape {
-            egui::Shape::Circle(circle) if circle.fill == brand::AMBER => found.push(circle.center),
+            egui::Shape::Circle(circle) if circle.fill == brand::amber() => {
+                found.push(circle.center);
+            }
             egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_amber(shape, found)),
             _ => {}
         }

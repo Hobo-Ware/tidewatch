@@ -243,8 +243,8 @@ impl Tidewatch {
                 let dot = services_view::dot_color(row.word);
                 let (dot_rect, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
                 ui.painter().circle_filled(dot_rect.center(), 4.0, dot);
-                ui.label(egui::RichText::new(&row.name).font(body(14.0)).color(brand::TEXT));
-                ui.label(egui::RichText::new(&row.line).size(TEXT_SECONDARY).color(brand::MUTED));
+                ui.label(egui::RichText::new(&row.name).font(body(14.0)).color(brand::text()));
+                ui.label(egui::RichText::new(&row.line).size(TEXT_SECONDARY).color(brand::muted()));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     if services_view::is_running(row.word) {
@@ -297,7 +297,7 @@ fn paint_lines(ui: &egui::Ui, area: Rect, lines: &[String]) {
             egui::Align2::LEFT_TOP,
             "No output yet.",
             font,
-            brand::FAINT,
+            brand::faint(),
         );
         return;
     }
@@ -307,7 +307,7 @@ fn paint_lines(ui: &egui::Ui, area: Rect, lines: &[String]) {
             egui::Align2::LEFT_TOP,
             line,
             font.clone(),
-            brand::SOFT,
+            brand::soft(),
         );
     }
 }

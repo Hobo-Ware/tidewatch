@@ -48,11 +48,11 @@ impl AgentKind {
 
     pub(crate) fn ink(&self) -> Color32 {
         match self {
-            Self::Meeseeks => crate::brand::VIOLET_TEXT,
-            Self::Yolo => crate::brand::AMBER,
-            Self::Cli(id) if id == "claude" => crate::brand::TEAL_TEXT,
-            Self::Cli(id) if id == "codex" => crate::brand::BLUE_TEXT,
-            Self::Cli(_) => crate::brand::SOFT,
+            Self::Meeseeks => crate::brand::violet_text(),
+            Self::Yolo => crate::brand::amber(),
+            Self::Cli(id) if id == "claude" => crate::brand::teal_text(),
+            Self::Cli(id) if id == "codex" => crate::brand::blue_text(),
+            Self::Cli(_) => crate::brand::soft(),
         }
     }
 }
@@ -261,7 +261,7 @@ pub(crate) fn card_view(row: &Row) -> CardView {
     let mut view = card_view_of(row);
     if let Some(line) = &row.job_line {
         view.line.clone_from(line);
-        view.line_ink = crate::brand::TEAL;
+        view.line_ink = crate::brand::teal();
     }
     if let Some(agents) = crate::subagents_model::running_line(row.agents_running) {
         view.line = format!("{agents} \u{b7} {}", view.line);
@@ -273,7 +273,7 @@ fn card_view_of(row: &Row) -> CardView {
     let reported = !matches!(row.tone, Tone::Setup | Tone::Failed | Tone::Stopped | Tone::Shell);
     if let Some(look) = row.look.as_ref().filter(|_| reported) {
         let tag_ink = match look.tag {
-            CardTag::Question => crate::brand::NEEDS,
+            CardTag::Question => crate::brand::needs(),
             _ => tone_color(look.ring.tone),
         };
         let named_like_kind = |kind: StageKind| look.line.to_lowercase().starts_with(kind.word());
@@ -288,18 +288,18 @@ fn card_view_of(row: &Row) -> CardView {
             fraction: look.ring.fraction,
             ring: tone_color(look.ring.tone),
             line,
-            line_ink: crate::brand::SOFT,
+            line_ink: crate::brand::soft(),
             tag: look.tag.label(look.questions),
             tag_ink,
         };
     }
     let status_tone = row.tone;
-    let ink = color(status_tone).unwrap_or(crate::brand::MUTED);
+    let ink = color(status_tone).unwrap_or(crate::brand::muted());
     CardView {
         fraction: if status_tone == Tone::Done { 1.0 } else { 0.0 },
         ring: ink,
         line: row.detail.as_deref().map(first_line).unwrap_or_default(),
-        line_ink: crate::brand::SOFT,
+        line_ink: crate::brand::soft(),
         tag: label(status_tone).to_owned(),
         tag_ink: ink,
     }
@@ -375,7 +375,7 @@ pub(crate) fn repo_ink(name: &str) -> Color32 {
     let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
     });
-    crate::brand::REPO_INKS[(hash % crate::brand::REPO_INKS.len() as u64) as usize]
+    crate::brand::repo_inks()[(hash % crate::brand::repo_inks().len() as u64) as usize]
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -813,7 +813,7 @@ mod tests {
         let blocked = reported(5, "e", "blocked", &serde_json::json!({}), "build");
         assert_eq!(ask_button(&blocked), "Review");
         assert_eq!(card_view(&blocked).tag, "Blocked");
-        assert_eq!(card_view(&blocked).tag_ink, crate::brand::BLOCKED);
+        assert_eq!(card_view(&blocked).tag_ink, crate::brand::blocked());
     }
 
     #[test]
@@ -983,13 +983,13 @@ mod tests {
         let view = card_view(&with);
         assert_eq!(view.line, "Build \u{b7} writing the validator");
         assert_eq!((view.tag.as_str(), view.fraction), ("Working", 0.5));
-        assert_eq!(view.ring, crate::brand::WORKING);
+        assert_eq!(view.ring, crate::brand::working());
 
         let mut question = Ledger::parse("# Goal\nx\n\n## Needs you\n- Pick\n");
         question.status.state = Some(tidewatch_core::progress::State::Done);
         with.look = Some(look(&question, false));
         let view = card_view(&with);
-        assert_eq!((view.tag.as_str(), view.tag_ink), ("1 question", crate::brand::NEEDS));
+        assert_eq!((view.tag.as_str(), view.tag_ink), ("1 question", crate::brand::needs()));
 
         let mut bare = row(2, "b", AgentStatus::NeedsYou(Reason::Permission));
         bare.detail = Some("\nBash: touch hello.txt\nmore".into());
@@ -1007,10 +1007,13 @@ mod tests {
         let mut working = row(1, "a", AgentStatus::Working);
         working.detail = Some("thinking".into());
         let plain = card_view(&working);
-        assert_eq!((plain.line.as_str(), plain.line_ink), ("thinking", crate::brand::SOFT));
+        assert_eq!((plain.line.as_str(), plain.line_ink), ("thinking", crate::brand::soft()));
         working.job_line = Some("21% \u{b7} 1h 52m".into());
         let view = card_view(&working);
-        assert_eq!((view.line.as_str(), view.line_ink), ("21% \u{b7} 1h 52m", crate::brand::TEAL));
+        assert_eq!(
+            (view.line.as_str(), view.line_ink),
+            ("21% \u{b7} 1h 52m", crate::brand::teal())
+        );
         assert_eq!((view.tag, view.fraction), (plain.tag, plain.fraction));
     }
 
@@ -1026,7 +1029,7 @@ mod tests {
         let view = card_view(&working);
         assert_eq!(
             (view.line.as_str(), view.line_ink),
-            ("1 agent running \u{b7} 21%", crate::brand::TEAL)
+            ("1 agent running \u{b7} 21%", crate::brand::teal())
         );
     }
 
@@ -1105,7 +1108,7 @@ mod tests {
     fn a_repo_gets_the_same_color_every_time_and_it_comes_from_the_palette() {
         assert_eq!(repo_ink("acme-api"), repo_ink("acme-api"));
         for name in ["acme-api", "acme-web", "acme-workers", "x", ""] {
-            assert!(crate::brand::REPO_INKS.contains(&repo_ink(name)), "{name}");
+            assert!(crate::brand::repo_inks().contains(&repo_ink(name)), "{name}");
         }
         let used: std::collections::HashSet<_> =
             (0..40).map(|n| repo_ink(&format!("repo-{n}"))).collect();

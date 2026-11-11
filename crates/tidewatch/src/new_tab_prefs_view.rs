@@ -96,7 +96,7 @@ pub(crate) fn card(
         let labels = level_labels();
         let width = segmented::inline_width(ui, &labels);
         let active = prefs.permission.and_then(|level| Level::ALL.iter().position(|l| *l == level));
-        let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));
+        let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::red()));
         let clicked =
             settings_ui::row(ui, "Permission", "", Control::new(width, SEGMENT_H), |ui| {
                 placed.permission = Some(control_rect(ui, width, SEGMENT_H));
@@ -136,7 +136,7 @@ pub(crate) fn card(
         }
     });
     ui.add_space(8.0);
-    note(ui, NOTE, brand::FAINT);
+    note(ui, NOTE, brand::faint());
     ui.ctx().data_mut(|data| data.insert_temp(placed_id(), placed));
     changed
 }
@@ -175,8 +175,8 @@ fn agent_field(
     painter.rect(
         rect,
         CornerRadius::same(8),
-        brand::SEGMENT,
-        Stroke::new(1.0, if response.hovered() { brand::FAINT } else { brand::FIELD_LINE }),
+        brand::segment(),
+        Stroke::new(1.0, if response.hovered() { brand::faint() } else { brand::field_line() }),
         egui::StrokeKind::Inside,
     );
     let mut x = rect.left() + 10.0;
@@ -190,12 +190,12 @@ fn agent_field(
         (None, Some(id)) => id,
         (None, None) => LAST_USED,
     };
-    let ink = if current.is_some() { brand::TEXT } else { brand::SOFT };
+    let ink = if current.is_some() { brand::text() } else { brand::soft() };
     let room = rect.right() - 30.0 - x;
     let galley = crate::reader_view::ellipsized(&painter, label, body(14.0), ink, room);
     painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, ink);
     let chevron = pos2(rect.right() - 16.0, rect.center().y);
-    let stroke = Stroke::new(1.5, brand::MUTED);
+    let stroke = Stroke::new(1.5, brand::muted());
     painter.line_segment([chevron + vec2(-3.0, -1.5), chevron + vec2(0.0, 1.5)], stroke);
     painter.line_segment([chevron + vec2(0.0, 1.5), chevron + vec2(3.0, -1.5)], stroke);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);

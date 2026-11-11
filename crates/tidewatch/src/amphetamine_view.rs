@@ -122,7 +122,7 @@ fn label_texts(session: State, wall: f64) -> (String, String) {
 }
 
 fn text_width(ui: &Ui, text: &str) -> f32 {
-    ui.painter().layout_no_wrap(text.to_owned(), mono(LABEL_SIZE), brand::TEAL_TEXT).size().x
+    ui.painter().layout_no_wrap(text.to_owned(), mono(LABEL_SIZE), brand::teal_text()).size().x
 }
 
 fn pill_for(ui: &Ui, text: &str, marks: f32) -> f32 {
@@ -156,7 +156,7 @@ fn pips_width(count: u32) -> f32 {
 }
 
 fn away_word_width(painter: &egui::Painter) -> f32 {
-    painter.layout_no_wrap(AWAY_WORD.to_owned(), body(TEXT_TAG), brand::VIOLET_TEXT).size().x
+    painter.layout_no_wrap(AWAY_WORD.to_owned(), body(TEXT_TAG), brand::violet_text()).size().x
 }
 
 /// Draws the button where the strip's cursor is and returns what the menu asked for.
@@ -262,20 +262,20 @@ fn paint_pill(
         offset: [0, 0],
         blur: 18,
         spread: 0,
-        color: brand::TEAL.gamma_multiply(0.22 * breath * amount as f32),
+        color: brand::teal().gamma_multiply(0.22 * breath * amount as f32),
     };
     painter.add(glow.as_shape(rect, radius));
-    painter.add(gradient(rect, brand::TEAL_NAV, GRADIENT_END));
+    painter.add(gradient(rect, brand::teal_nav(), GRADIENT_END));
     painter.rect_stroke(
         rect,
         radius,
-        Stroke::new(1.0, brand::TEAL.gamma_multiply(0.5)),
+        Stroke::new(1.0, brand::teal().gamma_multiply(0.5)),
         StrokeKind::Inside,
     );
     let clip = painter.with_clip_rect(rect.shrink2(vec2(2.0, 0.0)));
     let at = pos2(rect.right() - ICON_W - LABEL_PAD_RIGHT, rect.center().y);
     let slide_in = (1.0 - fade) * 6.0;
-    let ink = brand::TEAL_TEXT;
+    let ink = brand::teal_text();
     match &memory.rolled {
         Some((old, since)) => {
             let p = bezier(STANDARD, (now - since) / ROLL_S) as f32;
@@ -311,7 +311,7 @@ fn paint_marks(painter: &egui::Painter, pill: Rect, text: &str, marks: &Marks, a
     let fade = pill::label_alpha(amount);
     let clip = painter.with_clip_rect(pill.shrink2(vec2(2.0, 0.0)));
     let label_w =
-        painter.layout_no_wrap(text.to_owned(), mono(LABEL_SIZE), brand::TEAL_TEXT).size().x;
+        painter.layout_no_wrap(text.to_owned(), mono(LABEL_SIZE), brand::teal_text()).size().x;
     let mut right = pill.right() - ICON_W - LABEL_PAD_RIGHT - label_w - MARK_GAP;
     let y = pill.center().y;
     if let Some(pips) = marks.pips {
@@ -323,10 +323,10 @@ fn paint_marks(painter: &egui::Painter, pill: Rect, text: &str, marks: &Marks, a
                 clip.rect_filled(
                     pip.expand(1.5),
                     CornerRadius::same(3),
-                    brand::TEAL.gamma_multiply(0.25 * fade),
+                    brand::teal().gamma_multiply(0.25 * fade),
                 );
             }
-            let ink = if glowing { brand::TEAL_TEXT } else { brand::ITEM_LINE };
+            let ink = if glowing { brand::teal_text() } else { brand::item_line() };
             clip.rect_filled(pip, CornerRadius::same(2), ink.gamma_multiply(fade));
         }
         right -= pips_width(pips.count) + MARK_GAP;
@@ -335,14 +335,14 @@ fn paint_marks(painter: &egui::Painter, pill: Rect, text: &str, marks: &Marks, a
         let rule = right;
         clip.line_segment(
             [pos2(rule, y - 7.0), pos2(rule, y + 7.0)],
-            Stroke::new(1.0, brand::VIOLET_LINE.gamma_multiply(fade)),
+            Stroke::new(1.0, brand::violet_line().gamma_multiply(fade)),
         );
         clip.text(
             pos2(rule - MARK_GAP, y),
             Align2::RIGHT_CENTER,
             AWAY_WORD,
             body(TEXT_TAG),
-            brand::VIOLET_TEXT.gamma_multiply(fade),
+            brand::violet_text().gamma_multiply(fade),
         );
     }
 }
@@ -363,14 +363,14 @@ fn paint_line(
         Rect::from_min_max(pos2(span.left() + inset, y - LINE_H), pos2(span.right() - inset, y));
     let radius = CornerRadius::same(1);
     let shown = if fit == Fit::Hidden { 1.0 } else { amount.clamp(0.0, 1.0) as f32 };
-    painter.rect_filled(track, radius, brand::ITEM_LINE.gamma_multiply(shown));
+    painter.rect_filled(track, radius, brand::item_line().gamma_multiply(shown));
     let fill = Rect::from_min_size(
         track.min,
         vec2(track.width() * line_fraction(left, total), track.height()),
     );
     let halo = fill.expand2(vec2(1.0, 1.5));
-    painter.rect_filled(halo, CornerRadius::same(2), brand::TEAL.gamma_multiply(0.25 * shown));
-    painter.rect_filled(fill, radius, brand::TEAL.gamma_multiply(0.95 * shown));
+    painter.rect_filled(halo, CornerRadius::same(2), brand::teal().gamma_multiply(0.25 * shown));
+    painter.rect_filled(fill, radius, brand::teal().gamma_multiply(0.95 * shown));
 }
 
 /// A left-to-right fill inside the pill's rounded outline, as one fan of triangles.
@@ -397,17 +397,17 @@ fn gradient(rect: Rect, from: Color32, to: Color32) -> egui::Shape {
 /// The crescent on the tablet's lower right while Away is on.
 fn paint_away_badge(painter: &egui::Painter, slot: Rect) {
     let center = slot.center() + vec2(11.0, 10.0);
-    painter.circle(center, 5.5, brand::VIOLET_FILL, Stroke::new(1.5, brand::GROUND));
-    amphetamine_menu::paint_moon(painter, center, 3.2, brand::VIOLET_TEXT, brand::VIOLET_FILL);
+    painter.circle(center, 5.5, brand::violet_fill(), Stroke::new(1.5, brand::ground()));
+    amphetamine_menu::paint_moon(painter, center, 3.2, brand::violet_text(), brand::violet_fill());
 }
 
 fn tooltip(ui: &mut Ui, input: &Input) {
     ui.set_max_width(270.0);
     let (title, body_text) = tip_text(input);
-    ui.label(RichText::new(title).color(brand::TEXT));
-    ui.label(RichText::new(body_text).color(brand::SOFT));
+    ui.label(RichText::new(title).color(brand::text()));
+    ui.label(RichText::new(body_text).color(brand::soft()));
     if input.away {
-        ui.label(RichText::new(away_model::TIP).color(brand::VIOLET_TEXT));
+        ui.label(RichText::new(away_model::TIP).color(brand::violet_text()));
     }
 }
 
@@ -457,8 +457,8 @@ pub(crate) fn tip_text(input: &Input) -> (&'static str, String) {
 
 fn menu_frame() -> egui::Frame {
     egui::Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(12)
         .shadow(egui::epaint::Shadow {
             offset: [0, 8],
@@ -504,23 +504,23 @@ fn menu(
 /// An amber triangle with a bar and a dot, drawn so no font has to have the glyph.
 fn paint_warning(painter: &egui::Painter, center: egui::Pos2, size: f32) {
     let unit = size / 24.0;
-    let ink = Stroke::new(1.6 * unit * 1.5, brand::AMBER);
+    let ink = Stroke::new(1.6 * unit * 1.5, brand::amber());
     let tip = center + vec2(0.0, -9.0 * unit);
     let left = center + vec2(-10.0 * unit, 8.0 * unit);
     let right = center + vec2(10.0 * unit, 8.0 * unit);
     painter.add(egui::Shape::closed_line(vec![tip, left, right], ink));
     painter.line_segment([center + vec2(0.0, -3.0 * unit), center + vec2(0.0, 2.0 * unit)], ink);
-    painter.circle_filled(center + vec2(0.0, 5.0 * unit), 1.0 * unit * 1.5, brand::AMBER);
+    painter.circle_filled(center + vec2(0.0, 5.0 * unit), 1.0 * unit * 1.5, brand::amber());
 }
 
 fn omen_ink(omen: Omen) -> Color32 {
     match omen {
-        Omen::StarsRight => brand::BLUE_TEXT,
-        Omen::Shoggoth => brand::TEAL_TEXT,
-        Omen::Hours => brand::AMBER,
-        Omen::ElderSign => brand::ORANGE,
-        Omen::Rlyeh => brand::RED,
-        Omen::Plain => brand::TEXT,
+        Omen::StarsRight => brand::blue_text(),
+        Omen::Shoggoth => brand::teal_text(),
+        Omen::Hours => brand::amber(),
+        Omen::ElderSign => brand::orange(),
+        Omen::Rlyeh => brand::red(),
+        Omen::Plain => brand::text(),
     }
 }
 
@@ -536,7 +536,7 @@ pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Omen, String)], fade: f32) 
                 painter.layout_no_wrap(omen.tag().to_owned(), tag_font.clone(), omen_ink(*omen));
             let wrap =
                 (column.width() - 2.0 * (TOAST_PAD.x + 16.0) - tag.size().x - 10.0).max(120.0);
-            let line = painter.layout(text.clone(), body(TEXT_BODY), brand::TEXT, wrap);
+            let line = painter.layout(text.clone(), body(TEXT_BODY), brand::text(), wrap);
             (*omen, tag, line)
         })
         .collect();
@@ -548,8 +548,13 @@ pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Omen, String)], fade: f32) 
     let center =
         pos2(column.center().x, column.bottom() - TOAST_BOTTOM - (size.y - 32.0).max(0.0) / 2.0);
     let rect = Rect::from_center_size(center, size);
-    painter.rect_filled(rect, 10.0, alpha(brand::ITEM));
-    painter.rect_stroke(rect, 10.0, Stroke::new(1.0, alpha(brand::ITEM_LINE)), StrokeKind::Inside);
+    painter.rect_filled(rect, 10.0, alpha(brand::item()));
+    painter.rect_stroke(
+        rect,
+        10.0,
+        Stroke::new(1.0, alpha(brand::item_line())),
+        StrokeKind::Inside,
+    );
     let mut y = rect.top() + TOAST_PAD.y;
     for (omen, tag, line) in rows {
         let tag_at =
@@ -559,7 +564,7 @@ pub(crate) fn toast(ui: &Ui, column: Rect, lines: &[(Omen, String)], fade: f32) 
         painter.galley_with_override_text_color(
             pos2(rect.left() + TOAST_PAD.x + tag_w + gap, y),
             line,
-            alpha(brand::TEXT),
+            alpha(brand::text()),
         );
         y += line_height + 3.0;
     }
@@ -577,8 +582,8 @@ pub(crate) fn notice(
         .fixed_pos(pos2(column.center().x - NOTICE_W / 2.0, column.top() + 78.0))
         .show(ctx, |ui| {
             let frame = egui::Frame::new()
-                .fill(brand::ITEM)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::item())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(12)
                 .inner_margin(Margin::same(16))
                 .shadow(egui::epaint::Shadow {
@@ -596,22 +601,24 @@ pub(crate) fn notice(
                         glyph,
                         CornerRadius::same(8),
                         Color32::from_rgb(0x14, 0x19, 0x1f),
-                        Stroke::new(1.0, brand::ITEM_LINE),
+                        Stroke::new(1.0, brand::item_line()),
                         StrokeKind::Inside,
                     );
                     paint_warning(ui.painter(), glyph.center() + vec2(0.0, 0.5), 18.0);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 6.0;
-                        ui.label(RichText::new(notice.title).color(brand::TEXT).size(TEXT_TITLE));
+                        ui.label(RichText::new(notice.title).color(brand::text()).size(TEXT_TITLE));
                         ui.add(
                             egui::Label::new(
-                                RichText::new(&notice.body).color(brand::SOFT).size(TEXT_BODY),
+                                RichText::new(&notice.body).color(brand::soft()).size(TEXT_BODY),
                             )
                             .wrap(),
                         );
                         ui.add(
                             egui::Label::new(
-                                RichText::new(notice.foot).color(brand::FAINT).size(TEXT_SECONDARY),
+                                RichText::new(notice.foot)
+                                    .color(brand::faint())
+                                    .size(TEXT_SECONDARY),
                             )
                             .wrap(),
                         );

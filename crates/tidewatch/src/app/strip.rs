@@ -116,7 +116,7 @@ impl Tidewatch {
             .exact_size(STRIP_H)
             .frame(
                 Frame::new()
-                    .fill(brand::SIDEBAR)
+                    .fill(brand::sidebar())
                     .corner_radius(CornerRadius { nw: corner, ne: corner, sw: 0, se: 0 })
                     .inner_margin(margin),
             )
@@ -485,7 +485,7 @@ fn tab_row<'a, T>(
                 painter.circle_filled(
                     rect.center(),
                     rect.width() / 2.0,
-                    brand::SIDEBAR.gamma_multiply(POOFED_VEIL),
+                    brand::sidebar().gamma_multiply(POOFED_VEIL),
                 );
             }
         }
@@ -561,7 +561,7 @@ fn tab_row<'a, T>(
         overlay.rect_stroke(
             slots[from].rect,
             CornerRadius::same(TAB_RADIUS),
-            Stroke::new(2.0, brand::TEAL),
+            Stroke::new(2.0, brand::teal()),
             StrokeKind::Inside,
         );
         if let Some(step) = drag_step(&slots, from, x).filter(|_| !over_pill) {
@@ -645,9 +645,9 @@ fn paint_title(
 ) {
     let x = tab.left() + TAB_INSET + inset;
     let (font, ink) = if active {
-        (crate::screen_kit::heading(TAB_FONT_PX), brand::TEAL_TEXT)
+        (crate::screen_kit::heading(TAB_FONT_PX), brand::teal_text())
     } else {
-        (egui::FontId::proportional(TAB_FONT_PX), brand::SOFT)
+        (egui::FontId::proportional(TAB_FONT_PX), brand::soft())
     };
     let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, ink);
     job.sections[0].format.italics = draft;
@@ -676,13 +676,13 @@ fn tab_look(
         }
     }
     let line = if struggling {
-        brand::ORANGE
+        brand::orange()
     } else if active {
-        brand::TEAL
+        brand::teal()
     } else if hovered {
-        brand::FIELD_LINE
+        brand::field_line()
     } else {
-        brand::ITEM_LINE
+        brand::item_line()
     };
     painter.rect_stroke(
         tab,
@@ -720,12 +720,12 @@ fn lead(
 
 fn slash(ui: &mut egui::Ui) -> egui::Rect {
     let font = egui::FontId::proportional(SLASH_SIZE);
-    let galley = ui.painter().layout_no_wrap("/".to_owned(), font, brand::FIELD_LINE);
+    let galley = ui.painter().layout_no_wrap("/".to_owned(), font, brand::field_line());
     let (rect, _) = ui.allocate_exact_size(
         vec2(galley.size().x + 2.0 * SLASH_MARGIN, TAB_H),
         egui::Sense::hover(),
     );
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, brand::FIELD_LINE);
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, brand::field_line());
     rect
 }
 

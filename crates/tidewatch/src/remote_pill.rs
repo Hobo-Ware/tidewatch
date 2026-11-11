@@ -98,7 +98,7 @@ pub(crate) fn paint_phone(painter: &Painter, center: Pos2, size: f32, ink: Color
 }
 
 fn pill_ink(saved_on: bool) -> Color32 {
-    if saved_on { brand::TEAL_TEXT } else { brand::SOFT }
+    if saved_on { brand::teal_text() } else { brand::soft() }
 }
 
 pub(crate) fn show(
@@ -115,7 +115,7 @@ pub(crate) fn show(
     let rect =
         Rect::from_min_size(pos2(right - width, center_y - PILL_H / 2.0), vec2(width, PILL_H));
     let response = ui.interact(rect, ui.id().with("remote-pill"), Sense::click());
-    let fill = if pill.saved_on { brand::TEAL.gamma_multiply(0.10) } else { brand::ITEM };
+    let fill = if pill.saved_on { brand::teal().gamma_multiply(0.10) } else { brand::item() };
     let fill = if response.hovered() { fill.gamma_multiply(1.6) } else { fill };
     painter.rect_filled(rect, CornerRadius::same(Size::Compact.radius()), fill);
     paint_phone(&painter, pos2(rect.left() + PILL_PAD + GLYPH / 2.0, center_y), GLYPH, ink);
@@ -140,8 +140,8 @@ fn popover_menu(response: &Response, pill: &Pill, placed: &mut Placed) -> Option
         |ui| {
             ui.set_width(POPOVER_W);
             ui.spacing_mut().item_spacing = vec2(8.0, 10.0);
-            ui.label(RichText::new(&pill.name).size(14.0).color(brand::TEXT));
-            ui.label(RichText::new(subline(pill)).size(TEXT_SECONDARY).color(brand::MUTED));
+            ui.label(RichText::new(&pill.name).size(14.0).color(brand::text()));
+            ui.label(RichText::new(subline(pill)).size(TEXT_SECONDARY).color(brand::muted()));
             ui.horizontal(|ui| {
                 let copy = primary_button(ui, copy_label(pill), true, Size::Compact);
                 placed.copy = Some(copy.rect);
@@ -157,7 +157,7 @@ fn popover_menu(response: &Response, pill: &Pill, placed: &mut Placed) -> Option
                     }
                 }
             });
-            ui.label(RichText::new(note(pill)).size(12.0).color(brand::FAINT));
+            ui.label(RichText::new(note(pill)).size(12.0).color(brand::faint()));
         },
     );
     action

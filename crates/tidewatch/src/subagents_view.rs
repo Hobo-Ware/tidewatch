@@ -76,7 +76,9 @@ fn columns(ui: &Ui, inner: Rect, facts: Facts<'_>, rows: usize) -> Columns {
     let shown = &facts.list.rows[..rows];
     let right_w = shown
         .iter()
-        .map(|row| painter.layout_no_wrap(row.right.clone(), mono(TEXT_TAG), brand::MUTED).size().x)
+        .map(|row| {
+            painter.layout_no_wrap(row.right.clone(), mono(TEXT_TAG), brand::muted()).size().x
+        })
         .fold(0.0, f32::max);
     let tag_w = shown
         .iter()
@@ -97,8 +99,13 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, facts: Facts<'_>) -> Vec<Out> {
         pos2(band.right() - INSET, band.bottom() - OUTER),
     );
     let radius = CornerRadius::same(RADIUS);
-    ui.painter().rect_filled(card, radius, brand::ITEM);
-    ui.painter().rect_stroke(card, radius, Stroke::new(1.0, brand::ITEM_LINE), StrokeKind::Inside);
+    ui.painter().rect_filled(card, radius, brand::item());
+    ui.painter().rect_stroke(
+        card,
+        radius,
+        Stroke::new(1.0, brand::item_line()),
+        StrokeKind::Inside,
+    );
     let inner = Rect::from_min_max(
         pos2(card.left() + PAD, card.top()),
         pos2(card.right() - PAD, card.bottom()),
@@ -109,10 +116,10 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, facts: Facts<'_>) -> Vec<Out> {
         Align2::LEFT_CENTER,
         facts.list.head(),
         body(TEXT_TAG),
-        brand::MUTED,
+        brand::muted(),
     );
     let word = if facts.folded { "Show" } else { "Hide" };
-    let word_galley = ui.painter().layout_no_wrap(word.to_owned(), body(TEXT_TAG), brand::SOFT);
+    let word_galley = ui.painter().layout_no_wrap(word.to_owned(), body(TEXT_TAG), brand::soft());
     let word_rect = Rect::from_min_size(
         pos2(inner.right() - word_galley.size().x, head_mid - word_galley.size().y / 2.0),
         word_galley.size(),
@@ -126,7 +133,7 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, facts: Facts<'_>) -> Vec<Out> {
     ui.painter().galley(
         word_rect.min,
         word_galley,
-        if hot { brand::TEAL_TEXT } else { brand::SOFT },
+        if hot { brand::teal_text() } else { brand::soft() },
     );
     if let Some(note) = facts.list.finished_note() {
         ui.painter().text(
@@ -134,7 +141,7 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, facts: Facts<'_>) -> Vec<Out> {
             Align2::RIGHT_CENTER,
             format!("{note} \u{b7} "),
             body(TEXT_TAG),
-            brand::MUTED,
+            brand::muted(),
         );
     }
     if facts.folded {
@@ -160,14 +167,14 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, facts: Facts<'_>) -> Vec<Out> {
         let top = card.top() + OUTER + HEAD_H + plan.rows as f32 * ROW_H;
         let text =
             if plan.more > 0 { format!("+{} more", plan.more) } else { "Show fewer".to_owned() };
-        let galley = ui.painter().layout_no_wrap(text, body(TEXT_SECONDARY), brand::SOFT);
+        let galley = ui.painter().layout_no_wrap(text, body(TEXT_SECONDARY), brand::soft());
         let rect = Rect::from_min_size(
             pos2(inner.left() + DOT_BOX + GAP, top + (ROW_H - galley.size().y) / 2.0),
             galley.size(),
         );
         let hit = rect.expand2(vec2(6.0, 4.0));
         let response = ui.interact(hit, Id::new("agents-more"), Sense::click());
-        let ink = if response.hovered() { brand::TEAL_TEXT } else { brand::SOFT };
+        let ink = if response.hovered() { brand::teal_text() } else { brand::soft() };
         ui.painter().galley(rect.min, galley, ink);
         if response.on_hover_cursor(CursorIcon::PointingHand).clicked() {
             out.push(Out::Open);
@@ -183,9 +190,9 @@ fn paint_row(ui: &Ui, inner: Rect, top: f32, row: &crate::subagents_model::Row, 
     let painter = ui.painter();
     let mid = top + ROW_H / 2.0;
     let (what_ink, tag_ink, right_ink, dot) = if row.running {
-        (brand::TEXT, brand::SOFT, brand::MUTED, brand::TEAL)
+        (brand::text(), brand::soft(), brand::muted(), brand::teal())
     } else {
-        (brand::FAINT, brand::FAINT, brand::FAINT, brand::GREEN)
+        (brand::faint(), brand::faint(), brand::faint(), brand::green())
     };
     let centre = pos2(inner.left() + 4.0, mid);
     if row.running {
@@ -198,7 +205,7 @@ fn paint_row(ui: &Ui, inner: Rect, top: f32, row: &crate::subagents_model::Row, 
         ellipsized(painter, &row.what, body(TEXT_SECONDARY), what_ink, what_right - what_left);
     painter.galley(pos2(what_left, mid - what.size().y / 2.0), what, what_ink);
     if let (Some(left), Some(tag)) = (columns.tag_left, row.tag.as_deref()) {
-        paint_tag(painter, (left, mid), tag, tag_ink, TagFill::Line(brand::ITEM_LINE));
+        paint_tag(painter, (left, mid), tag, tag_ink, TagFill::Line(brand::item_line()));
     }
     painter.text(
         pos2(inner.right(), mid),

@@ -292,8 +292,8 @@ fn quote(ui: &mut Ui, md: &str, look: Look) {
     let id = ui.id().with("quote-copy");
     let reserve = button_reserve(ui.painter());
     let framed = Frame::new()
-        .fill(brand::SUNKEN)
-        .stroke(Stroke::new(BORDER, brand::ITEM_LINE))
+        .fill(brand::sunken())
+        .stroke(Stroke::new(BORDER, brand::item_line()))
         .corner_radius(CornerRadius::same(QUOTE_RADIUS))
         .inner_margin(QUOTE_PAD)
         .show(ui, |ui| {
@@ -305,7 +305,7 @@ fn quote(ui: &mut Ui, md: &str, look: Look) {
                 paint_quote_mark(ui, rect.translate(vec2(0.0, 2.0)));
                 ui.vertical(|ui| {
                     ui.set_width((ui.available_width() - reserve).max(QUOTE_MIN_TEXT));
-                    ui.visuals_mut().override_text_color = Some(brand::STEP_TEXT);
+                    ui.visuals_mut().override_text_color = Some(brand::step_text());
                     markdown(ui, md, look);
                 });
             });
@@ -329,7 +329,7 @@ fn image_chip_galley(
     label: &str,
     room: f32,
 ) -> std::sync::Arc<egui::Galley> {
-    let mut job = LayoutJob::simple_singleline(label.to_owned(), body(13.0), brand::STEP_TEXT);
+    let mut job = LayoutJob::simple_singleline(label.to_owned(), body(13.0), brand::step_text());
     job.wrap = TextWrapping::truncate_at_width((room - CHIP_FRAME_W).max(0.0));
     painter.layout_job(job)
 }
@@ -355,22 +355,22 @@ fn image_chip(ui: &mut Ui, label: &str) {
         painter.rect(
             thumb,
             CornerRadius::same(6),
-            brand::SUNKEN,
-            Stroke::new(1.0, brand::ITEM_LINE),
+            brand::sunken(),
+            Stroke::new(1.0, brand::item_line()),
             StrokeKind::Inside,
         );
         paint_image_glyph(painter, thumb.center());
         painter.galley(
             pos2(thumb.right() + 10.0, rect.center().y - galley.size().y / 2.0),
             galley,
-            brand::STEP_TEXT,
+            brand::step_text(),
         );
     });
 }
 
 fn paint_image_glyph(painter: &egui::Painter, center: Pos2) {
     let at = |x: f32, y: f32| center + vec2(x - 12.0, y - 12.0) * (16.0 / 24.0);
-    let stroke = Stroke::new(1.3, brand::FAINT);
+    let stroke = Stroke::new(1.3, brand::faint());
     painter.add(Shape::closed_line(
         vec![at(3.0, 5.0), at(21.0, 5.0), at(21.0, 19.0), at(3.0, 19.0)],
         stroke,
@@ -381,7 +381,7 @@ fn paint_image_glyph(painter: &egui::Painter, center: Pos2) {
 
 fn paint_quote_mark(ui: &Ui, rect: Rect) {
     let at = |x: f32, y: f32| -> Pos2 { rect.min + vec2(x, y) * (QUOTE_MARK / 24.0) };
-    let stroke = Stroke::new(1.5, brand::FAINT);
+    let stroke = Stroke::new(1.5, brand::faint());
     for shift in [0.0, 8.0] {
         ui.painter().add(Shape::line(
             vec![at(7.0 + shift, 7.0), at(11.0 + shift, 7.0), at(11.0 + shift, 11.0)],
@@ -403,7 +403,7 @@ fn paint_quote_mark(ui: &Ui, rect: Rect) {
 
 fn caption(ui: &mut Ui, text: &str) {
     ui.add_space(CAPTION_ABOVE);
-    ui.label(egui::RichText::new(text).font(heading(CAPTION_PX)).color(brand::MUTED));
+    ui.label(egui::RichText::new(text).font(heading(CAPTION_PX)).color(brand::muted()));
     ui.add_space(CAPTION_BELOW);
 }
 
@@ -509,7 +509,7 @@ mod tests {
             };
             out = Some(ctx.run_ui(raw, |ui| {
                 ui.set_width(500.0);
-                crate::reader_chat_view::chat_text(ui, |ui| show(ui, md, captions, Look::AGENT));
+                crate::reader_chat_view::chat_text(ui, |ui| show(ui, md, captions, Look::agent()));
             }));
         }
         out.expect("two frames ran")
@@ -533,7 +533,7 @@ mod tests {
             let galley = seen.iter().find(|g| g.text() == name).unwrap_or_else(|| panic!("{name}"));
             let format = &galley.job.sections[0].format;
             assert_eq!(format.font_id, heading(13.0), "{name}");
-            assert_eq!(format.color, brand::MUTED, "{name}");
+            assert_eq!(format.color, brand::muted(), "{name}");
         }
         let plain = galleys(&draw(md, false));
         assert!(plain.iter().all(|g| g.job.sections[0].format.font_id != heading(13.0)));
@@ -618,7 +618,7 @@ mod tests {
             };
             let _ = ctx.run_ui(raw, |ui| {
                 ui.set_max_width(width);
-                let shown = ui.scope(|ui| show(ui, md, false, Look::AGENT));
+                let shown = ui.scope(|ui| show(ui, md, false, Look::agent()));
                 widest = shown.response.rect.width();
             });
         }
@@ -732,7 +732,7 @@ mod tests {
         let mut shown = None;
         let out = ctx.run_ui(raw, |ui| {
             ui.set_width(width);
-            show(ui, md, false, Look::AGENT);
+            show(ui, md, false, Look::agent());
             shown = ui.data(|data| data.get_temp::<QuoteShown>(egui::Id::new("quote-shown")));
         });
         (out, shown.expect("the quote recorded where it drew"))
@@ -806,7 +806,7 @@ mod tests {
         for _ in 0..2 {
             let _ = ctx.run_ui(raw(1.0), |ui| {
                 ui.set_width(block.0);
-                code_block::show(ui, Some("sh"), block.1, Look::AGENT);
+                code_block::show(ui, Some("sh"), block.1, Look::agent());
                 shown = ui.data(|data| {
                     data.get_temp::<code_block::Shown>(ui.id().with("code-block").with("shown"))
                 });

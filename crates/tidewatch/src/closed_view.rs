@@ -46,7 +46,7 @@ pub(crate) fn show(ui: &mut Ui, area: Rect, rows: &[Row], picked: usize) -> Opti
         Align2::LEFT_CENTER,
         text,
         body(TEXT_SECONDARY),
-        brand::MUTED,
+        brand::muted(),
     );
     let list = Rect::from_min_max(pos2(area.left(), intro.bottom()), area.max);
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
@@ -91,16 +91,16 @@ fn draw_row(ui: &mut Ui, rect: Rect, row: &Row, index: usize, picked: bool) -> O
     }
     let left = face.right() + FACE_GAP;
     let right = button.left() - WHEN_GAP;
-    let when = painter.layout_no_wrap(row.closed.clone(), body(TEXT_TAG), brand::MUTED);
+    let when = painter.layout_no_wrap(row.closed.clone(), body(TEXT_TAG), brand::muted());
     let when_w = when.size().x;
-    painter.galley(pos2(right - when_w, top - when.size().y / 2.0), when, brand::MUTED);
-    let ink = selected_ink(picked, brand::TEXT);
+    painter.galley(pos2(right - when_w, top - when.size().y / 2.0), when, brand::muted());
+    let ink = selected_ink(picked, brand::text());
     let room = (right - when_w - WHEN_GAP - left).max(0.0);
     let title = ellipsized(&painter, &row.title, body(TEXT_BODY), ink, room);
     painter.galley(pos2(left, top - title.size().y / 2.0), title, ink);
     let detail_room = (right - left).max(0.0);
-    let line = ellipsized(&painter, detail(row), body(TEXT_SECONDARY), brand::SOFT, detail_room);
-    painter.galley(pos2(left, bottom - line.size().y / 2.0), line, brand::SOFT);
+    let line = ellipsized(&painter, detail(row), body(TEXT_SECONDARY), brand::soft(), detail_room);
+    painter.galley(pos2(left, bottom - line.size().y / 2.0), line, brand::soft());
     if resumed {
         return Some(Picked::Resume(row.session_id.clone()));
     }

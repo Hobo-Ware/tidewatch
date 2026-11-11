@@ -310,11 +310,11 @@ fn the_label_counts_services() {
 #[test]
 fn the_pill_outline_is_teal_when_all_run_orange_when_one_gave_up_and_quiet_otherwise() {
     let cases: [(&str, Vec<Word>, Color32); 5] = [
-        ("all run", vec![Word::Running, Word::Running], brand::TEAL),
-        ("one crashed", vec![Word::Running, Word::Crashed], brand::ORANGE),
-        ("crashed beats stopped", vec![Word::Stopped, Word::Crashed], brand::ORANGE),
-        ("one starting", vec![Word::Running, Word::Starting], brand::FIELD_LINE),
-        ("one stopped", vec![Word::Running, Word::Stopped], brand::FIELD_LINE),
+        ("all run", vec![Word::Running, Word::Running], brand::teal()),
+        ("one crashed", vec![Word::Running, Word::Crashed], brand::orange()),
+        ("crashed beats stopped", vec![Word::Stopped, Word::Crashed], brand::orange()),
+        ("one starting", vec![Word::Running, Word::Starting], brand::field_line()),
+        ("one stopped", vec![Word::Running, Word::Stopped], brand::field_line()),
     ];
     for (what, words, want) in cases {
         let rows: Vec<Row> = words.into_iter().map(|word| row("x", word, "")).collect();
@@ -325,11 +325,11 @@ fn the_pill_outline_is_teal_when_all_run_orange_when_one_gave_up_and_quiet_other
 #[test]
 fn the_dots_are_green_teal_orange_and_grey() {
     let cases = [
-        (Word::Running, brand::GREEN),
-        (Word::Starting, brand::TEAL),
-        (Word::Restarting, brand::TEAL),
-        (Word::Crashed, brand::ORANGE),
-        (Word::Stopped, brand::FAINT),
+        (Word::Running, brand::green()),
+        (Word::Starting, brand::teal()),
+        (Word::Restarting, brand::teal()),
+        (Word::Crashed, brand::orange()),
+        (Word::Stopped, brand::faint()),
     ];
     for (word, want) in cases {
         assert_eq!(dot_color(word), want, "{word:?}");

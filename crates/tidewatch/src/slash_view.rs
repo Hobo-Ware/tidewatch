@@ -80,16 +80,17 @@ fn paint_row(ui: &Ui, rect: Rect, entry: &Entry, selected: bool, hovered: bool) 
     let painter = ui.painter_at(rect);
     selection_row(&painter, rect, selected, hovered);
     let mut job = LayoutJob::default();
-    let name = TextFormat::simple(FontId::proportional(14.0), selected_ink(selected, brand::TEXT));
+    let name =
+        TextFormat::simple(FontId::proportional(14.0), selected_ink(selected, brand::text()));
     job.append(&format!("/{}", entry.name), 0.0, name);
-    let muted = TextFormat::simple(FontId::proportional(12.0), brand::MUTED);
+    let muted = TextFormat::simple(FontId::proportional(12.0), brand::muted());
     job.append(&entry.description, 12.0, muted);
     job.wrap = TextWrapping::truncate_at_width((rect.width() - 20.0).max(40.0));
     let galley = painter.layout_job(job);
     painter.galley(
         pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0),
         galley,
-        brand::TEXT,
+        brand::text(),
     );
 }
 
@@ -103,8 +104,8 @@ pub(crate) fn show(ui: &Ui, id: Id, above: Rect, rows: &[&Entry], picked: usize)
         .fixed_pos(pos2(above.left(), above.top() - GAP))
         .show(ui.ctx(), |ui| {
             Frame::new()
-                .fill(brand::CARD)
-                .stroke(Stroke::new(1.0, brand::FIELD_LINE))
+                .fill(brand::card())
+                .stroke(Stroke::new(1.0, brand::field_line()))
                 .corner_radius(CornerRadius::same(10))
                 .inner_margin(Margin::same(PAD))
                 .show(ui, |ui| {

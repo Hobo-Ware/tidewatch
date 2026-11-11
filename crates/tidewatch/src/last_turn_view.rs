@@ -34,7 +34,7 @@ pub(crate) fn show_check(
     turn: &LastTurn,
     age: Option<&str>,
 ) -> Option<Action> {
-    let head = label(ui, "Done check", heading(13.0), brand::SOFT);
+    let head = label(ui, "Done check", heading(13.0), brand::soft());
     if let Some(age) = age {
         panel_blocks::paint_age(ui.painter(), head.right(), head.center().y - 2.0, age);
     }
@@ -63,15 +63,15 @@ fn checking_note(ui: &mut Ui, width: f32) -> Option<CheckAction> {
     let galley = painter.layout_no_wrap(
         "Checking that the work landed...".to_owned(),
         body(ROW_FONT),
-        brand::MUTED,
+        brand::muted(),
     );
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + ITEM_GAP), Sense::hover());
     painter.circle_filled(
         pos2(rect.left() + 4.0, rect.top() + galley.size().y / 2.0),
         4.0,
-        brand::MUTED,
+        brand::muted(),
     );
-    selectable::galley(ui, pos2(rect.left() + BULLET_W, rect.top()), galley, brand::MUTED);
+    selectable::galley(ui, pos2(rect.left() + BULLET_W, rect.top()), galley, brand::muted());
     None
 }
 
@@ -86,7 +86,7 @@ fn check(ui: &mut Ui, width: f32, look: &Look, turn: &LastTurn) -> Option<CheckA
     let ink = tone_ink(card.tone);
     let title = painter.layout_no_wrap(card.title.to_owned(), body(ITEM_FONT), ink);
     let room = (width - BULLET_W - title.size().x - 10.0).max(0.0);
-    let summary = ellipsized(&painter, &card.summary, body(NOTE_FONT), brand::MUTED, room);
+    let summary = ellipsized(&painter, &card.summary, body(NOTE_FONT), brand::muted(), room);
     let (rect, _) = ui.allocate_exact_size(vec2(width, title.size().y + ITEM_GAP), Sense::hover());
     painter.circle_filled(pos2(rect.left() + 4.0, rect.top() + title.size().y / 2.0), 4.0, ink);
     let summary_at = pos2(
@@ -94,11 +94,11 @@ fn check(ui: &mut Ui, width: f32, look: &Look, turn: &LastTurn) -> Option<CheckA
         rect.top() + (title.size().y - summary.size().y) / 2.0,
     );
     selectable::galley(ui, pos2(rect.left() + BULLET_W, rect.top()), title, ink);
-    selectable::galley(ui, summary_at, summary, brand::MUTED);
+    selectable::galley(ui, summary_at, summary, brand::muted());
     for (index, row) in card.rows.iter().enumerate() {
         let sub = row.text.starts_with("    ");
         let indent = if sub { BULLET_W } else { 0.0 };
-        let ink = if row.tone == Tone::Quiet { brand::MUTED } else { tone_ink(row.tone) };
+        let ink = if row.tone == Tone::Quiet { brand::muted() } else { tone_ink(row.tone) };
         let mut text = Text::new();
         text.run(row.text.trim_start(), &TextFormat::simple(body(ROW_FONT), ink));
         let room = (width - BULLET_W - indent).max(40.0);
@@ -137,7 +137,7 @@ fn check(ui: &mut Ui, width: f32, look: &Look, turn: &LastTurn) -> Option<CheckA
                 picked = Some(CheckAction::CheckAgain);
             }
             if let Some(stamp) = stamp {
-                let note = RichText::new(stamp).font(body(NOTE_FONT)).color(brand::MUTED);
+                let note = RichText::new(stamp).font(body(NOTE_FONT)).color(brand::muted());
                 ui.add(egui::Label::new(note).wrap_mode(egui::TextWrapMode::Extend));
             }
         });

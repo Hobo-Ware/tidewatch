@@ -50,9 +50,9 @@ pub(crate) fn paint(
         let tag_w = layout.as_ref().map_or(0.0, |layout| layout.width() + TAG_GAP);
         let room = (right - left - TEXT_X - tag_w).max(MIN_TEXT_W);
         let ink = match step.mark {
-            Mark::Done => brand::FAINT,
-            Mark::Doing => brand::TEXT,
-            _ => brand::STEP_TEXT,
+            Mark::Done => brand::faint(),
+            Mark::Doing => brand::text(),
+            _ => brand::step_text(),
         };
         let text = ellipsized(painter, &step.text, FontId::proportional(TEXT_SECONDARY), ink, room);
         painter.galley(pos2(left + TEXT_X, mid - text.size().y / 2.0), text, ink);
@@ -65,8 +65,12 @@ pub(crate) fn paint(
         let more = painter.layout_no_wrap(
             more_label(list.more),
             FontId::proportional(TEXT_SECONDARY),
-            brand::FAINT,
+            brand::faint(),
         );
-        painter.galley(pos2(left + TEXT_X, y + (MORE_H - more.size().y) / 2.0), more, brand::FAINT);
+        painter.galley(
+            pos2(left + TEXT_X, y + (MORE_H - more.size().y) / 2.0),
+            more,
+            brand::faint(),
+        );
     }
 }

@@ -19,7 +19,7 @@ use crate::links;
 
 fn link_format(format: &TextFormat) -> TextFormat {
     TextFormat {
-        color: brand::TEAL_TEXT,
+        color: brand::teal_text(),
         underline: Stroke::new(1.0, brand::link_rest()),
         ..format.clone()
     }
@@ -178,7 +178,7 @@ impl Laid {
         let mut job = self.job.clone();
         for section in &mut job.sections {
             if bytes.contains(&usize::from(section.byte_range.start)) {
-                section.format.underline = Stroke::new(1.0, brand::TEAL_TEXT);
+                section.format.underline = Stroke::new(1.0, brand::teal_text());
             }
         }
         job

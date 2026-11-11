@@ -91,7 +91,7 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, shown: Shown<'_>) -> Vec<Out> {
         Align2::LEFT_CENTER,
         note,
         body(TEXT_TAG),
-        brand::MUTED,
+        brand::muted(),
     );
     let inner = Rect::from_min_max(
         pos2(card.left() + PAD, card.top() + HEAD_H),
@@ -171,11 +171,11 @@ fn row(
         ui.painter(),
         &squash(&held.text),
         egui::FontId::proportional(TEXT_BODY),
-        brand::TEXT,
+        brand::text(),
         text_w,
     );
     let y = if stacked { text_line.top() + 13.0 } else { rect.center().y };
-    ui.painter().galley(pos2(text_line.left(), y - galley.size().y / 2.0), galley, brand::TEXT);
+    ui.painter().galley(pos2(text_line.left(), y - galley.size().y / 2.0), galley, brand::text());
 }
 
 fn edit_row(

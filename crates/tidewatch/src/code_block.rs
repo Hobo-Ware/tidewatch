@@ -34,7 +34,9 @@ pub(crate) struct Look {
 }
 
 impl Look {
-    pub(crate) const AGENT: Self = Self { fill: brand::SUNKEN };
+    pub(crate) fn agent() -> Self {
+        Self { fill: brand::sunken() }
+    }
     pub(crate) const USER: Self = Self { fill: Color32::from_black_alpha(90) };
 }
 
@@ -64,7 +66,7 @@ pub(crate) fn show(ui: &mut Ui, lang: Option<&str>, text: &str, look: Look) {
     #[cfg_attr(not(test), allow(unused_variables))]
     let framed = Frame::new()
         .fill(look.fill)
-        .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+        .stroke(Stroke::new(1.0, brand::item_line()))
         .corner_radius(CornerRadius::same(RADIUS))
         .show(ui, |ui| {
             ui.set_width(outer - 2.0);
@@ -90,14 +92,14 @@ pub(crate) fn show(ui: &mut Ui, lang: Option<&str>, text: &str, look: Look) {
 fn strip(ui: &mut Ui, id: Id, lang: Option<&str>, text: &str) -> (Rect, Rect) {
     let (header, _) = ui.allocate_exact_size(vec2(ui.available_width(), HEADER_H), Sense::hover());
     let painter = ui.painter();
-    painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, brand::ITEM_LINE));
+    painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, brand::item_line()));
     if let Some(lang) = lang {
         painter.text(
             header.left_center() + vec2(f32::from(PAD), 0.0),
             Align2::LEFT_CENTER,
             lang,
             mono(LABEL_PX),
-            brand::MUTED,
+            brand::muted(),
         );
     }
     let rect = copy_button(ui, id, header.right_center() - vec2(BUTTON_INSET, 0.0), text);
@@ -139,13 +141,13 @@ pub(crate) fn button_width(painter: &Painter) -> f32 {
 
 fn paint_button(painter: &Painter, rect: Rect, copied: bool, response: &Response) {
     let (line, ink, fill) = if copied {
-        (brand::GREEN.gamma_multiply(0.5), brand::GREEN, Color32::TRANSPARENT)
+        (brand::green().gamma_multiply(0.5), brand::green(), Color32::TRANSPARENT)
     } else if response.is_pointer_button_down_on() {
-        (brand::FAINT, brand::TEXT, brand::SEGMENT)
+        (brand::faint(), brand::text(), brand::segment())
     } else if response.hovered() {
-        (brand::FAINT, brand::TEXT, brand::BUTTON)
+        (brand::faint(), brand::text(), brand::button())
     } else {
-        (brand::FIELD_LINE, brand::SOFT, Color32::TRANSPARENT)
+        (brand::field_line(), brand::soft(), Color32::TRANSPARENT)
     };
     painter.rect(
         rect,
@@ -210,7 +212,7 @@ fn styled(ui: &Ui, lang: Option<&str>, shown: &str) -> LayoutJob {
             let style = ui.style();
             highlight(ui.ctx(), style, &CodeTheme::from_style(style), shown, lang)
         }
-        _ => LayoutJob::simple(shown.to_owned(), mono(CODE_PX), brand::TEXT, f32::INFINITY),
+        _ => LayoutJob::simple(shown.to_owned(), mono(CODE_PX), brand::text(), f32::INFINITY),
     }
 }
 
@@ -333,7 +335,7 @@ mod tests {
         let mut shown = None;
         let out = ctx.run_ui(raw, |ui| {
             ui.set_width(width);
-            show(ui, lang, text, Look::AGENT);
+            show(ui, lang, text, Look::agent());
             shown =
                 ui.data(|data| data.get_temp::<Shown>(ui.id().with("code-block").with("shown")));
         });

@@ -100,7 +100,7 @@ struct Measure {
 }
 
 fn row_height(ui: &Ui) -> f32 {
-    ui.painter().layout_no_wrap(String::new(), text_font(), brand::TEXT).size().y
+    ui.painter().layout_no_wrap(String::new(), text_font(), brand::text()).size().y
 }
 
 fn measure(
@@ -119,7 +119,7 @@ fn measure(
     let right = if mode.has_button() { send_edge() + send_w + stop_w + SEND_GAP } else { PAD_X };
     let wrap = box_w - PAD_X - right;
     let font = text_font();
-    let look = Look { font: &font, ink: brand::TEXT, tint: &None, shown };
+    let look = Look { font: &font, ink: brand::text(), tint: &None, shown };
     let typed = bullets::layout(ui, text, wrap, &look);
     let cap = match mode {
         Mode::Reply | Mode::Answer => cap,
@@ -210,12 +210,12 @@ fn paint_blocks(
             pos2(edit.galley_pos.x - pad, top),
             pos2(view.right().max(edit.galley_pos.x), bottom),
         );
-        Shape::rect_filled(rect, CornerRadius::same(4), brand::ITEM)
+        Shape::rect_filled(rect, CornerRadius::same(4), brand::item())
     });
     ui.painter().set(backdrop, Shape::Vec(fills.collect()));
     for (x, top, bottom) in blocks.bars {
         let bar = Rect::from_min_max(pos2(x, top), pos2(x + composer_md::bar_width(), bottom));
-        ui.painter().rect_filled(bar, CornerRadius::same(2), brand::FAINT);
+        ui.painter().rect_filled(bar, CornerRadius::same(2), brand::faint());
     }
 }
 
@@ -429,7 +429,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         }))
         .map(|typing| {
             let end = byte_of(text, typing.cursor);
-            (typing.query.start..end, brand::TEAL_TEXT)
+            (typing.query.start..end, brand::teal_text())
         });
     let ghost = ghost.filter(|_| enabled && text.is_empty());
     if let Some(ghost) = ghost
@@ -506,10 +506,10 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         let top_pad = pad_y - OPTICAL_LIFT;
         let font = text_font();
         let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
-            let look = Look { font: &font, ink: brand::TEXT, tint: &tint, shown: &lit };
+            let look = Look { font: &font, ink: brand::text(), tint: &tint, shown: &lit };
             bullets::layout(ui, buf.as_str(), wrap, &look)
         };
-        let placeholder = if ghost.is_some() { brand::MUTED } else { brand::FAINT };
+        let placeholder = if ghost.is_some() { brand::muted() } else { brand::faint() };
         ui.visuals_mut().weak_text_color = Some(placeholder);
         let mut output = None;
         ui.scope_builder(UiBuilder::new().max_rect(view), |ui| {
@@ -535,7 +535,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                         .desired_rows(1)
                         .desired_width(f32::INFINITY)
                         .font(text_font())
-                        .text_color(brand::TEXT)
+                        .text_color(brand::text())
                         .layouter(&mut layouter)
                         .return_key(KeyboardShortcut::new(
                             if mode.sends() { Modifiers::SHIFT } else { Modifiers::NONE },
@@ -584,7 +584,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
         }
         let has_focus = ui.memory(|memory| memory.has_focus(id));
         let dropping = crate::file_drop::hovering(ui.ctx());
-        let line = if has_focus || dropping { brand::TEAL } else { brand::FIELD_LINE };
+        let line = if has_focus || dropping { brand::teal() } else { brand::field_line() };
         let radius = CornerRadius::same(RADIUS);
         ui.painter().set(
             background,
@@ -592,9 +592,9 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                 boxed,
                 radius,
                 if dropping {
-                    brand::CARD.lerp_to_gamma(brand::TEAL, DROP_FILL)
+                    brand::card().lerp_to_gamma(brand::teal(), DROP_FILL)
                 } else {
-                    brand::CARD
+                    brand::card()
                 },
                 Stroke::new(BORDER, line),
                 StrokeKind::Inside,
@@ -607,7 +607,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                 RectShape::stroke(
                     boxed.expand(1.5),
                     CornerRadius::same(RADIUS + 1),
-                    Stroke::new(width, brand::TEAL.gamma_multiply(alpha)),
+                    Stroke::new(width, brand::teal().gamma_multiply(alpha)),
                     StrokeKind::Middle,
                 ),
             );
@@ -638,7 +638,7 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
                 let top = edit.galley_pos.y + at.min.y;
                 ui.painter().line_segment(
                     [pos2(x, top), pos2(x, top + at.height())],
-                    Stroke::new(CARET_W, brand::TEAL),
+                    Stroke::new(CARET_W, brand::teal()),
                 );
             }
             if let Some(range) = edit.cursor_range {
@@ -979,7 +979,7 @@ mod tests {
             let boxed = shapes
                 .iter()
                 .find_map(|shape| match shape {
-                    Shape::Rect(r) if r.fill == brand::CARD => Some(r.rect),
+                    Shape::Rect(r) if r.fill == brand::card() => Some(r.rect),
                     _ => None,
                 })
                 .unwrap_or(box_rect);
@@ -1106,14 +1106,14 @@ mod tests {
     fn the_box_has_a_1_px_border_14_px_corners_and_a_teal_border_only_while_focused() {
         let mut rig = Rig::new();
         let focused = rig.type_text("hello");
-        let shape = focused.rects(brand::CARD).remove(0);
+        let shape = focused.rects(brand::card()).remove(0);
         assert_eq!(shape.stroke.width, 1.0);
-        assert_eq!(shape.stroke.color, brand::TEAL);
+        assert_eq!(shape.stroke.color, brand::teal());
         assert_eq!(shape.corner_radius, CornerRadius::same(14));
         rig.focus = false;
         rig.ctx.memory_mut(|memory| memory.surrender_focus(Id::new("reply-box")));
         let blurred = rig.frame(vec![]);
-        assert_eq!(blurred.rects(brand::CARD).remove(0).stroke.color, brand::FIELD_LINE);
+        assert_eq!(blurred.rects(brand::card()).remove(0).stroke.color, brand::field_line());
     }
 
     #[test]
@@ -1335,7 +1335,7 @@ mod tests {
             .iter()
             .filter(|shape| {
                 matches!(shape, Shape::LineSegment { stroke, .. }
-                    if stroke.width == CARET_W && stroke.color == brand::TEAL)
+                    if stroke.width == CARET_W && stroke.color == brand::teal())
             })
             .count()
     }
@@ -1374,7 +1374,7 @@ mod tests {
         let chips = chip_rects(&seen);
         assert_eq!(chips.len(), 1);
         assert!(left <= chips[0].left() && chips[0].right() <= right, "{left} {chips:?} {right}");
-        assert_eq!(seen.rects(brand::SUNKEN).len(), 1);
+        assert_eq!(seen.rects(brand::sunken()).len(), 1);
     }
 
     #[test]
@@ -1603,7 +1603,7 @@ mod tests {
                 let job = &galley.job;
                 job.sections
                     .iter()
-                    .filter(|section| section.format.color == brand::TEAL_TEXT)
+                    .filter(|section| section.format.color == brand::teal_text())
                     .map(|section| {
                         job.text[section.byte_range.start.0..section.byte_range.end.0].to_owned()
                     })
@@ -1654,13 +1654,13 @@ mod tests {
         let mut found = Marks { dots: vec![], rings: vec![], squares: vec![], numbers: vec![] };
         for shape in &seen.shapes {
             match shape {
-                Shape::Circle(circle) if circle.fill == brand::SOFT => {
+                Shape::Circle(circle) if circle.fill == brand::soft() => {
                     found.dots.push(circle.center.x);
                 }
-                Shape::Circle(circle) if circle.stroke.color == brand::SOFT => {
+                Shape::Circle(circle) if circle.stroke.color == brand::soft() => {
                     found.rings.push(circle.center.x);
                 }
-                Shape::Rect(rect) if rect.fill == brand::SOFT => {
+                Shape::Rect(rect) if rect.fill == brand::soft() => {
                     found.squares.push(rect.rect.center().x);
                 }
                 Shape::Text(text)
@@ -1711,7 +1711,7 @@ mod tests {
             .shapes
             .iter()
             .find_map(|shape| match shape {
-                Shape::Circle(circle) if circle.fill == brand::SOFT => Some(circle.center),
+                Shape::Circle(circle) if circle.fill == brand::soft() => Some(circle.center),
                 _ => None,
             })
             .expect("a dot");

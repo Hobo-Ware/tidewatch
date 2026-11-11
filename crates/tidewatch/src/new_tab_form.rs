@@ -191,7 +191,7 @@ fn hint_job(parts: &[(&str, bool)]) -> LayoutJob {
     let mut job = LayoutJob::default();
     for (text, key) in parts {
         let (font, color) =
-            if *key { (mono(12.0), brand::SOFT) } else { (body(TEXT_SECONDARY), brand::FAINT) };
+            if *key { (mono(12.0), brand::soft()) } else { (body(TEXT_SECONDARY), brand::faint()) };
         job.append(text, 0.0, TextFormat::simple(font, color));
     }
     job
@@ -288,8 +288,8 @@ fn note_height(ui: &Ui, note: Option<&str>, reserved: bool, width: f32) -> f32 {
     if note.is_none() && !reserved {
         return 0.0;
     }
-    let line = wrapped(ui, "M", 12.0, brand::MUTED, width).size().y;
-    let shown = note.map_or(0.0, |note| wrapped(ui, note, 12.0, brand::MUTED, width).size().y);
+    let line = wrapped(ui, "M", 12.0, brand::muted(), width).size().y;
+    let shown = note.map_or(0.0, |note| wrapped(ui, note, 12.0, brand::muted(), width).size().y);
     NOTE_GAP + shown.max(line)
 }
 
@@ -339,7 +339,8 @@ impl<'a> Content<'a> {
         if self.has_permission {
             let control =
                 segmented::inline_or_chips_height(ui, &Level::ALL.map(Level::label), width);
-            let description = wrapped(ui, level_hint(self.state.level()), 13.0, brand::SOFT, width);
+            let description =
+                wrapped(ui, level_hint(self.state.level()), 13.0, brand::soft(), width);
             let note = note_height(
                 ui,
                 self.level_note.as_deref(),
@@ -351,7 +352,7 @@ impl<'a> Content<'a> {
         }
         if self.yolo_line {
             above.permission =
-                wrapped(ui, new_tab_meeseeks::YOLO_LINE, 12.0, brand::MUTED, width).size().y;
+                wrapped(ui, new_tab_meeseeks::YOLO_LINE, 12.0, brand::muted(), width).size().y;
         }
         if self.remote.is_some() {
             above.remote = new_tab_remote::ROW_H;
@@ -359,7 +360,9 @@ impl<'a> Content<'a> {
         above.warnings = self
             .warnings
             .iter()
-            .map(|warning| wrapped(ui, warning, 12.0, brand::ORANGE, width).size().y + WARNING_GAP)
+            .map(|warning| {
+                wrapped(ui, warning, 12.0, brand::orange(), width).size().y + WARNING_GAP
+            })
             .sum();
         if self.state.shows_name_fields() {
             above.fields = layout::fields_height(width, self.problem);
@@ -371,7 +374,7 @@ impl<'a> Content<'a> {
         if self.kind == Kind::Meeseeks {
             return HINT_GAP + new_tab_done::height(Tick::ALL.len());
         }
-        HINT_GAP + wrapped(ui, message_hint(self.state), 12.0, brand::FAINT, width).size().y
+        HINT_GAP + wrapped(ui, message_hint(self.state), 12.0, brand::faint(), width).size().y
     }
 }
 
@@ -422,7 +425,7 @@ fn resume_list(
     let picked = closed_view::show(ui, list, rows, state.selected());
     let galley = ui.painter().layout_job(hint_job(RESUME_HINT));
     let at = pos2(body.left(), body.bottom() - galley.size().y);
-    ui.painter().galley(at, galley, brand::FAINT);
+    ui.painter().galley(at, galley, brand::faint());
     match picked? {
         Picked::Select(index) => {
             state.pick_resume(index, rows.len());
@@ -454,11 +457,11 @@ fn header(ui: &mut Ui, state: &mut NewTab, resumable: usize, placed: &mut Placed
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), layout::HEADER_H), Sense::hover());
     let painter = ui.painter();
-    painter.text(rect.left_top(), Align2::LEFT_TOP, "New tab", heading(20.0), brand::TEXT);
+    painter.text(rect.left_top(), Align2::LEFT_TOP, "New tab", heading(20.0), brand::text());
     let mut job = LayoutJob::default();
     let faint = |color: Color32| TextFormat::simple(body(13.0), color);
-    job.append("in ", 0.0, faint(brand::MUTED));
-    job.append(state.label(), 0.0, faint(brand::TEAL_TEXT));
+    job.append("in ", 0.0, faint(brand::muted()));
+    job.append(state.label(), 0.0, faint(brand::teal_text()));
     let tail = if state.kind() == Kind::Resume {
         ", a closed session back in its worktree"
     } else if state.kind() == Kind::Meeseeks {
@@ -468,8 +471,8 @@ fn header(ui: &mut Ui, state: &mut NewTab, resumable: usize, placed: &mut Placed
     } else {
         ", no worktree, runs in the folder itself"
     };
-    job.append(tail, 0.0, faint(brand::MUTED));
-    painter.galley(rect.left_top() + vec2(0.0, 27.0), painter.layout_job(job), brand::MUTED);
+    job.append(tail, 0.0, faint(brand::muted()));
+    painter.galley(rect.left_top() + vec2(0.0, 27.0), painter.layout_job(job), brand::muted());
     let resume = resume_label(resumable);
     let choices: Vec<(&str, &str, Kind)> = [
         ("Agent", "A", Kind::Agent),
@@ -547,12 +550,12 @@ fn pane(
             }
             if !warnings.is_empty() {
                 for warning in &warnings {
-                    let galley = wrapped(ui, warning, 12.0, brand::ORANGE, width);
+                    let galley = wrapped(ui, warning, 12.0, brand::orange(), width);
                     let (rect, _) = ui.allocate_exact_size(
                         vec2(width, galley.size().y + WARNING_GAP),
                         Sense::hover(),
                     );
-                    ui.painter().galley(rect.min, galley, brand::ORANGE);
+                    ui.painter().galley(rect.min, galley, brand::orange());
                 }
                 ui.add_space(SECTION_GAP);
             }
@@ -568,16 +571,16 @@ fn pane(
         ui.painter().hline(
             rect.x_range(),
             plan.footer.top() - 6.0,
-            Stroke::new(1.0, brand::ITEM_LINE),
+            Stroke::new(1.0, brand::item_line()),
         );
     }
     footer(ui, plan.footer, state, catalog, facts, placed)
 }
 
 fn muted_line(ui: &mut Ui, text: &str, width: f32) -> Rect {
-    let galley = wrapped(ui, text, 12.0, brand::MUTED, width);
+    let galley = wrapped(ui, text, 12.0, brand::muted(), width);
     let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
-    ui.painter().galley(rect.min, galley, brand::MUTED);
+    ui.painter().galley(rect.min, galley, brand::muted());
     rect
 }
 
@@ -617,9 +620,9 @@ fn message(
         return rect;
     }
     let width = ui.available_width();
-    let galley = wrapped(ui, message_hint(state), 12.0, brand::FAINT, width);
+    let galley = wrapped(ui, message_hint(state), 12.0, brand::faint(), width);
     let (hint_rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
-    ui.painter().galley(hint_rect.min, galley, brand::FAINT);
+    ui.painter().galley(hint_rect.min, galley, brand::faint());
     rect
 }
 
@@ -635,7 +638,7 @@ fn permission(
     field_label(ui, "Permission");
     ui.add_space(CAPTION_GAP);
     let labels = Level::ALL.map(Level::label);
-    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::RED));
+    let tones = Level::ALL.map(|level| (level == Level::Yolo).then_some(brand::red()));
     let active = Level::ALL.iter().position(|level| *level == state.level()).unwrap_or(0);
     let refusals = Level::ALL.map(|level| level_refusal(state.group(), agent, level));
     let top = ui.cursor().top();
@@ -653,9 +656,9 @@ fn permission(
     );
     ui.add_space(DESCRIPTION_GAP);
     let text = level_hint(state.level());
-    let galley = wrapped(ui, text, 13.0, brand::SOFT, width);
+    let galley = wrapped(ui, text, 13.0, brand::soft(), width);
     let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
-    ui.painter().galley(rect.min, galley, brand::SOFT);
+    ui.painter().galley(rect.min, galley, brand::soft());
     let flags = agent.level_args(state.level()).map(|args| args.join(" ")).unwrap_or_default();
     let tip = if flags.is_empty() { text.to_owned() } else { format!("{text}\nAdds {flags}") };
     response.on_hover_text(tip);
@@ -665,8 +668,8 @@ fn permission(
         ui.add_space(NOTE_GAP);
         let (rect, _) = ui.allocate_exact_size(vec2(width, height - NOTE_GAP), Sense::hover());
         if let Some(note) = note {
-            let galley = wrapped(ui, note, 12.0, brand::MUTED, width);
-            ui.painter().galley(rect.min, galley, brand::MUTED);
+            let galley = wrapped(ui, note, 12.0, brand::muted(), width);
+            ui.painter().galley(rect.min, galley, brand::muted());
             note_rect = Some(rect);
         }
     }
@@ -723,10 +726,15 @@ fn footer(
     placed.hints = Some(Rect::from_min_size(rect.min, vec2(room, rect.height())));
     let painter = ui.painter();
     if let Some(error) = &state.error {
-        let galley =
-            crate::reader_view::ellipsized(painter, error, body(TEXT_SECONDARY), brand::RED, room);
+        let galley = crate::reader_view::ellipsized(
+            painter,
+            error,
+            body(TEXT_SECONDARY),
+            brand::red(),
+            room,
+        );
         let at = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
-        painter.galley(at, galley, brand::RED);
+        painter.galley(at, galley, brand::red());
     } else {
         let hints = footer_hints(state.kind());
         let mut job = hints
@@ -737,7 +745,7 @@ fn footer(
         job.wrap = TextWrapping::truncate_at_width(room.max(1.0));
         let galley = painter.layout_job(job);
         let at = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
-        painter.galley(at, galley, brand::FAINT);
+        painter.galley(at, galley, brand::faint());
     }
     let mut child =
         ui.new_child(UiBuilder::new().max_rect(rect).layout(Layout::right_to_left(Align::Center)));

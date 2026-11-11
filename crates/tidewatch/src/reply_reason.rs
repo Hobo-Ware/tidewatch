@@ -29,12 +29,12 @@ pub(crate) fn offers_resume(blocked: Blocked) -> bool {
 pub(crate) fn show(ui: &mut Ui, band: Rect, blocked: Blocked) -> bool {
     let y = band.center().y;
     let dot = pos2(band.left() + INSET + DOT / 2.0, y);
-    ui.painter().circle_filled(dot, DOT / 2.0, brand::MUTED);
+    ui.painter().circle_filled(dot, DOT / 2.0, brand::muted());
     let at = pos2(dot.x + DOT / 2.0 + GAP, y);
     let galley =
-        ui.painter().layout_no_wrap(text(blocked).to_owned(), body(TEXT_SECONDARY), brand::SOFT);
+        ui.painter().layout_no_wrap(text(blocked).to_owned(), body(TEXT_SECONDARY), brand::soft());
     let end = at.x + galley.size().x;
-    ui.painter().galley(pos2(at.x, y - galley.size().y / 2.0), galley, brand::SOFT);
+    ui.painter().galley(pos2(at.x, y - galley.size().y / 2.0), galley, brand::soft());
     if !offers_resume(blocked) {
         return false;
     }
@@ -43,7 +43,7 @@ pub(crate) fn show(ui: &mut Ui, band: Rect, blocked: Blocked) -> bool {
         Align2::LEFT_CENTER,
         "\u{b7}",
         body(TEXT_SECONDARY),
-        brand::FAINT,
+        brand::faint(),
     );
     let width = button_width(ui, "Resume", Size::Compact);
     let rect = Rect::from_min_size(

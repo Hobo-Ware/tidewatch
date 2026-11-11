@@ -84,10 +84,10 @@ pub(crate) fn label(count: usize) -> String {
 pub(crate) fn width(ui: &Ui, count: usize) -> f32 {
     if count == 0 {
         let galley =
-            ui.painter().layout_no_wrap(GHOST_LABEL.to_owned(), body(LABEL_SIZE), brand::SOFT);
+            ui.painter().layout_no_wrap(GHOST_LABEL.to_owned(), body(LABEL_SIZE), brand::soft());
         return PAD_RIGHT * 2.0 + galley.size().x;
     }
-    let galley = ui.painter().layout_no_wrap(label(count), body(LABEL_SIZE), brand::SOFT);
+    let galley = ui.painter().layout_no_wrap(label(count), body(LABEL_SIZE), brand::soft());
     let stack = FACE + FACE_STEP * (count.min(MOST_FACES) - 1) as f32;
     PAD_LEFT + stack + GAP + galley.size().x + CHEVRON_GAP + CHEVRON_W + PAD_RIGHT
 }
@@ -102,9 +102,9 @@ pub(crate) struct Output {
 
 fn dot_ink(tone: Tone) -> Color32 {
     match tone {
-        Tone::Teal => brand::TEAL,
-        Tone::Blue => brand::BLUE,
-        Tone::Muted => brand::FAINT,
+        Tone::Teal => brand::teal(),
+        Tone::Blue => brand::blue(),
+        Tone::Muted => brand::faint(),
     }
 }
 
@@ -121,8 +121,8 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row], popover: Popover) -> Output {
     let dropping = hot(ui.ctx());
     let response = ui.interact(rect, ui.id().with("parked-pill"), Sense::click());
     let painter = ui.painter().clone();
-    let fill = if response.hovered() || dropping { brand::ITEM } else { brand::BAR };
-    let line = if dropping { brand::TEAL } else { brand::FIELD_LINE };
+    let fill = if response.hovered() || dropping { brand::item() } else { brand::bar() };
+    let line = if dropping { brand::teal() } else { brand::field_line() };
     painter.rect_filled(rect, CornerRadius::same(255), fill);
     painter.rect_stroke(rect, CornerRadius::same(255), Stroke::new(1.0, line), StrokeKind::Inside);
     for (n, row) in rows.iter().take(MOST_FACES).enumerate() {
@@ -133,11 +133,11 @@ pub(crate) fn show(ui: &mut Ui, rows: &[Row], popover: Popover) -> Output {
     }
     let stack = FACE + FACE_STEP * (count.clamp(1, MOST_FACES) - 1) as f32;
     let text_at = pos2(rect.left() + PAD_LEFT + stack + GAP, rect.center().y);
-    painter.text(text_at, Align2::LEFT_CENTER, label(count), body(LABEL_SIZE), brand::SOFT);
+    painter.text(text_at, Align2::LEFT_CENTER, label(count), body(LABEL_SIZE), brand::soft());
     paint_chevron(
         &painter,
         pos2(rect.right() - PAD_RIGHT - CHEVRON_W / 2.0, rect.center().y),
-        brand::MUTED,
+        brand::muted(),
     );
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -166,12 +166,12 @@ pub(crate) fn drop_place(ui: &Ui, at: Pos2) {
 }
 
 fn paint_ghost(painter: &egui::Painter, rect: Rect, dropping: bool) {
-    let line = if dropping { brand::TEAL } else { brand::FIELD_LINE };
-    let ink = if dropping { brand::TEAL_TEXT } else { brand::MUTED };
+    let line = if dropping { brand::teal() } else { brand::field_line() };
+    let ink = if dropping { brand::teal_text() } else { brand::muted() };
     painter.rect_filled(
         rect,
         CornerRadius::same(255),
-        if dropping { brand::TEAL_NAV } else { brand::BAR },
+        if dropping { brand::teal_nav() } else { brand::bar() },
     );
     painter.rect_stroke(rect, CornerRadius::same(255), Stroke::new(1.0, line), StrokeKind::Inside);
     painter.text(rect.center(), Align2::CENTER_CENTER, GHOST_LABEL, body(LABEL_SIZE), ink);
@@ -180,8 +180,8 @@ fn paint_ghost(painter: &egui::Painter, rect: Rect, dropping: bool) {
 fn list(response: &egui::Response, rows: &[Row], placed: &mut Placed) -> Option<usize> {
     let mut picked = None;
     let frame = egui::Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(12)
         .shadow(egui::epaint::Shadow {
             offset: [0, 8],
@@ -224,11 +224,11 @@ fn paint_row(ui: &Ui, rect: Rect, row: &Row, hovered: bool) {
     let left = face.right() + ROW_GAP;
     let room = (rect.right() - ROW_PAD - left).max(1.0);
     let line_left = left + LINE_DOT + LINE_DOT_GAP;
-    let name = painter.layout(row.name.clone(), body(14.0), brand::TEXT, room);
+    let name = painter.layout(row.name.clone(), body(14.0), brand::text(), room);
     let line = painter.layout(
         row.line.text.clone(),
         body(12.0),
-        brand::MUTED,
+        brand::muted(),
         room - LINE_DOT - LINE_DOT_GAP,
     );
     let gap = 2.0;
@@ -239,6 +239,6 @@ fn paint_row(ui: &Ui, rect: Rect, row: &Row, hovered: bool) {
         LINE_DOT / 2.0,
         dot_ink(row.line.tone),
     );
-    painter.galley(pos2(left, top), name, brand::TEXT);
-    painter.galley(pos2(line_left, line_top), line, brand::MUTED);
+    painter.galley(pos2(left, top), name, brand::text());
+    painter.galley(pos2(line_left, line_top), line, brand::muted());
 }

@@ -25,22 +25,22 @@ pub(crate) enum Tone {
 impl Tone {
     fn dot(self) -> egui::Color32 {
         match self {
-            Self::Teal => brand::TEAL,
-            Self::Orange => brand::ORANGE,
+            Self::Teal => brand::teal(),
+            Self::Orange => brand::orange(),
         }
     }
 
     fn line(self) -> egui::Color32 {
         match self {
-            Self::Teal => brand::FIELD_LINE,
-            Self::Orange => brand::ORANGE.gamma_multiply(0.4),
+            Self::Teal => brand::field_line(),
+            Self::Orange => brand::orange().gamma_multiply(0.4),
         }
     }
 
     fn word(self) -> egui::Color32 {
         match self {
-            Self::Teal => brand::TEAL_TEXT,
-            Self::Orange => brand::ORANGE,
+            Self::Teal => brand::teal_text(),
+            Self::Orange => brand::orange(),
         }
     }
 }
@@ -92,7 +92,7 @@ pub(crate) fn spec(status: &Status, brew_install: bool) -> Option<Spec> {
 pub(crate) const RESTART_WAITS: &str = "Restart is available once the install finishes.";
 
 fn parts(spec: &Spec) -> Vec<ChipPart<'_>> {
-    let mut parts = vec![ChipPart { text: &spec.text, ink: brand::SOFT }];
+    let mut parts = vec![ChipPart { text: &spec.text, ink: brand::soft() }];
     parts.extend(spec.word.map(|word| ChipPart { text: word, ink: spec.tone.word() }));
     parts
 }

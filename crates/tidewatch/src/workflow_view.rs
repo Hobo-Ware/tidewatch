@@ -94,8 +94,8 @@ pub(crate) fn card(ctx: &Context, repo: &str, detected: &Detected, column: Rect)
         .fixed_pos(pos2(column.center().x, column.top() + BELOW_STRIP))
         .show(ctx, |ui| {
             egui::Frame::new()
-                .fill(brand::ITEM)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::item())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(8)
                 .inner_margin(Margin::symmetric(16, 12))
                 .shadow(egui::Shadow {
@@ -131,12 +131,12 @@ fn body(ui: &mut Ui, repo: &str, detected: &Detected) -> Shown {
     ui.label(
         RichText::new(format!("Workflow for {repo}"))
             .font(crate::screen_kit::heading(15.0))
-            .color(brand::TEXT),
+            .color(brand::text()),
     );
     ui.label(
         RichText::new("What Tidewatch may say about branches and pull requests when it talks to an agent. Your rules win; these are what I found in them.")
             .size(TEXT_SECONDARY)
-            .color(brand::MUTED),
+            .color(brand::muted()),
     );
     let rows = [
         (
@@ -154,11 +154,11 @@ fn body(ui: &mut Ui, repo: &str, detected: &Detected) -> Shown {
     for (title, value, source) in rows {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            ui.label(RichText::new(title).size(TEXT_SECONDARY).color(brand::SOFT));
+            ui.label(RichText::new(title).size(TEXT_SECONDARY).color(brand::soft()));
             ui.label(
                 RichText::new(value)
                     .font(crate::screen_kit::heading(TEXT_SECONDARY))
-                    .color(brand::TEXT),
+                    .color(brand::text()),
             );
         });
         evidence(ui, source);
@@ -184,7 +184,7 @@ fn body(ui: &mut Ui, repo: &str, detected: &Detected) -> Shown {
 }
 
 fn evidence(ui: &mut Ui, source: &Source) {
-    ui.add(egui::Label::new(RichText::new(source.line()).size(12.0).color(brand::MUTED)).wrap());
+    ui.add(egui::Label::new(RichText::new(source.line()).size(12.0).color(brand::muted())).wrap());
 }
 
 /// What the Workflow card of Settings shows for the repo on show.

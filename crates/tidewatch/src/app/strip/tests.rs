@@ -330,7 +330,7 @@ fn the_active_tab_blanks_the_fill_draw_tab_painted_and_gets_a_teal_outline() {
     let look =
         |painter: &egui::Painter, under, tab| tab_look(painter, under, tab, true, false, false);
     assert_eq!(filled_by(look, tab), [None, None, Some(egui::Color32::TRANSPARENT)]);
-    assert_eq!(stroked_by(look, tab), [None, None, Some(brand::TEAL)]);
+    assert_eq!(stroked_by(look, tab), [None, None, Some(brand::teal())]);
 }
 
 #[test]
@@ -344,10 +344,10 @@ fn a_tab_outline_is_item_line_at_rest_brighter_on_hover_and_orange_while_struggl
         .pop()
         .flatten()
     };
-    assert_eq!(line(false, false, false), Some(brand::ITEM_LINE));
-    assert_eq!(line(false, true, false), Some(brand::FIELD_LINE));
-    assert_eq!(line(true, true, false), Some(brand::TEAL));
-    assert_eq!(line(false, false, true), Some(brand::ORANGE));
+    assert_eq!(line(false, false, false), Some(brand::item_line()));
+    assert_eq!(line(false, true, false), Some(brand::field_line()));
+    assert_eq!(line(true, true, false), Some(brand::teal()));
+    assert_eq!(line(false, false, true), Some(brand::orange()));
 }
 
 #[test]
@@ -586,8 +586,8 @@ fn a_tab_title_is_the_proportional_ui_font_in_soft_not_mono() {
         }
     }
     assert_eq!(found.len(), 2);
-    assert_eq!(found[0], (egui::FontId::proportional(TAB_FONT_PX), brand::SOFT));
-    assert_eq!(found[1], (crate::screen_kit::heading(TAB_FONT_PX), brand::TEAL_TEXT));
+    assert_eq!(found[0], (egui::FontId::proportional(TAB_FONT_PX), brand::soft()));
+    assert_eq!(found[1], (crate::screen_kit::heading(TAB_FONT_PX), brand::teal_text()));
 }
 
 #[test]
@@ -803,7 +803,8 @@ fn the_parked_list_has_a_section_label_and_48_px_rows_that_never_overlap() {
 #[test]
 fn a_parked_row_has_a_dot_in_its_reasons_colour_before_a_muted_line() {
     use crate::park::Tone;
-    let cases = [(Tone::Teal, brand::TEAL), (Tone::Blue, brand::BLUE), (Tone::Muted, brand::FAINT)];
+    let cases =
+        [(Tone::Teal, brand::teal()), (Tone::Blue, brand::blue()), (Tone::Muted, brand::faint())];
     for (tone, want) in cases {
         let mut strip = parked_strip();
         strip.tone = tone;
@@ -1053,7 +1054,7 @@ fn strip_fills(mood: Mood, locked: bool) -> (Vec<egui::Color32>, bool) {
 
 #[test]
 fn a_struggling_tab_has_no_orange_tint_its_outline_says_it() {
-    let orange = brand::ORANGE.gamma_multiply(0.16);
+    let orange = brand::orange().gamma_multiply(0.16);
     let (calm, _) = strip_fills(Mood::default(), true);
     assert!(!calm.contains(&orange));
     let (struggling, _) = strip_fills(Mood { struggling: true }, true);
@@ -1111,7 +1112,7 @@ fn a_poofed_tab_keeps_its_title_under_a_dimmed_face_and_has_no_status_dot() {
         }
     }
     assert!(
-        fills_seen.contains(&brand::SIDEBAR.gamma_multiply(POOFED_VEIL)),
+        fills_seen.contains(&brand::sidebar().gamma_multiply(POOFED_VEIL)),
         "the dimmed round face"
     );
     assert_eq!(dots, 0, "no status dot");
@@ -1214,7 +1215,7 @@ fn the_main_icon_has_the_active_tab_look_only_while_main_is_selected() {
 #[test]
 fn a_dot_shows_on_the_main_icon_only_while_its_shell_runs_a_command() {
     let (_, running, rect) = main_icon_shapes(false, true, false);
-    assert_eq!(running, [brand::SIDEBAR, brand::TEAL]);
+    assert_eq!(running, [brand::sidebar(), brand::teal()]);
     let dot = main_icon::dot_center(rect);
     assert!(rect.contains(dot), "the dot sits on the icon's corner");
     let (_, idle, _) = main_icon_shapes(false, false, false);

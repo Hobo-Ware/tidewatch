@@ -445,7 +445,7 @@ fn header(ui: &mut Ui, width: f32, ledger: &Ledger, blocks: &Blocks) {
         if ledger.title.trim().is_empty() { ledger.goal.trim() } else { ledger.title.trim() };
     let flag_w = blocks.out_of_date.map(|_| panel_blocks::out_of_date_width(&painter));
     let mut text = Text::new();
-    text.run(title, &egui::epaint::text::TextFormat::simple(heading(title_size), brand::TEXT));
+    text.run(title, &egui::epaint::text::TextFormat::simple(heading(title_size), brand::text()));
     let title = text.wrapped(width.max(40.0), 3).lay_out(&painter);
     let size = title.size();
     let single = size.y < title_size * 1.8;
@@ -458,7 +458,7 @@ fn header(ui: &mut Ui, width: f32, ledger: &Ledger, blocks: &Blocks) {
             ui,
             ui.id().with("progress-goal-text"),
             pos2(rect.left(), rect.top()),
-            brand::MUTED,
+            brand::muted(),
         )
         .on_hover_text(ledger.goal.trim());
     if let Some(why) = blocks.out_of_date {
@@ -482,10 +482,10 @@ fn jobs_block(
     if let Some(age) = age.filter(|_| !cards.is_empty()) {
         let painter = ui.painter().clone();
         let galley =
-            painter.layout_no_wrap("Jobs".to_owned(), heading(TEXT_SECONDARY), brand::SOFT);
+            painter.layout_no_wrap("Jobs".to_owned(), heading(TEXT_SECONDARY), brand::soft());
         let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y + 8.0), Sense::hover());
         let mid = rect.top() + galley.size().y / 2.0;
-        painter.galley(pos2(rect.left(), rect.top()), galley, brand::SOFT);
+        painter.galley(pos2(rect.left(), rect.top()), galley, brand::soft());
         panel_blocks::paint_age(&painter, rect.right(), mid, age);
     }
     job_view::show(ui, width, stack, cards).map(|(job, message)| Action::Ask { job, message })
@@ -518,7 +518,7 @@ fn phase_bars(ui: &mut Ui, width: f32, bars: &[Bar], tone: Tone) {
     let painter = ui.painter().clone();
     let labels: Vec<_> = bars
         .iter()
-        .map(|bar| painter.layout_no_wrap(bar.label.clone(), body(12.0), brand::MUTED))
+        .map(|bar| painter.layout_no_wrap(bar.label.clone(), body(12.0), brand::muted()))
         .collect();
     let widest = labels.iter().map(|galley| galley.size().x).fold(0.0, f32::max);
     let columns = bar_columns(width, bars.len(), widest.min(BAR_MAX_W));
@@ -547,21 +547,21 @@ fn paint_bar(ui: &mut Ui, column: Rect, bar: &Bar, tone: Tone, index: usize) {
             let y = track.center().y;
             painter.extend(Shape::dashed_line(
                 &[pos2(track.left() + 2.0, y), pos2(track.right() - 2.0, y)],
-                Stroke::new(1.5, brand::FAINT.gamma_multiply(0.6)),
+                Stroke::new(1.5, brand::faint().gamma_multiply(0.6)),
                 4.0,
                 3.0,
             ));
         }
         BarKind::Plain => {
-            painter.rect_filled(track, radius, brand::FIELD_LINE);
+            painter.rect_filled(track, radius, brand::field_line());
             if bar.fill > 0.0 {
                 let fill = Rect::from_min_size(track.min, vec2(track.width() * bar.fill, BAR_H));
-                let ink = if tone == Tone::Done { brand::DONE } else { brand::TEAL };
+                let ink = if tone == Tone::Done { brand::done() } else { brand::teal() };
                 painter.rect_filled(fill, radius, ink);
             }
         }
     }
-    let ink = if bar.current { brand::TEXT } else { brand::MUTED };
+    let ink = if bar.current { brand::text() } else { brand::muted() };
     let label = ellipsized(painter, &bar.label, body(12.0), ink, column.width());
     let at = pos2(column.left(), track.bottom() + 7.0);
     painter.galley(at, label, ink);

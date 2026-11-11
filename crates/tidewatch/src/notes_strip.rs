@@ -145,10 +145,10 @@ fn place_parts<'a>(path: &'a str, lines: &'a str) -> (&'a str, &'a str, &'a str)
 
 fn state_tone(state: NoteState) -> Color32 {
     match state {
-        NoteState::Queued => brand::ORANGE,
-        NoteState::Sent(_) => brand::TEAL_TEXT,
-        NoteState::Replied => brand::GREEN,
-        NoteState::Resolved | NoteState::FromAgent => brand::MUTED,
+        NoteState::Queued => brand::orange(),
+        NoteState::Sent(_) => brand::teal_text(),
+        NoteState::Replied => brand::green(),
+        NoteState::Resolved | NoteState::FromAgent => brand::muted(),
     }
 }
 
@@ -172,14 +172,17 @@ fn ellipsize_to(measure: impl Fn(&str) -> f32, text: &str, room: f32) -> String 
 }
 
 fn text_width(painter: &egui::Painter, text: &str, font: &FontId) -> f32 {
-    painter.layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x
+    painter.layout_no_wrap(text.to_owned(), font.clone(), brand::text()).size().x
 }
 
 fn place_job(parts: (&str, &str, &str), hot: bool) -> LayoutJob {
     let (dir, name, line) = parts;
     let format = |color| TextFormat { font_id: mono(PLACE_FONT), color, ..TextFormat::default() };
-    let (dim, strong) =
-        if hot { (brand::TEAL_TEXT, brand::TEAL_TEXT) } else { (brand::FAINT, brand::TEXT) };
+    let (dim, strong) = if hot {
+        (brand::teal_text(), brand::teal_text())
+    } else {
+        (brand::faint(), brand::text())
+    };
     let mut job = LayoutJob::default();
     job.append(dir, 0.0, format(dim));
     job.append(name, 0.0, format(strong));
@@ -206,8 +209,8 @@ fn draw_card(ui: &mut Ui, row: &NoteRow, now: i64, actions: &mut Vec<StripAction
     ui.painter().rect(
         card,
         CornerRadius::same(RADIUS),
-        brand::ITEM,
-        Stroke::new(1.0, brand::ITEM_LINE),
+        brand::item(),
+        Stroke::new(1.0, brand::item_line()),
         StrokeKind::Inside,
     );
     let inner = card.shrink2(vec2(CARD_PAD, 0.0));
@@ -268,7 +271,7 @@ fn draw_text(ui: &mut Ui, row: &NoteRow, area: Rect, actions: &mut Vec<StripActi
     let response = ui.interact(place, ui.id().with(("note-place", row.id)), Sense::click());
     let galley =
         if response.hovered() { painter.layout_job(place_job(parts, true)) } else { galley };
-    painter.galley(place.min, galley, brand::TEXT);
+    painter.galley(place.min, galley, brand::text());
     if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
         actions.push(StripAction::Jump(row.path.clone()));
     }
@@ -277,7 +280,7 @@ fn draw_text(ui: &mut Ui, row: &NoteRow, area: Rect, actions: &mut Vec<StripActi
     if room > MIN_SNIPPET_W {
         let font = body(SNIPPET_FONT);
         let text = ellipsize_to(|text| text_width(&painter, text, &font), &row.snippet, room);
-        painter.text(pos2(left, area.center().y), Align2::LEFT_CENTER, text, font, brand::SOFT);
+        painter.text(pos2(left, area.center().y), Align2::LEFT_CENTER, text, font, brand::soft());
     }
 }
 
@@ -429,10 +432,10 @@ mod tests {
 
     #[test]
     fn each_state_has_its_own_ink() {
-        assert_eq!(state_tone(NoteState::Queued), brand::ORANGE);
-        assert_eq!(state_tone(NoteState::Sent(1)), brand::TEAL_TEXT);
-        assert_eq!(state_tone(NoteState::Replied), brand::GREEN);
-        assert_eq!(state_tone(NoteState::FromAgent), brand::MUTED);
+        assert_eq!(state_tone(NoteState::Queued), brand::orange());
+        assert_eq!(state_tone(NoteState::Sent(1)), brand::teal_text());
+        assert_eq!(state_tone(NoteState::Replied), brand::green());
+        assert_eq!(state_tone(NoteState::FromAgent), brand::muted());
     }
 
     fn click_strip(rows: &[NoteRow], clicks: &[egui::Pos2]) -> Vec<StripAction> {

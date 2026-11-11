@@ -74,7 +74,7 @@ pub(crate) fn rows(groups: &Groups) -> Vec<Row<'_>> {
 
 pub(crate) fn letter(group: Group, kind: ChangeKind) -> (&'static str, Color32) {
     match group {
-        Group::New => ("?", brand::BLUE),
+        Group::New => ("?", brand::blue()),
         Group::Staged | Group::Changed => (kind_letter(kind), kind_color(kind)),
     }
 }
@@ -128,7 +128,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, view: &mut TabView, side: bool) {
                 Align2::LEFT_TOP,
                 NOTE,
                 body(TEXT_SECONDARY),
-                brand::FAINT,
+                brand::faint(),
             );
         }
         picked
@@ -149,24 +149,24 @@ fn message(ui: &Ui, area: Rect, text: &str) {
         Align2::CENTER_CENTER,
         text,
         body(TEXT_SECONDARY),
-        brand::FAINT,
+        brand::faint(),
     );
 }
 
 fn paint_footer(ui: &Ui, footer: Rect, text: &str, counts: Option<LineCounts>) {
     let painter = ui.painter();
-    painter.hline(footer.x_range(), footer.top(), egui::Stroke::new(1.0, brand::CARD_LINE));
+    painter.hline(footer.x_range(), footer.top(), egui::Stroke::new(1.0, brand::card_line()));
     let mut job = LayoutJob::default();
     let plain = |color| TextFormat { font_id: body(12.0), color, ..TextFormat::default() };
-    job.append(text, 0.0, plain(brand::MUTED));
+    job.append(text, 0.0, plain(brand::muted()));
     if let Some((added, removed)) = counts {
-        job.append(" · ", 0.0, plain(brand::MUTED));
-        job.append(&format!("+{added}"), 0.0, plain(brand::GREEN));
+        job.append(" · ", 0.0, plain(brand::muted()));
+        job.append(&format!("+{added}"), 0.0, plain(brand::green()));
         job.append(&format!(" -{removed}"), 0.0, plain(removed_ink(removed)));
     }
     let galley = painter.layout_job(job);
     let at = pos2(footer.left() + SIDE_PAD + ROW_PAD, footer.center().y - galley.size().y / 2.0);
-    selectable::galley(ui, at, galley, brand::MUTED);
+    selectable::galley(ui, at, galley, brand::muted());
 }
 
 fn list_files(
@@ -211,21 +211,26 @@ fn header_row(ui: &mut Ui, group: Group, count: usize) {
     let painter = ui.painter_at(slot);
     let left = slot.left() + SIDE_PAD + ROW_PAD;
     let title =
-        painter.layout_no_wrap(group.title().to_owned(), heading(TEXT_SECONDARY), brand::TEXT);
+        painter.layout_no_wrap(group.title().to_owned(), heading(TEXT_SECONDARY), brand::text());
     let width = title.size().x;
-    selectable::galley(ui, pos2(left, slot.center().y - title.size().y / 2.0), title, brand::TEXT);
+    selectable::galley(
+        ui,
+        pos2(left, slot.center().y - title.size().y / 2.0),
+        title,
+        brand::text(),
+    );
     paint_tag(
         &painter,
         (left + width + COUNT_GAP, slot.center().y),
         &count.to_string(),
         count_ink(count),
-        TagFill::Line(brand::ITEM_LINE),
+        TagFill::Line(brand::item_line()),
     );
 }
 
 /// The ink of a group's count pill: a zero count is muted.
 fn count_ink(count: usize) -> Color32 {
-    if count == 0 { brand::FAINT } else { brand::SOFT }
+    if count == 0 { brand::faint() } else { brand::soft() }
 }
 
 const NOTE: &str = "Nothing else changed since the last commit.";
@@ -269,7 +274,7 @@ fn file_row(
             Align2::RIGHT_CENTER,
             format!("+{added}"),
             mono(12.0),
-            brand::GREEN,
+            brand::green(),
         );
     }
     if let Some(files) = folder {
@@ -278,11 +283,11 @@ fn file_row(
             Align2::RIGHT_CENTER,
             folder_count(files),
             mono(12.0),
-            brand::FAINT,
+            brand::faint(),
         );
     }
     right -= DEL_W + COUNT_GAP + ADD_W + COUNT_GAP;
-    let ink = selected_ink(current, brand::TEXT);
+    let ink = selected_ink(current, brand::text());
     paint_name(
         ui,
         &painter,
@@ -323,8 +328,12 @@ pub(crate) fn paint_name(
         return;
     }
     let text = tail_fit(ui, dir.trim_end_matches('/'), &font, dir_room);
-    let galley = painter.layout_no_wrap(text, body(12.0), brand::FAINT);
-    painter.galley(pos2(left + name_w + DIR_GAP, y - galley.size().y / 2.0), galley, brand::FAINT);
+    let galley = painter.layout_no_wrap(text, body(12.0), brand::faint());
+    painter.galley(
+        pos2(left + name_w + DIR_GAP, y - galley.size().y / 2.0),
+        galley,
+        brand::faint(),
+    );
 }
 
 #[cfg(test)]
@@ -374,10 +383,10 @@ mod tests {
     #[test]
     fn each_status_has_its_letter_and_color() {
         let cases = [
-            (Group::Changed, ChangeKind::Modified, "M", brand::ORANGE),
-            (Group::Staged, ChangeKind::Added, "A", brand::GREEN),
-            (Group::Changed, ChangeKind::Deleted, "D", brand::RED),
-            (Group::New, ChangeKind::Added, "?", brand::BLUE),
+            (Group::Changed, ChangeKind::Modified, "M", brand::orange()),
+            (Group::Staged, ChangeKind::Added, "A", brand::green()),
+            (Group::Changed, ChangeKind::Deleted, "D", brand::red()),
+            (Group::New, ChangeKind::Added, "?", brand::blue()),
         ];
         for (group, kind, want, color) in cases {
             assert_eq!(letter(group, kind), (want, color), "{group:?} {kind:?}");
@@ -386,8 +395,8 @@ mod tests {
 
     #[test]
     fn a_zero_count_is_muted_and_a_short_list_leaves_room_for_the_closing_note() {
-        assert_eq!(count_ink(0), brand::FAINT);
-        assert_eq!(count_ink(3), brand::SOFT);
+        assert_eq!(count_ink(0), brand::faint());
+        assert_eq!(count_ink(3), brand::soft());
         assert!(note_fits(2, 400.0));
         assert!(!note_fits(13, 400.0));
         assert!(!note_fits(2, 2.0 * ROW_H));
@@ -495,8 +504,8 @@ mod tests {
             }));
         }
         let output = last.unwrap();
-        assert_eq!(ink_of(&output, "-0"), Some(brand::MUTED));
-        assert_eq!(ink_of(&output, "-2"), Some(brand::RED));
+        assert_eq!(ink_of(&output, "-0"), Some(brand::muted()));
+        assert_eq!(ink_of(&output, "-2"), Some(brand::red()));
     }
 
     const FEW: &str = "M  a.rs\0";

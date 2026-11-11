@@ -178,14 +178,14 @@ pub(crate) fn ticked_by_tidewatch(marks: &[MarkSeen], step: &str) -> bool {
 }
 
 pub(crate) fn paint_age(painter: &Painter, right: f32, mid: f32, text: &str) -> f32 {
-    let galley = painter.layout_no_wrap(text.to_owned(), body(TEXT_TAG), brand::MUTED);
+    let galley = painter.layout_no_wrap(text.to_owned(), body(TEXT_TAG), brand::muted());
     let left = right - galley.size().x;
-    painter.galley(egui::pos2(left, mid - galley.size().y / 2.0), galley, brand::MUTED);
+    painter.galley(egui::pos2(left, mid - galley.size().y / 2.0), galley, brand::muted());
     left
 }
 
 pub(crate) fn age_width(painter: &Painter, text: &str) -> f32 {
-    painter.layout_no_wrap(text.to_owned(), body(TEXT_TAG), brand::MUTED).size().x
+    painter.layout_no_wrap(text.to_owned(), body(TEXT_TAG), brand::muted()).size().x
 }
 
 pub(crate) fn out_of_date_width(painter: &Painter) -> f32 {
@@ -198,8 +198,8 @@ pub(crate) fn paint_out_of_date(ui: &Ui, left: f32, mid: f32, why: Why) -> Rect 
         ui.painter(),
         (left, mid),
         OUT_OF_DATE,
-        brand::MUTED,
-        TagFill::Line(brand::FIELD_LINE),
+        brand::muted(),
+        TagFill::Line(brand::field_line()),
     );
     let id = ui.id().with(("out-of-date", left.to_bits(), mid.to_bits()));
     ui.interact(rect, id, egui::Sense::hover())

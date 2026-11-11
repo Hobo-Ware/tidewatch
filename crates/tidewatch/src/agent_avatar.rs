@@ -67,14 +67,14 @@ pub(crate) fn plate(painter: &egui::Painter, rect: Rect, fill: Color32) {
 
 pub(crate) fn ring(painter: &egui::Painter, rect: Rect) {
     let radius = rect.width().min(rect.height()) / 2.0 - 0.5;
-    painter.circle_stroke(rect.center(), radius, Stroke::new(1.0, brand::FACE_RING));
+    painter.circle_stroke(rect.center(), radius, Stroke::new(1.0, brand::face_ring()));
 }
 
 /// Paints the avatar as a round face in `rect`, rasterized for the screen's pixel density. Returns
 /// whether it drew; a picture that cannot be drawn leaves the empty plate.
 pub(crate) fn paint(ctx: &Context, painter: &egui::Painter, rect: Rect, avatar: &Avatar) -> bool {
     let px = (rect.width() * ctx.pixels_per_point()).round() as u32;
-    plate(painter, rect, brand::FACE_PLATE);
+    plate(painter, rect, brand::face_plate());
     let art = texture(ctx, avatar, px);
     if let Some(art) = &art {
         painter.image(

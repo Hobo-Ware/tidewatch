@@ -127,7 +127,7 @@ impl Harness {
             .iter()
             .filter(|clipped| {
                 matches!(&clipped.shape, egui::Shape::Rect(r)
-                    if r.fill == brand::SUNKEN
+                    if r.fill == brand::sunken()
                         && r.rect.height() == crate::screen_kit::Size::Tag.height())
             })
             .count()
@@ -555,7 +555,7 @@ fn the_form_labels_are_sentence_case_semibold_soft_text() {
         let found = labels.iter().find(|(text, ..)| text == name);
         assert_eq!(
             found.map(|(_, font, ink)| (font.clone(), *ink)),
-            Some((crate::screen_kit::heading(crate::screen_kit::TEXT_SECONDARY), brand::SOFT)),
+            Some((crate::screen_kit::heading(crate::screen_kit::TEXT_SECONDARY), brand::soft())),
             "{name}"
         );
     }
@@ -1109,12 +1109,12 @@ fn the_box_keeps_the_edges_of_the_fields_above_it_and_the_height_the_layout_give
         .iter()
         .find_map(|clipped| match &clipped.shape {
             egui::Shape::Vec(inner) => inner.iter().find_map(|shape| match shape {
-                egui::Shape::Rect(r) if r.fill == brand::CARD && r.corner_radius.nw == 14 => {
+                egui::Shape::Rect(r) if r.fill == brand::card() && r.corner_radius.nw == 14 => {
                     Some(r.rect)
                 }
                 _ => None,
             }),
-            egui::Shape::Rect(r) if r.fill == brand::CARD && r.corner_radius.nw == 14 => {
+            egui::Shape::Rect(r) if r.fill == brand::card() && r.corner_radius.nw == 14 => {
                 Some(r.rect)
             }
             _ => None,

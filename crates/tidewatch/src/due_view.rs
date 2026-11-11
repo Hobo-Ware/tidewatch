@@ -78,8 +78,8 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, facts: Facts<'_>) -> Option<Action> 
         &painter,
         (inner.left(), y + PILL_H / 2.0),
         &due.pill(),
-        brand::TEAL_TEXT,
-        TagFill::Tint(brand::TEAL.gamma_multiply(0.12)),
+        brand::teal_text(),
+        TagFill::Tint(brand::teal().gamma_multiply(0.12)),
     );
     if more > 0 {
         painter.text(
@@ -87,13 +87,13 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, facts: Facts<'_>) -> Option<Action> 
             Align2::RIGHT_CENTER,
             format!("+{more} more due"),
             FontId::proportional(12.0),
-            brand::FAINT,
+            brand::faint(),
         );
     }
     y += PILL_H + GAP;
 
-    let title = ellipsized(&painter, &due.what, heading(TEXT_TITLE), brand::TEXT, inner.width());
-    painter.galley(pos2(inner.left(), y + (TITLE_H - title.size().y) / 2.0), title, brand::TEXT);
+    let title = ellipsized(&painter, &due.what, heading(TEXT_TITLE), brand::text(), inner.width());
+    painter.galley(pos2(inner.left(), y + (TITLE_H - title.size().y) / 2.0), title, brand::text());
     y += TITLE_H;
 
     if !due.steps.is_empty() {
@@ -102,9 +102,9 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, facts: Facts<'_>) -> Option<Action> 
             let mid = y + STEP_H / 2.0;
             paint_mark(&painter, pos2(inner.left() + 9.0, mid), 14.0, *mark, 0.0);
             let ink = match mark {
-                tidewatch_core::progress::Mark::Done => brand::MUTED,
-                tidewatch_core::progress::Mark::Skipped => brand::FAINT,
-                _ => brand::TEXT,
+                tidewatch_core::progress::Mark::Done => brand::muted(),
+                tidewatch_core::progress::Mark::Skipped => brand::faint(),
+                _ => brand::text(),
             };
             let left = inner.left() + 30.0;
             let galley =
@@ -119,7 +119,7 @@ pub(crate) fn show(ui: &mut Ui, rect: Rect, facts: Facts<'_>) -> Option<Action> 
                 Align2::LEFT_CENTER,
                 format!("+{rest} more steps"),
                 FontId::proportional(12.0),
-                brand::FAINT,
+                brand::faint(),
             );
             y += MORE_H;
         }

@@ -38,11 +38,11 @@ pub(crate) fn mono(size: f32) -> FontId {
 
 pub(crate) fn badge_colors(agent_id: &str) -> (Color32, Color32) {
     match agent_id {
-        "claude" => brand::CLAUDE_BADGE,
-        "codex" => brand::CODEX_BADGE,
-        "gemini" => brand::GEMINI_BADGE,
-        "copilot" => brand::COPILOT_BADGE,
-        _ => (brand::BUTTON, brand::MUTED),
+        "claude" => brand::claude_badge(),
+        "codex" => brand::codex_badge(),
+        "gemini" => brand::gemini_badge(),
+        "copilot" => brand::copilot_badge(),
+        _ => (brand::button(), brand::muted()),
     }
 }
 
@@ -215,15 +215,15 @@ pub(crate) enum TagFill {
 }
 
 pub(crate) fn tag_width(painter: &Painter, text: &str) -> f32 {
-    painter.layout_no_wrap(text.to_owned(), body(Size::Tag.font()), brand::SOFT).size().x
+    painter.layout_no_wrap(text.to_owned(), body(Size::Tag.font()), brand::soft()).size().x
         + 2.0 * Size::Tag.pad()
 }
 
 /// The frame of a popover that lists things: the card fill and line, 12 px corners, a soft shadow.
 pub(crate) fn popover_frame() -> egui::Frame {
     egui::Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(12)
         .shadow(Shadow {
             offset: [0, 8],
@@ -367,7 +367,7 @@ struct Paint {
 }
 
 fn teal(alpha: f32) -> Color32 {
-    brand::TEAL.gamma_multiply(alpha)
+    brand::teal().gamma_multiply(alpha)
 }
 
 fn paint_of(look: Look, state: State) -> Paint {
@@ -375,55 +375,67 @@ fn paint_of(look: Look, state: State) -> Paint {
     let dim = |color: Color32| color.gamma_multiply(DISABLED_INK);
     match (look, state) {
         (Look::Primary, State::Rest) => {
-            Paint { fill: clear, line: brand::TEAL, ink: brand::TEAL_TEXT, cap: teal(0.16) }
+            Paint { fill: clear, line: brand::teal(), ink: brand::teal_text(), cap: teal(0.16) }
         }
         (Look::Primary, State::Hover) => {
-            Paint { fill: teal(0.1), line: brand::TEAL, ink: brand::TEAL_TEXT, cap: teal(0.24) }
+            Paint { fill: teal(0.1), line: brand::teal(), ink: brand::teal_text(), cap: teal(0.24) }
         }
         (Look::Primary, State::Pressed) => {
-            Paint { fill: teal(0.2), line: brand::TEAL, ink: brand::TEAL_TEXT, cap: teal(0.3) }
+            Paint { fill: teal(0.2), line: brand::teal(), ink: brand::teal_text(), cap: teal(0.3) }
         }
         (Look::Primary, State::Disabled) => Paint {
             fill: clear,
-            line: dim(brand::TEAL),
-            ink: dim(brand::TEAL_TEXT),
+            line: dim(brand::teal()),
+            ink: dim(brand::teal_text()),
             cap: teal(0.08),
         },
-        (Look::Quiet, State::Rest) => {
-            Paint { fill: clear, line: brand::FIELD_LINE, ink: brand::TEXT, cap: brand::BUTTON }
-        }
-        (Look::Quiet, State::Hover) => {
-            Paint { fill: brand::BUTTON, line: brand::FAINT, ink: brand::TEXT, cap: brand::SEGMENT }
-        }
-        (Look::Quiet, State::Pressed) => {
-            Paint { fill: brand::SEGMENT, line: brand::FAINT, ink: brand::TEXT, cap: brand::BUTTON }
-        }
+        (Look::Quiet, State::Rest) => Paint {
+            fill: clear,
+            line: brand::field_line(),
+            ink: brand::text(),
+            cap: brand::button(),
+        },
+        (Look::Quiet, State::Hover) => Paint {
+            fill: brand::button(),
+            line: brand::faint(),
+            ink: brand::text(),
+            cap: brand::segment(),
+        },
+        (Look::Quiet, State::Pressed) => Paint {
+            fill: brand::segment(),
+            line: brand::faint(),
+            ink: brand::text(),
+            cap: brand::button(),
+        },
         (Look::Quiet, State::Disabled) => Paint {
             fill: clear,
-            line: brand::SEGMENT_LINE,
-            ink: dim(brand::TEXT),
-            cap: brand::BUTTON,
+            line: brand::segment_line(),
+            ink: dim(brand::text()),
+            cap: brand::button(),
         },
         (Look::Danger, State::Rest) => Paint {
             fill: clear,
-            line: brand::RED.gamma_multiply(0.6),
-            ink: brand::RED,
-            cap: brand::RED_FILL,
+            line: brand::red().gamma_multiply(0.6),
+            ink: brand::red(),
+            cap: brand::red_fill(),
         },
         (Look::Danger, State::Hover) => Paint {
-            fill: brand::RED_FILL,
-            line: brand::RED.gamma_multiply(0.5),
-            ink: brand::RED,
-            cap: brand::RED_FILL,
+            fill: brand::red_fill(),
+            line: brand::red().gamma_multiply(0.5),
+            ink: brand::red(),
+            cap: brand::red_fill(),
         },
-        (Look::Danger, State::Pressed) => {
-            Paint { fill: brand::RED_FILL, line: brand::RED, ink: brand::RED, cap: brand::RED_FILL }
-        }
+        (Look::Danger, State::Pressed) => Paint {
+            fill: brand::red_fill(),
+            line: brand::red(),
+            ink: brand::red(),
+            cap: brand::red_fill(),
+        },
         (Look::Danger, State::Disabled) => Paint {
             fill: clear,
-            line: brand::SEGMENT_LINE,
-            ink: dim(brand::RED),
-            cap: brand::RED_FILL,
+            line: brand::segment_line(),
+            ink: dim(brand::red()),
+            cap: brand::red_fill(),
         },
     }
 }
@@ -439,7 +451,7 @@ fn width_of(size: Size, label_w: f32, key_w: Option<f32>) -> f32 {
 }
 
 fn text_width(ui: &Ui, text: &str, font: FontId) -> f32 {
-    ui.painter().layout_no_wrap(text.to_owned(), font, brand::SOFT).size().x
+    ui.painter().layout_no_wrap(text.to_owned(), font, brand::soft()).size().x
 }
 
 pub(crate) fn button_width(ui: &Ui, label: &str, size: Size) -> f32 {
@@ -563,14 +575,15 @@ pub(crate) fn primary_button_keyed(
 /// pages keep their own section labels.
 pub(crate) fn field_label(ui: &mut Ui, text: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), LABEL_H), Sense::hover());
-    let galley = ellipsized(ui.painter(), text, heading(TEXT_SECONDARY), brand::SOFT, rect.width());
+    let galley =
+        ellipsized(ui.painter(), text, heading(TEXT_SECONDARY), brand::soft(), rect.width());
     let at = rect.left_center() - vec2(0.0, galley.size().y / 2.0);
-    selectable::galley(ui, at, galley, brand::SOFT);
+    selectable::galley(ui, at, galley, brand::soft());
 }
 
 /// The width `field_label` gives `text`.
 pub(crate) fn field_label_width(painter: &Painter, text: &str) -> f32 {
-    painter.layout_no_wrap(text.to_owned(), heading(TEXT_SECONDARY), brand::SOFT).size().x
+    painter.layout_no_wrap(text.to_owned(), heading(TEXT_SECONDARY), brand::soft()).size().x
 }
 
 /// One footer hint: the keys as caps (`"Enter"`, `"Cmd+Enter"`, none for a plain note) and the words
@@ -582,15 +595,17 @@ const HINT_DOT_GAP: f32 = 8.0;
 const HINT_DOT: &str = "\u{b7}";
 
 fn hint_dot_width(painter: &Painter) -> f32 {
-    painter.layout_no_wrap(HINT_DOT.to_owned(), body(TEXT_TAG), brand::FAINT).size().x
+    painter.layout_no_wrap(HINT_DOT.to_owned(), body(TEXT_TAG), brand::faint()).size().x
 }
 
 fn hint_width(painter: &Painter, hint: &[Hint]) -> f32 {
     let parts: f32 = hint
         .iter()
         .map(|(keys, words)| {
-            let words_w =
-                painter.layout_no_wrap((*words).to_owned(), body(TEXT_TAG), brand::MUTED).size().x;
+            let words_w = painter
+                .layout_no_wrap((*words).to_owned(), body(TEXT_TAG), brand::muted())
+                .size()
+                .x;
             if keys.is_empty() {
                 words_w
             } else {
@@ -607,7 +622,13 @@ fn paint_hint(painter: &Painter, left: f32, mid: f32, hint: &[Hint]) {
     for (index, (keys, words)) in hint.iter().enumerate() {
         if index > 0 {
             x += HINT_DOT_GAP;
-            painter.text(pos2(x, mid), Align2::LEFT_CENTER, HINT_DOT, body(TEXT_TAG), brand::FAINT);
+            painter.text(
+                pos2(x, mid),
+                Align2::LEFT_CENTER,
+                HINT_DOT,
+                body(TEXT_TAG),
+                brand::faint(),
+            );
             x += hint_dot_width(painter) + HINT_DOT_GAP;
         }
         if !keys.is_empty() {
@@ -616,7 +637,7 @@ fn paint_hint(painter: &Painter, left: f32, mid: f32, hint: &[Hint]) {
             x += width + HINT_CAPS_GAP;
         }
         let rect =
-            painter.text(pos2(x, mid), Align2::LEFT_CENTER, words, body(TEXT_TAG), brand::MUTED);
+            painter.text(pos2(x, mid), Align2::LEFT_CENTER, words, body(TEXT_TAG), brand::muted());
         x = rect.right();
     }
 }
@@ -776,7 +797,7 @@ pub(crate) fn dialog_pinned<S, R>(
             })
             .inner;
         let line = ui.cursor().top();
-        ui.painter().hline(ui.min_rect().x_range(), line, Stroke::new(1.0, brand::CARD_LINE));
+        ui.painter().hline(ui.min_rect().x_range(), line, Stroke::new(1.0, brand::card_line()));
         egui::Frame::new().inner_margin(Margin::same(DIALOG_PAD)).show(ui, |ui| footer(ui, state));
         inner
     })
@@ -791,8 +812,8 @@ fn dialog_shell<R>(
 ) -> ModalResponse<R> {
     let width = width.px();
     let frame = egui::Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::FIELD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::field_line()))
         .corner_radius(12)
         .shadow(Shadow {
             offset: [0, 4],
@@ -811,9 +832,9 @@ fn dialog_shell<R>(
             Align2::LEFT_CENTER,
             title,
             heading(TEXT_TITLE),
-            brand::TEXT,
+            brand::text(),
         );
-        painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, brand::CARD_LINE));
+        painter.hline(header.x_range(), header.bottom(), Stroke::new(1.0, brand::card_line()));
         content(ui)
     })
 }
@@ -828,7 +849,7 @@ pub(crate) fn fit_path(
     max_w: f32,
 ) -> String {
     let measure =
-        |text: &str| painter.layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x;
+        |text: &str| painter.layout_no_wrap(text.to_owned(), font.clone(), brand::text()).size().x;
     let room = max_w - measure(prefix);
     format!("{prefix}{}", crate::middle_cut::start_cut(path, room, &measure))
 }
@@ -868,8 +889,8 @@ pub(crate) fn paint_pill_card(painter: &Painter, rect: Rect) {
     painter.rect(
         rect,
         CornerRadius::same(ROW_RADIUS),
-        brand::ITEM,
-        Stroke::new(1.0, brand::ITEM_LINE),
+        brand::item(),
+        Stroke::new(1.0, brand::item_line()),
         StrokeKind::Inside,
     );
 }
@@ -877,8 +898,8 @@ pub(crate) fn paint_pill_card(painter: &Painter, rect: Rect) {
 /// The tint under a selectable row, if any.
 fn selection_fill(selected: bool, hovered: bool) -> Option<Color32> {
     match (selected, hovered) {
-        (true, _) => Some(brand::SEGMENT_ON),
-        (false, true) => Some(brand::SEGMENT_ON.gamma_multiply(0.6)),
+        (true, _) => Some(brand::segment_on()),
+        (false, true) => Some(brand::segment_on().gamma_multiply(0.6)),
         (false, false) => None,
     }
 }
@@ -893,7 +914,7 @@ pub(crate) fn selection_row(painter: &Painter, rect: Rect, selected: bool, hover
 
 /// The ink of the name in a row `selection_row` paints: teal when selected, `normal` otherwise.
 pub(crate) fn selected_ink(selected: bool, normal: Color32) -> Color32 {
-    if selected { brand::TEAL_TEXT } else { normal }
+    if selected { brand::teal_text() } else { normal }
 }
 
 pub(crate) const MENU_ROW_H: f32 = 32.0;
@@ -919,14 +940,14 @@ pub(crate) fn menu_label_with(ui: &mut Ui, text: &str, plain: &str, note: &str) 
     job.append(
         &text.to_uppercase(),
         0.0,
-        egui::text::TextFormat::simple(heading(TEXT_TAG), brand::FAINT),
+        egui::text::TextFormat::simple(heading(TEXT_TAG), brand::faint()),
     );
-    job.append(plain, 0.0, egui::text::TextFormat::simple(heading(TEXT_TAG), brand::FAINT));
+    job.append(plain, 0.0, egui::text::TextFormat::simple(heading(TEXT_TAG), brand::faint()));
     let galley = painter.layout_job(job);
     painter.galley(
         pos2(rect.left() + MENU_LABEL_PAD, rect.center().y + 2.0 - galley.size().y / 2.0),
         galley,
-        brand::FAINT,
+        brand::faint(),
     );
     if !note.is_empty() {
         painter.text(
@@ -934,7 +955,7 @@ pub(crate) fn menu_label_with(ui: &mut Ui, text: &str, plain: &str, note: &str) 
             Align2::RIGHT_CENTER,
             note,
             body(TEXT_TAG),
-            brand::FAINT,
+            brand::faint(),
         );
     }
     rect
@@ -947,7 +968,7 @@ pub(crate) fn menu_divider(ui: &mut Ui) {
     ui.painter().hline(
         rect.left() + 4.0..=rect.right() - 4.0,
         rect.center().y,
-        Stroke::new(1.0, brand::CARD_LINE),
+        Stroke::new(1.0, brand::card_line()),
     );
     ui.add_space(3.0);
 }
@@ -983,7 +1004,7 @@ pub(crate) fn chord_keys(keys: &str) -> Vec<&str> {
 }
 
 fn cap_w(painter: &Painter, key: &str) -> f32 {
-    let text = painter.layout_no_wrap(key.to_owned(), mono(TEXT_TAG), brand::SOFT).size().x;
+    let text = painter.layout_no_wrap(key.to_owned(), mono(TEXT_TAG), brand::soft()).size().x;
     (text + 2.0 * CAP_PAD).max(CAP_MIN_W)
 }
 
@@ -994,7 +1015,7 @@ pub(crate) fn caps_width(painter: &Painter, keys: &str) -> f32 {
         .iter()
         .map(|key| {
             if *key == "to" {
-                painter.layout_no_wrap((*key).to_owned(), body(TEXT_TAG), brand::FAINT).size().x
+                painter.layout_no_wrap((*key).to_owned(), body(TEXT_TAG), brand::faint()).size().x
                     + CAP_STEP
                     + 2.0
             } else {
@@ -1012,18 +1033,18 @@ pub(crate) fn paint_caps(painter: &Painter, right: f32, mid: f32, keys: &str) ->
     for key in chord_keys(keys).into_iter().rev() {
         if key == "to" {
             let at = pos2(x - CAP_STEP - 2.0, mid);
-            painter.text(at, Align2::RIGHT_CENTER, key, body(TEXT_TAG), brand::FAINT);
+            painter.text(at, Align2::RIGHT_CENTER, key, body(TEXT_TAG), brand::faint());
             x = at.x
-                - painter.layout_no_wrap(key.to_owned(), body(TEXT_TAG), brand::FAINT).size().x;
+                - painter.layout_no_wrap(key.to_owned(), body(TEXT_TAG), brand::faint()).size().x;
             continue;
         }
         let width = cap_w(painter, key);
         let cap = Rect::from_min_size(pos2(x - width, mid - CAP_H / 2.0), vec2(width, CAP_H));
         let radius = CornerRadius::same(CAP_RADIUS);
-        painter.rect_filled(cap, radius, brand::KEY_EDGE);
+        painter.rect_filled(cap, radius, brand::key_edge());
         let face = Rect::from_min_max(cap.min, cap.max - vec2(0.0, 1.0));
-        painter.rect_filled(face, radius, brand::BUTTON);
-        painter.text(face.center(), Align2::CENTER_CENTER, key, mono(TEXT_TAG), brand::SOFT);
+        painter.rect_filled(face, radius, brand::button());
+        painter.text(face.center(), Align2::CENTER_CENTER, key, mono(TEXT_TAG), brand::soft());
         x -= width + CAP_STEP;
     }
     if x == right { right } else { x + CAP_STEP }
@@ -1156,7 +1177,7 @@ mod tests {
         let labels = painted(&out);
         let [(text, font, ink, at)] = &labels[..] else { panic!("one label: {labels:?}") };
         assert_eq!(text, "Worktree name");
-        assert_eq!((font.clone(), *ink), (heading(TEXT_SECONDARY), brand::SOFT));
+        assert_eq!((font.clone(), *ink), (heading(TEXT_SECONDARY), brand::soft()));
         assert!((at.x - left).abs() < 0.5, "{} vs {left}", at.x);
         assert_eq!(height, LABEL_H);
     }
@@ -1234,8 +1255,8 @@ mod tests {
                 ui.painter(),
                 (rect.left(), rect.center().y),
                 "Claude",
-                brand::TEAL,
-                TagFill::Line(brand::TEAL),
+                brand::teal(),
+                TagFill::Line(brand::teal()),
             );
             for size in [Size::Tag, Size::Compact, Size::Regular] {
                 drawn.push((size, quiet_button(ui, "Go", true, size).rect.height()));
@@ -1292,18 +1313,18 @@ mod tests {
         let quiet = paint_of(Look::Quiet, State::Rest);
         assert_eq!(
             (quiet.fill, quiet.line, quiet.ink),
-            (Color32::TRANSPARENT, brand::FIELD_LINE, brand::TEXT)
+            (Color32::TRANSPARENT, brand::field_line(), brand::text())
         );
         let primary = paint_of(Look::Primary, State::Rest);
         assert_eq!(
             (primary.fill, primary.line, primary.ink),
-            (Color32::TRANSPARENT, brand::TEAL, brand::TEAL_TEXT)
+            (Color32::TRANSPARENT, brand::teal(), brand::teal_text())
         );
         assert_ne!(primary.cap, primary.fill);
         assert_eq!(paint_of(Look::Danger, State::Rest).fill, Color32::TRANSPARENT);
         let danger = paint_of(Look::Danger, State::Rest);
-        assert_eq!((danger.ink, danger.line), (brand::RED, brand::RED.gamma_multiply(0.6)));
-        assert_eq!(paint_of(Look::Danger, State::Hover).fill, brand::RED_FILL);
+        assert_eq!((danger.ink, danger.line), (brand::red(), brand::red().gamma_multiply(0.6)));
+        assert_eq!(paint_of(Look::Danger, State::Hover).fill, brand::red_fill());
         for look in [Look::Quiet, Look::Primary, Look::Danger] {
             assert_ne!(paint_of(look, State::Rest), paint_of(look, State::Hover), "{look:?} hover");
             assert_ne!(
@@ -1473,7 +1494,7 @@ mod tests {
         let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
             let painter = ui.painter();
             let width = |text: &str| {
-                painter.layout_no_wrap(text.to_owned(), font.clone(), brand::TEXT).size().x
+                painter.layout_no_wrap(text.to_owned(), font.clone(), brand::text()).size().x
             };
             let cut = fit_path(painter, "Clones to ", long, &font, 220.0);
             assert!(cut.starts_with("Clones to \u{2026}/") && cut.ends_with("/kelp"), "{cut}");
@@ -1497,9 +1518,9 @@ mod tests {
 
     #[test]
     fn badges_use_the_brand_hues_and_unknown_clis_fall_back_to_muted() {
-        assert_eq!(badge_colors("claude"), brand::CLAUDE_BADGE);
-        assert_eq!(badge_colors("gemini"), brand::GEMINI_BADGE);
-        assert_eq!(badge_colors("other"), (brand::BUTTON, brand::MUTED));
+        assert_eq!(badge_colors("claude"), brand::claude_badge());
+        assert_eq!(badge_colors("gemini"), brand::gemini_badge());
+        assert_eq!(badge_colors("other"), (brand::button(), brand::muted()));
         assert_eq!(badge_letter("copilot"), "P");
         assert_eq!(badge_letter("zed"), "Z");
     }
@@ -1580,17 +1601,17 @@ mod tests {
 
     #[test]
     fn a_selected_row_is_one_tint_and_a_hovered_one_a_fainter_tint() {
-        assert_eq!(selection_fill(true, false), Some(brand::SEGMENT_ON));
-        assert_eq!(selection_fill(true, true), Some(brand::SEGMENT_ON));
-        assert_eq!(selection_fill(false, true), Some(brand::SEGMENT_ON.gamma_multiply(0.6)));
+        assert_eq!(selection_fill(true, false), Some(brand::segment_on()));
+        assert_eq!(selection_fill(true, true), Some(brand::segment_on()));
+        assert_eq!(selection_fill(false, true), Some(brand::segment_on().gamma_multiply(0.6)));
         assert_eq!(selection_fill(false, false), None);
         assert_ne!(selection_fill(false, true), selection_fill(true, false));
     }
 
     #[test]
     fn a_selected_name_is_teal_and_any_other_keeps_its_ink() {
-        assert_eq!(selected_ink(true, brand::TEXT), brand::TEAL_TEXT);
-        assert_eq!(selected_ink(false, brand::TEXT), brand::TEXT);
+        assert_eq!(selected_ink(true, brand::text()), brand::teal_text());
+        assert_eq!(selected_ink(false, brand::text()), brand::text());
     }
 
     #[test]
@@ -1627,8 +1648,8 @@ mod tests {
                     detail: "opus \u{b7} medium",
                     key: Some("1"),
                     detail_share: DETAIL_LESS,
-                    name_ink: brand::TEXT,
-                    detail_ink: brand::MUTED,
+                    name_ink: brand::text(),
+                    detail_ink: brand::muted(),
                     reserve: 0.0,
                 };
                 rects = paint_face_line(ui.painter(), rect, &line);
@@ -1658,9 +1679,9 @@ mod tests {
                 ..egui::RawInput::default()
             };
             let out = ctx.run_ui(input, |ui| {
-                let parts = [ChipPart { text: "Update stuck", ink: brand::SOFT }];
+                let parts = [ChipPart { text: "Update stuck", ink: brand::soft() }];
                 let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(160.0, 28.0));
-                paint_status_chip(ui.painter(), rect, &parts, brand::ORANGE, brand::FIELD_LINE);
+                paint_status_chip(ui.painter(), rect, &parts, brand::orange(), brand::field_line());
             });
             kinds = out
                 .shapes

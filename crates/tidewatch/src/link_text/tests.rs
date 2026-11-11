@@ -19,7 +19,7 @@ fn frame(
     let out = ctx.run_ui(raw, |ui| {
         let laid = one_line(TEXT).lay_out(ui.painter());
         rects = laid.link_rects(pos2(20.0, 20.0)).into_iter().map(|(_, rect)| rect).collect();
-        laid.paint(ui, Id::new("line"), pos2(20.0, 20.0), brand::TEXT);
+        laid.paint(ui, Id::new("line"), pos2(20.0, 20.0), brand::text());
     });
     (out.platform_output.commands, rects, out.platform_output.cursor_icon)
 }
@@ -35,7 +35,7 @@ fn selectable_frame(ctx: &egui::Context, events: Vec<Event>) -> (Vec<Rect>, Curs
     let out = ctx.run_ui(raw, |ui| {
         let laid = one_line(TEXT).lay_out(ui.painter());
         rects = laid.link_rects(pos2(20.0, 20.0)).into_iter().map(|(_, rect)| rect).collect();
-        laid.paint_selectable(ui, Id::new("line"), pos2(20.0, 20.0), brand::TEXT);
+        laid.paint_selectable(ui, Id::new("line"), pos2(20.0, 20.0), brand::text());
     });
     (rects, out.platform_output.cursor_icon)
 }
@@ -96,7 +96,7 @@ fn a_link_that_wraps_has_a_rect_per_row() {
         let mut text = Text::new();
         text.run(
             "go https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa end",
-            &TextFormat::simple(body(14.0), brand::TEXT),
+            &TextFormat::simple(body(14.0), brand::text()),
         );
         let laid = text.wrapped(150.0, 3).lay_out(ui.painter());
         let rects = laid.link_rects(pos2(0.0, 0.0));
@@ -152,12 +152,12 @@ fn a_hovered_link_is_underlined_in_full_teal() {
         let laid = one_line(TEXT).lay_out(ui.painter());
         let strokes: Vec<Stroke> =
             laid.underlined(0).sections.iter().map(|s| s.format.underline).collect();
-        assert_eq!(strokes, [Stroke::NONE, Stroke::new(1.0, brand::TEAL_TEXT), Stroke::NONE]);
+        assert_eq!(strokes, [Stroke::NONE, Stroke::new(1.0, brand::teal_text()), Stroke::NONE]);
     });
 }
 
 fn one_line(text: &str) -> Text {
     let mut line = Text::new();
-    line.run(text, &egui::epaint::text::TextFormat::simple(body(14.0), brand::TEXT));
+    line.run(text, &egui::epaint::text::TextFormat::simple(body(14.0), brand::text()));
     line.wrapped(500.0, 1)
 }

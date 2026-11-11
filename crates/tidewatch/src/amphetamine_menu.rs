@@ -153,14 +153,14 @@ fn paint_value(ui: &Ui, row: Rect, value: Choice, wall: f64, zone: &TimeZone) {
         Align2::LEFT_CENTER,
         length_text(value),
         mono(VALUE_SIZE),
-        brand::TEAL_TEXT,
+        brand::teal_text(),
     );
     painter.text(
         pos2(row.right(), y),
         Align2::RIGHT_CENTER,
         ends_text(value, wall, zone),
         body(TEXT_TAG),
-        brand::MUTED,
+        brand::muted(),
     );
 }
 
@@ -175,24 +175,24 @@ fn paint_cells(painter: &egui::Painter, cells: Rect, value: Choice) {
         } else {
             CornerRadius::same(3)
         };
-        painter.rect_filled(cell, radius, brand::FIELD_LINE);
+        painter.rect_filled(cell, radius, brand::field_line());
         let (share, ink) = match lit {
-            None => (1.0, brand::TEAL.gamma_multiply(1.0 - hour as f32 * 0.05)),
+            None => (1.0, brand::teal().gamma_multiply(1.0 - hour as f32 * 0.05)),
             Some(lit) => {
                 let share = (lit - hour as f32).clamp(0.0, 1.0);
                 let end = lit > hour as f32 && lit <= hour as f32 + 1.0;
-                (share, if end { brand::TEAL_TEXT } else { brand::TEAL })
+                (share, if end { brand::teal_text() } else { brand::teal() })
             }
         };
         if share <= 0.0 {
             continue;
         }
         let fill = Rect::from_min_size(cell.min, vec2(cell.width() * share, cell.height()));
-        if ink == brand::TEAL_TEXT {
+        if ink == brand::teal_text() {
             painter.rect_filled(
                 fill.expand(2.0),
                 CornerRadius::same(4),
-                brand::TEAL.gamma_multiply(0.3),
+                brand::teal().gamma_multiply(0.3),
             );
         }
         painter.rect_filled(fill, radius, ink);
@@ -202,15 +202,15 @@ fn paint_cells(painter: &egui::Painter, cells: Rect, value: Choice) {
 fn paint_cap(painter: &egui::Painter, cap: Rect, on: bool, hovered: bool) {
     let radius = CornerRadius { nw: 3, sw: 3, ne: 8, se: 8 };
     let (fill, line, ink) = match (on, hovered) {
-        (true, _) => (brand::TEAL, brand::TEAL_TEXT, brand::GROUND),
-        (false, true) => (brand::SEGMENT_ON, brand::TEAL, brand::TEAL_TEXT),
-        (false, false) => (brand::SUNKEN, brand::FIELD_LINE, brand::MUTED),
+        (true, _) => (brand::teal(), brand::teal_text(), brand::ground()),
+        (false, true) => (brand::segment_on(), brand::teal(), brand::teal_text()),
+        (false, false) => (brand::sunken(), brand::field_line(), brand::muted()),
     };
     if on {
         painter.rect_filled(
             cap.expand(2.0),
             CornerRadius::same(9),
-            brand::TEAL.gamma_multiply(0.3),
+            brand::teal().gamma_multiply(0.3),
         );
     }
     painter.rect(cap, radius, fill, Stroke::new(1.0, line), StrokeKind::Inside);
@@ -226,7 +226,7 @@ fn paint_ticks(painter: &egui::Painter, cells: Rect, wall: f64, zone: &TimeZone)
             HOURS => Align2::RIGHT_CENTER,
             _ => Align2::CENTER_CENTER,
         };
-        painter.text(pos2(x, y), align, tick_text(hours, wall, zone), mono(10.5), brand::FAINT);
+        painter.text(pos2(x, y), align, tick_text(hours, wall, zone), mono(10.5), brand::faint());
     }
 }
 
@@ -234,14 +234,14 @@ fn start_button(ui: &mut Ui, draft: Choice) -> Response {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), START_H), Sense::click());
     let button = rect.shrink2(vec2(INSET, 0.0));
-    let fill = if response.hovered() { brand::TEAL_TEXT } else { brand::TEAL };
+    let fill = if response.hovered() { brand::teal_text() } else { brand::teal() };
     let label = match draft {
         Choice::Open => "Start, no timer".to_owned(),
         timed @ Choice::Minutes(_) => format!("Start \u{b7} {}", length_text(timed)),
     };
     let painter = ui.painter();
     painter.rect_filled(button, CornerRadius::same(10), fill);
-    painter.text(button.center(), Align2::CENTER_CENTER, label, body(TEXT_BODY), brand::GROUND);
+    painter.text(button.center(), Align2::CENTER_CENTER, label, body(TEXT_BODY), brand::ground());
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -254,14 +254,14 @@ fn turn_off_row(ui: &mut Ui) -> Response {
         Align2::CENTER_CENTER,
         icons::X,
         egui::FontId::proportional(16.0),
-        brand::SOFT,
+        brand::soft(),
     );
     painter.text(
         pos2(icon.x + 18.0, rect.center().y),
         Align2::LEFT_CENTER,
         "Turn off",
         body(TEXT_BODY),
-        brand::TEXT,
+        brand::text(),
     );
     response
 }
@@ -280,14 +280,20 @@ fn away_band(ui: &mut Ui, away: bool) -> Response {
         ui.allocate_exact_size(vec2(ui.available_width(), BAND_H), Sense::click());
     let hovered = response.hovered();
     let (fill, line, title_ink) = match (away, hovered) {
-        (true, _) => (brand::VIOLET_FILL, brand::VIOLET_LINE, brand::VIOLET_TEXT),
-        (false, true) => (brand::SEGMENT_ON, brand::FIELD_LINE, brand::TEXT),
-        (false, false) => (brand::SUNKEN, brand::CARD_LINE, brand::TEXT),
+        (true, _) => (brand::violet_fill(), brand::violet_line(), brand::violet_text()),
+        (false, true) => (brand::segment_on(), brand::field_line(), brand::text()),
+        (false, false) => (brand::sunken(), brand::card_line(), brand::text()),
     };
     let painter = ui.painter();
     painter.rect(rect, CornerRadius::same(10), fill, Stroke::new(1.0, line), StrokeKind::Inside);
     let moon_at = pos2(rect.left() + 22.0, rect.center().y);
-    paint_moon(painter, moon_at, 7.0, if away { brand::VIOLET_TEXT } else { brand::MUTED }, fill);
+    paint_moon(
+        painter,
+        moon_at,
+        7.0,
+        if away { brand::violet_text() } else { brand::muted() },
+        fill,
+    );
     let (title, sub) = band_texts(away);
     let text_x = rect.left() + 40.0;
     painter.text(
@@ -302,14 +308,14 @@ fn away_band(ui: &mut Ui, away: bool) -> Response {
         Align2::LEFT_CENTER,
         sub,
         body(TEXT_TAG),
-        brand::MUTED,
+        brand::muted(),
     );
     let track =
         Rect::from_center_size(pos2(rect.right() - 14.0 - SWITCH.x / 2.0, rect.center().y), SWITCH);
     let radius = CornerRadius::same((SWITCH.y / 2.0) as u8);
-    painter.rect_filled(track, radius, if away { brand::VIOLET } else { brand::FIELD_LINE });
+    painter.rect_filled(track, radius, if away { brand::violet() } else { brand::field_line() });
     let knob_x = if away { track.right() - SWITCH.y / 2.0 } else { track.left() + SWITCH.y / 2.0 };
-    painter.circle_filled(pos2(knob_x, track.center().y), SWITCH.y / 2.0 - 3.0, brand::TEXT);
+    painter.circle_filled(pos2(knob_x, track.center().y), SWITCH.y / 2.0 - 3.0, brand::text());
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, away, "Away"));
     response.on_hover_cursor(egui::CursorIcon::PointingHand)

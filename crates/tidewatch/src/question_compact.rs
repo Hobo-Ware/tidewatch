@@ -43,7 +43,7 @@ fn fit(painter: &Painter, label: &str, room: f32) -> (String, f32) {
     let pad = 2.0 * Size::Compact.pad();
     let measure = |text: &str| {
         painter
-            .layout_no_wrap(text.to_owned(), body(Size::Compact.font()), crate::brand::TEXT)
+            .layout_no_wrap(text.to_owned(), body(Size::Compact.font()), crate::brand::text())
             .size()
             .x
     };

@@ -5,11 +5,12 @@
 use egui::{Key, Margin, RichText, Ui, vec2};
 use tidewatch_core::setup_recipe::Recipe;
 
+use crate::brand;
 use crate::screen_kit::Size;
 use crate::screen_kit::TEXT_BODY;
 use crate::settings_ui::{
-    self, Control, MUTED, TEXT, Tone, button, caption, divider, footer_note, note, page_header,
-    row, row_with, section, switch_row, text_input,
+    self, Control, Tone, button, caption, divider, footer_note, note, page_header, row, row_with,
+    section, switch_row, text_input,
 };
 use crate::settings_view::Action;
 use crate::setup_editor::Editor;
@@ -143,14 +144,18 @@ fn generator_card(ui: &mut Ui, editor: &mut Editor) -> Option<Recipe> {
     section(ui, "Generator", |ui| {
         egui::Frame::new().inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            ui.label(RichText::new("Command run in the new worktree").size(TEXT_BODY).color(TEXT));
+            ui.label(
+                RichText::new("Command run in the new worktree")
+                    .size(TEXT_BODY)
+                    .color(brand::text()),
+            );
             ui.label(
                 RichText::new(
                     "Runs before the agent starts, with its output in the terminal and a Worktree \
                      setup job in Progress. If it fails the agent starts anyway.",
                 )
                 .size(13.0)
-                .color(MUTED),
+                .color(brand::muted()),
             );
             let response = text_input(ui, &mut editor.generator, "npm run prepare");
             commit = response.lost_focus();
@@ -163,7 +168,7 @@ fn generator_card(ui: &mut Ui, editor: &mut Editor) -> Option<Recipe> {
 fn caption_problem(ui: &mut Ui, editor: &Editor) {
     if let Some(problem) = editor.problem {
         ui.add_space(6.0);
-        note(ui, problem, crate::brand::ORANGE);
+        note(ui, problem, crate::brand::orange());
     }
 }
 
@@ -177,7 +182,7 @@ fn entry_rows(ui: &mut Ui, entries: &[String], empty: &str) -> Option<usize> {
             ui,
             Control::button(ui, "Remove", Size::Compact),
             |ui| {
-                ui.label(RichText::new(entry).monospace().size(14.0).color(TEXT));
+                ui.label(RichText::new(entry).monospace().size(14.0).color(brand::text()));
             },
             |ui| button(ui, "Remove", Tone::Quiet, Size::Compact).clicked(),
         );
@@ -194,9 +199,11 @@ fn suggestion_row(ui: &mut Ui, name: &str) -> bool {
         Control::button(ui, "Add", Size::Compact),
         |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(RichText::new(name).monospace().size(14.0).color(TEXT));
+            ui.label(RichText::new(name).monospace().size(14.0).color(brand::text()));
             ui.label(
-                RichText::new("Ignored by git, found in the main checkout").size(13.0).color(MUTED),
+                RichText::new("Ignored by git, found in the main checkout")
+                    .size(13.0)
+                    .color(brand::muted()),
             );
         },
         |ui| button(ui, "Add", Tone::Primary, Size::Compact).clicked(),

@@ -106,15 +106,15 @@ pub(crate) fn pick(
 
 fn row_job(hit: &Hit, selected: bool) -> LayoutJob {
     let name_at = hit.name_start();
-    let ink = selected_ink(selected, brand::TEXT);
+    let ink = selected_ink(selected, brand::text());
     let mut job = LayoutJob::default();
     for (index, c) in hit.path.chars().enumerate() {
         let lit = hit.lit.contains(&index);
         let in_name = index >= hit.path[..name_at].chars().count();
         let format = match (lit, in_name) {
-            (true, _) => TextFormat::simple(heading(TEXT_BODY), brand::TEAL_TEXT),
+            (true, _) => TextFormat::simple(heading(TEXT_BODY), brand::teal_text()),
             (false, true) => TextFormat::simple(FontId::proportional(TEXT_BODY), ink),
-            (false, false) => TextFormat::simple(FontId::proportional(TEXT_BODY), brand::MUTED),
+            (false, false) => TextFormat::simple(FontId::proportional(TEXT_BODY), brand::muted()),
         };
         job.append(&c.to_string(), 0.0, format);
     }
@@ -131,7 +131,7 @@ fn paint_row(ui: &Ui, rect: Rect, hit: &Hit, selected: bool, hovered: bool) {
     painter.galley(
         pos2(rect.left() + ROW_PAD, rect.center().y - galley.size().y / 2.0),
         galley,
-        brand::TEXT,
+        brand::text(),
     );
     if selected {
         painter.text(
@@ -139,7 +139,7 @@ fn paint_row(ui: &Ui, rect: Rect, hit: &Hit, selected: bool, hovered: bool) {
             Align2::RIGHT_CENTER,
             "Tab",
             FontId::proportional(12.0),
-            brand::MUTED,
+            brand::muted(),
         );
     }
 }
@@ -154,8 +154,8 @@ pub(crate) fn show(ui: &Ui, id: Id, at: Pos2, rows: &[Hit], picked: usize) -> Op
         .fixed_pos(pos2(at.x, at.y - GAP))
         .show(ui.ctx(), |ui| {
             Frame::new()
-                .fill(brand::ITEM)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::item())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(CornerRadius::same(12))
                 .inner_margin(Margin::same(PAD))
                 .show(ui, |ui| {

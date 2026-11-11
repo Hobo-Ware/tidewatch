@@ -16,8 +16,8 @@ use crate::screen_kit::{
     paint_tag, primary_button, quiet_button, tag_width,
 };
 use crate::settings_ui::{
-    self, Control, FAINT, MUTED, TEXT, button, button_width, disclosure, divider, footer_note,
-    note, page_header, path_line, row_with, section,
+    self, Control, button, button_width, disclosure, divider, footer_note, note, page_header,
+    path_line, row_with, section,
 };
 
 const LINE_H: f32 = 36.0;
@@ -105,9 +105,9 @@ pub(crate) fn consent_text(consent: Consent) -> &'static str {
 
 fn pill_of(tone: Tone) -> (&'static str, Color32) {
     match tone {
-        Tone::Change => ("edits file", brand::TEAL_TEXT),
-        Tone::Fine => ("no file change", brand::GREEN),
-        Tone::Warn => ("cannot edit", brand::ORANGE),
+        Tone::Change => ("edits file", brand::teal_text()),
+        Tone::Fine => ("no file change", brand::green()),
+        Tone::Warn => ("cannot edit", brand::orange()),
     }
 }
 
@@ -133,16 +133,16 @@ fn cli_line(ui: &mut egui::Ui, row: &Row, home: Option<&Path>, boxed: bool) {
         Align2::LEFT_CENTER,
         row.name,
         body(TEXT_BODY),
-        brand::TEXT,
+        brand::text(),
     );
     let right = tag_left - LINE_GAP;
     let room = right - name.right() - LINE_GAP;
     if let Some(file) = &row.file {
         let shown = fit_path(painter, "", &tilde_of(file, home), &mono(TEXT_TAG), room);
-        painter.text(pos2(right, mid), Align2::RIGHT_CENTER, shown, mono(TEXT_TAG), brand::MUTED);
+        painter.text(pos2(right, mid), Align2::RIGHT_CENTER, shown, mono(TEXT_TAG), brand::muted());
         response.on_hover_text(file);
     } else if let Some(place) = row.place {
-        painter.text(pos2(right, mid), Align2::RIGHT_CENTER, place, body(TEXT_TAG), brand::MUTED);
+        painter.text(pos2(right, mid), Align2::RIGHT_CENTER, place, body(TEXT_TAG), brand::muted());
     }
 }
 
@@ -150,19 +150,19 @@ fn cli_line(ui: &mut egui::Ui, row: &Row, home: Option<&Path>, boxed: bool) {
 fn exact_lines(ui: &mut egui::Ui, rows: &[Row]) {
     ui.spacing_mut().item_spacing.y = 4.0;
     for row in rows {
-        ui.label(RichText::new(row.name).size(TEXT_BODY).color(brand::TEXT));
+        ui.label(RichText::new(row.name).size(TEXT_BODY).color(brand::text()));
         if let Some(file) = &row.file {
-            ui.label(RichText::new(file).monospace().size(TEXT_TAG).color(brand::FAINT));
+            ui.label(RichText::new(file).monospace().size(TEXT_TAG).color(brand::faint()));
         }
         if let Some(line) = &row.line {
             ui.label(
                 RichText::new(format!("adds  {line}"))
                     .monospace()
                     .size(TEXT_TAG)
-                    .color(brand::SOFT),
+                    .color(brand::soft()),
             );
         }
-        ui.label(RichText::new(&row.note).size(TEXT_TAG).color(brand::MUTED));
+        ui.label(RichText::new(&row.note).size(TEXT_TAG).color(brand::muted()));
         ui.add_space(6.0);
     }
     ui.label(
@@ -172,7 +172,7 @@ fn exact_lines(ui: &mut egui::Ui, rows: &[Row]) {
              appears in each new worktree.",
         )
         .size(TEXT_TAG)
-        .color(brand::MUTED),
+        .color(brand::muted()),
     );
 }
 
@@ -207,7 +207,7 @@ pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
                     tilde_of(page.root, page.home)
                 ))
                 .size(TEXT_BODY)
-                .color(brand::SOFT),
+                .color(brand::soft()),
             );
             ui.add_space(6.0);
             for row in &rows {
@@ -256,15 +256,17 @@ pub(crate) fn settings_page(ui: &mut egui::Ui, page: &Page, file: &str) -> Optio
             Control::new(width, 34.0),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 3.0;
-                ui.label(RichText::new("Skip the trust prompts").size(TEXT_BODY).color(TEXT));
+                ui.label(
+                    RichText::new("Skip the trust prompts").size(TEXT_BODY).color(brand::text()),
+                );
                 note(
                     ui,
                     "Answer \"do you trust this folder?\" once for the folders Tidewatch creates.",
-                    MUTED,
+                    brand::muted(),
                 );
-                path_line(ui, page.root, (TEXT_TAG, FAINT), ui.available_width());
+                path_line(ui, page.root, (TEXT_TAG, brand::faint()), ui.available_width());
                 if page.added > 0 {
-                    note(ui, &format!("{} entries added by Tidewatch", page.added), MUTED);
+                    note(ui, &format!("{} entries added by Tidewatch", page.added), brand::muted());
                 }
             },
             |ui| {

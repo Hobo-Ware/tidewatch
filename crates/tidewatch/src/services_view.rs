@@ -194,21 +194,21 @@ pub(crate) fn label(count: usize) -> String {
 
 pub(crate) fn dot_color(word: Word) -> Color32 {
     match word {
-        Word::Running => brand::GREEN,
-        Word::Starting | Word::Restarting => brand::TEAL,
-        Word::Crashed => brand::ORANGE,
-        Word::Stopped => brand::FAINT,
+        Word::Running => brand::green(),
+        Word::Starting | Word::Restarting => brand::teal(),
+        Word::Crashed => brand::orange(),
+        Word::Stopped => brand::faint(),
     }
 }
 
 /// The pill's outline: teal when every service runs, orange when one gave up, else quiet.
 pub(crate) fn outline(rows: &[Row]) -> Color32 {
     if rows.iter().any(|row| row.word == Word::Crashed) {
-        brand::ORANGE
+        brand::orange()
     } else if rows.iter().all(|row| row.word == Word::Running) {
-        brand::TEAL
+        brand::teal()
     } else {
-        brand::FIELD_LINE
+        brand::field_line()
     }
 }
 
@@ -225,7 +225,7 @@ pub(crate) fn is_running(word: Word) -> bool {
 }
 
 fn label_width(ui: &Ui, text: &str) -> f32 {
-    ui.painter().layout_no_wrap(text.to_owned(), body(Size::Compact.font()), brand::SOFT).size().x
+    ui.painter().layout_no_wrap(text.to_owned(), body(Size::Compact.font()), brand::soft()).size().x
 }
 
 pub(crate) fn pill_width(ui: &Ui, count: usize) -> f32 {
@@ -265,7 +265,7 @@ pub(crate) fn pill(ui: &mut Ui, rows: &[Row], repo: &str, memory: &mut Memory) -
         Align2::LEFT_CENTER,
         label(rows.len()),
         body(Size::Compact.font()),
-        if response.hovered() || open { brand::TEXT } else { brand::SOFT },
+        if response.hovered() || open { brand::text() } else { brand::soft() },
     );
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -277,7 +277,7 @@ pub(crate) fn pill(ui: &mut Ui, rows: &[Row], repo: &str, memory: &mut Memory) -
 }
 
 fn dim(color: Color32) -> Color32 {
-    if color == brand::FIELD_LINE { color } else { color.gamma_multiply(0.7) }
+    if color == brand::field_line() { color } else { color.gamma_multiply(0.7) }
 }
 
 fn list(
@@ -288,8 +288,8 @@ fn list(
 ) -> Option<Action> {
     let mut action = None;
     let frame = egui::Frame::new()
-        .fill(brand::CARD)
-        .stroke(Stroke::new(1.0, brand::CARD_LINE))
+        .fill(brand::card())
+        .stroke(Stroke::new(1.0, brand::card_line()))
         .corner_radius(12)
         .shadow(egui::epaint::Shadow {
             offset: [0, 8],
@@ -378,14 +378,14 @@ fn add_row(ui: &mut Ui) -> egui::Response {
         Align2::CENTER_CENTER,
         icons::PLUS,
         egui::FontId::proportional(16.0),
-        brand::SOFT,
+        brand::soft(),
     );
     ui.painter().text(
         pos2(rect.left() + ROW_PAD + DOT * 2.0 + 10.0, mid),
         Align2::LEFT_CENTER,
         "Add service",
         body(TEXT_BODY),
-        brand::SOFT,
+        brand::soft(),
     );
     response
 }
@@ -399,7 +399,7 @@ fn card(ui: &mut Ui, row: &Row, memory: &mut Memory, edge: f32) -> Option<Action
     let hot = selected || menu_open || ui.rect_contains_pointer(rect);
     let running = is_running(row.word);
     if row.word == Word::Crashed {
-        ui.painter().rect_filled(rect, CornerRadius::same(8), brand::STRUGGLE_FILL);
+        ui.painter().rect_filled(rect, CornerRadius::same(8), brand::struggle_fill());
     }
     selection_row(ui.painter(), rect, selected, hot);
     let side = Size::Compact.height();
@@ -512,11 +512,11 @@ fn paint_card_text(ui: &Ui, rect: Rect, row: &Row, reserve: f32, selected: bool)
     painter.circle_filled(pos2(dot_x, mid), DOT / 2.0, dot_color(row.word));
     let text_left = rect.left() + ROW_PAD + DOT + 10.0;
     let room = (rect.right() - reserve - text_left).max(1.0);
-    let name_ink = selected_ink(selected, brand::TEXT);
+    let name_ink = selected_ink(selected, brand::text());
     let name = painter.layout_no_wrap(row.name.clone(), body(TEXT_BODY), name_ink);
     let line_ink = match row.word {
-        Word::Crashed => brand::ORANGE,
-        _ => brand::FAINT,
+        Word::Crashed => brand::orange(),
+        _ => brand::faint(),
     };
     let line = crate::reader_view::ellipsized(
         painter,
@@ -530,13 +530,13 @@ fn paint_card_text(ui: &Ui, rect: Rect, row: &Row, reserve: f32, selected: bool)
     painter.galley(pos2(text_left, top + 1.0), name, name_ink);
     painter.galley(pos2(text_left + name_w + 6.0, top + 3.0), line, line_ink);
     let galley = painter.layout_job(cut_to(&row.command, room));
-    painter.galley(pos2(text_left, top + 21.0), galley, brand::MUTED);
+    painter.galley(pos2(text_left, top + 21.0), galley, brand::muted());
 }
 
 fn cut_to(text: &str, width: f32) -> LayoutJob {
     let mut job = LayoutJob::single_section(
         text.to_owned(),
-        TextFormat { font_id: mono(TEXT_TAG), color: brand::MUTED, ..TextFormat::default() },
+        TextFormat { font_id: mono(TEXT_TAG), color: brand::muted(), ..TextFormat::default() },
     );
     job.wrap = TextWrapping {
         max_width: width,
@@ -597,7 +597,7 @@ fn form_dialog(
         if let (true, Err(found)) = (form.tried, &verdict) {
             ui.add_space(4.0);
             for problem in found {
-                ui.label(egui::RichText::new(problem).size(TEXT_TAG).color(brand::RED));
+                ui.label(egui::RichText::new(problem).size(TEXT_TAG).color(brand::red()));
             }
         }
         ui.add_space(6.0);
@@ -633,12 +633,12 @@ fn remove_dialog(ctx: &egui::Context, key: ServiceKey) -> (Option<Dialog>, Optio
             ui.label(
                 egui::RichText::new(format!("Remove {name}?"))
                     .font(body(TEXT_BODY))
-                    .color(brand::TEXT),
+                    .color(brand::text()),
             );
             ui.label(
                 egui::RichText::new("Tidewatch stops it and forgets it. Your repo is not touched.")
                     .size(TEXT_TAG)
-                    .color(brand::MUTED),
+                    .color(brand::muted()),
             );
             ui.add_space(6.0);
             footer_row(ui, &[], |ui| {

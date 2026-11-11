@@ -348,7 +348,7 @@ mod tests {
         match shape {
             egui::Shape::Vec(inner) => inner.iter().for_each(|shape| collect_chips(shape, out)),
             egui::Shape::Rect(rect)
-                if rect.fill == crate::brand::SUNKEN
+                if rect.fill == crate::brand::sunken()
                     && rect.rect.height() == crate::screen_kit::Size::Tag.height() =>
             {
                 out.push(rect.rect);

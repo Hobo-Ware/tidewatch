@@ -102,7 +102,7 @@ fn hint(send: SendState, profile: &str, key: &str) -> Vec<(String, bool)> {
 fn hint_job(parts: &[(String, bool)], ink: egui::Color32) -> LayoutJob {
     let mut job = LayoutJob::default();
     for (text, is_key) in parts {
-        let (font, color) = if *is_key { (mono(SMALL), brand::SOFT) } else { (body(SMALL), ink) };
+        let (font, color) = if *is_key { (mono(SMALL), brand::soft()) } else { (body(SMALL), ink) };
         job.append(text, 0.0, TextFormat { font_id: font, color, ..TextFormat::default() });
     }
     job
@@ -150,7 +150,7 @@ pub(crate) fn show(
         actions.push(ReviewAction::Send(tokens::sendable(&std::mem::take(&mut state.message))));
     }
     let ink =
-        if matches!(facts.send, SendState::Refused(_)) { brand::ORANGE } else { brand::FAINT };
+        if matches!(facts.send, SendState::Refused(_)) { brand::orange() } else { brand::faint() };
     let parts = hint(facts.send, facts.profile, key_name(Platform::CURRENT));
     let galley = ui.painter().layout_job(hint_job(&parts, ink));
     ui.painter().galley(
@@ -169,13 +169,13 @@ fn header(ui: &mut Ui, rect: Rect, draft: &Draft, actions: &mut Vec<ReviewAction
     }
     let left = Rect::from_min_max(rect.min, pos2(child.min_rect().left() - GAP, rect.bottom()));
     let painter = ui.painter();
-    let title = painter.layout_no_wrap("Your review".to_owned(), heading(14.0), brand::TEXT);
-    let summary = painter.layout_no_wrap(draft.summary(), body(FONT - 0.5), brand::FAINT);
+    let title = painter.layout_no_wrap("Your review".to_owned(), heading(14.0), brand::text());
+    let summary = painter.layout_no_wrap(draft.summary(), body(FONT - 0.5), brand::faint());
     let title_at = pos2(left.left(), left.center().y - title.size().y / 2.0);
     let summary_at =
         pos2(title_at.x + title.size().x + 10.0, left.center().y - summary.size().y / 2.0);
-    painter.galley(title_at, title, brand::TEXT);
-    painter.galley(summary_at, summary, brand::FAINT);
+    painter.galley(title_at, title, brand::text());
+    painter.galley(summary_at, summary, brand::faint());
 }
 
 /// The Discard button: the first click arms it, the second discards, a click elsewhere disarms.
@@ -213,11 +213,11 @@ fn notes_list(ui: &mut Ui, rect: Rect, draft: &Draft) {
 
 fn file_line(ui: &mut Ui, path: &str) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), FILE_H), Sense::hover());
-    let galley = ellipsized(ui.painter(), path, mono(SMALL), brand::MUTED, rect.width());
+    let galley = ellipsized(ui.painter(), path, mono(SMALL), brand::muted(), rect.width());
     ui.painter().galley(
         pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
         galley,
-        brand::MUTED,
+        brand::muted(),
     );
 }
 
@@ -225,17 +225,17 @@ fn note_line(ui: &mut Ui, note: &DraftNote) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     let painter = ui.painter();
     let at = |x: f32, height: f32| pos2(x, rect.center().y - height / 2.0);
-    let place = painter.layout_no_wrap(note.lines.clone(), mono(SMALL), brand::FAINT);
+    let place = painter.layout_no_wrap(note.lines.clone(), mono(SMALL), brand::faint());
     let mut x = rect.left() + LINE_W.max(place.size().x + LINE_GAP);
-    painter.galley(at(rect.left(), place.size().y), place, brand::FAINT);
+    painter.galley(at(rect.left(), place.size().y), place, brand::faint());
     if let Some(reviewer) = &note.reviewer {
-        let name = painter.layout_no_wrap(reviewer.clone(), body(SMALL), brand::TEAL_TEXT);
+        let name = painter.layout_no_wrap(reviewer.clone(), body(SMALL), brand::teal_text());
         let width = name.size().x;
-        painter.galley(at(x, name.size().y), name, brand::TEAL_TEXT);
+        painter.galley(at(x, name.size().y), name, brand::teal_text());
         x += width + 8.0;
     }
-    let text = ellipsized(painter, &note.text, body(FONT), brand::SOFT, rect.right() - x);
-    painter.galley(at(x, text.size().y), text, brand::SOFT);
+    let text = ellipsized(painter, &note.text, body(FONT), brand::soft(), rect.right() - x);
+    painter.galley(at(x, text.size().y), text, brand::soft());
 }
 
 /// The message field with the send button. Returns whether the button was clicked.

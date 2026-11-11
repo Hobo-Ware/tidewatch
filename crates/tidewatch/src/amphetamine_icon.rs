@@ -124,7 +124,7 @@ fn glow(frame: &Frame, tablet: &Tablet) {
         frame.painter.circle_filled(
             center,
             radius,
-            with_alpha(brand::TEAL, tablet.glow * 0.16 * falloff * falloff),
+            with_alpha(brand::teal(), tablet.glow * 0.16 * falloff * falloff),
         );
     }
 }
@@ -155,13 +155,13 @@ fn body(frame: &Frame, tablet: &Tablet) {
         let shade = rims.shade.iter().map(|p| CENTER + (*p - CENTER) * SHADE_SCALE);
         let mut shade: Vec<Pos2> = shade.map(|p| frame.at(p)).collect();
         shade.push(shade[0]);
-        let ink = with_alpha(brand::GROUND, 0.3 * tablet.rough_fill);
+        let ink = with_alpha(brand::ground(), 0.3 * tablet.rough_fill);
         frame.painter.add(Shape::line(shade, frame.stroke(SHADE_STROKE, ink)));
         for (x, y, radius, light) in motion::CHALK {
             let color = if light {
-                brand::TEXT.gamma_multiply(0.35)
+                brand::text().gamma_multiply(0.35)
             } else {
-                brand::GROUND.gamma_multiply(0.3)
+                brand::ground().gamma_multiply(0.3)
             };
             frame.painter.circle_filled(
                 frame.at(vec2(x, y)),

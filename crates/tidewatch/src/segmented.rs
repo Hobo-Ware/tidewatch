@@ -84,8 +84,8 @@ fn paint_segments(
     painter.rect(
         container,
         CornerRadius::same(Size::Compact.radius()),
-        brand::SEGMENT,
-        Stroke::new(1.0, brand::SEGMENT_LINE),
+        brand::segment(),
+        Stroke::new(1.0, brand::segment_line()),
         StrokeKind::Inside,
     );
     let mut clicked = None;
@@ -93,15 +93,15 @@ fn paint_segments(
         let response = ui.interact(rect, id.with(index), Sense::click());
         let on = index == active;
         if on {
-            painter.rect_filled(rect, 5.0, brand::SEGMENT_ON);
+            painter.rect_filled(rect, 5.0, brand::segment_on());
         }
         let reason = refusal(refused, index);
         let tone = tones.get(index).copied().flatten();
         let ink = match (on, reason.is_some(), response.hovered()) {
-            (true, _, _) => tone.unwrap_or(brand::TEAL_TEXT),
-            (false, true, _) => brand::FAINT,
-            (false, false, true) => brand::TEXT,
-            (false, false, false) => tone.unwrap_or(brand::SOFT),
+            (true, _, _) => tone.unwrap_or(brand::teal_text()),
+            (false, true, _) => brand::faint(),
+            (false, false, true) => brand::text(),
+            (false, false, false) => tone.unwrap_or(brand::soft()),
         };
         let count = badges.get(index).copied().flatten().filter(|&count| count > 0);
         let key = keys.get(index);
@@ -111,7 +111,7 @@ fn paint_segments(
             paint_badge(&painter, rect, count);
         } else if let Some(key) = key {
             let at = pos2(rect.right() - SEGMENT_PAD, rect.center().y);
-            painter.text(at, Align2::RIGHT_CENTER, *key, mono(KEY_FONT), brand::FAINT);
+            painter.text(at, Align2::RIGHT_CENTER, *key, mono(KEY_FONT), brand::faint());
         }
         if pointer_over(response, reason).clicked() && !on {
             clicked = Some(index);
@@ -137,13 +137,13 @@ fn paint_badge(painter: &egui::Painter, segment: Rect, count: usize) {
         pos2(segment.right() - SEGMENT_PAD - BADGE_W / 2.0, segment.center().y),
         vec2(BADGE_W, BADGE_H),
     );
-    painter.rect_filled(pill, CornerRadius::same(255), brand::TEAL.gamma_multiply(0.22));
+    painter.rect_filled(pill, CornerRadius::same(255), brand::teal().gamma_multiply(0.22));
     painter.text(
         pill.center(),
         Align2::CENTER_CENTER,
         badge_label(count),
         mono(BADGE_FONT),
-        brand::TEAL_TEXT,
+        brand::teal_text(),
     );
 }
 
@@ -151,7 +151,7 @@ fn text_widths(ui: &Ui, labels: &[&str]) -> Vec<f32> {
     labels
         .iter()
         .map(|label| {
-            ui.painter().layout_no_wrap((*label).to_owned(), body(FONT), brand::SOFT).size().x
+            ui.painter().layout_no_wrap((*label).to_owned(), body(FONT), brand::soft()).size().x
         })
         .collect()
 }
@@ -224,7 +224,8 @@ pub(crate) fn show_keyed(
         .into_iter()
         .zip(&keys)
         .map(|(label, key)| {
-            let cap = ui.painter().layout_no_wrap((*key).to_owned(), mono(KEY_FONT), brand::FAINT);
+            let cap =
+                ui.painter().layout_no_wrap((*key).to_owned(), mono(KEY_FONT), brand::faint());
             label + KEY_GAP + cap.size().x
         })
         .collect();
@@ -381,9 +382,9 @@ fn chips(
         let response = ui.interact(rect, id.with(index), Sense::click());
         let on = index == active;
         let (fill, line) = if on {
-            (brand::SEGMENT_ON, brand::SEGMENT_LINE)
+            (brand::segment_on(), brand::segment_line())
         } else {
-            (brand::SEGMENT, brand::SEGMENT_LINE)
+            (brand::segment(), brand::segment_line())
         };
         painter.rect(
             rect,
@@ -395,10 +396,10 @@ fn chips(
         let reason = refusal(refused, index);
         let tone = tones.get(index).copied().flatten();
         let ink = match (on, reason.is_some(), response.hovered()) {
-            (true, _, _) => tone.unwrap_or(brand::TEAL_TEXT),
-            (false, true, _) => brand::FAINT,
-            (false, false, true) => brand::TEXT,
-            (false, false, false) => tone.unwrap_or(brand::SOFT),
+            (true, _, _) => tone.unwrap_or(brand::teal_text()),
+            (false, true, _) => brand::faint(),
+            (false, false, true) => brand::text(),
+            (false, false, false) => tone.unwrap_or(brand::soft()),
         };
         painter.text(rect.center(), Align2::CENTER_CENTER, *label, body(FONT), ink);
         if pointer_over(response, reason).clicked() && !on {

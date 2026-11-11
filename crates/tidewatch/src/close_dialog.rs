@@ -181,7 +181,7 @@ fn show_checking(ctx: &egui::Context, worktree: &Worktree) -> Option<Answer> {
         DialogWidth::Medium,
         |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
-            ui.label(RichText::new(CHECKING_LINE).color(brand::MUTED));
+            ui.label(RichText::new(CHECKING_LINE).color(brand::muted()));
             ui.add_space(6.0);
             footer_row(ui, CHECKING_HINT, |ui| {
                 if quiet_button(ui, "Cancel", true, Size::Regular).clicked() {
@@ -213,10 +213,10 @@ pub(crate) fn show(
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.label(
                 RichText::new("This removes the worktree folder. The branch can stay or go.")
-                    .color(brand::MUTED),
+                    .color(brand::muted()),
             );
             for line in warnings(safety) {
-                ui.label(RichText::new(line).color(brand::RED.gamma_multiply(0.8)));
+                ui.label(RichText::new(line).color(brand::red().gamma_multiply(0.8)));
             }
             ui.add_space(6.0);
             let keyed = enter_choice(safety, enter);

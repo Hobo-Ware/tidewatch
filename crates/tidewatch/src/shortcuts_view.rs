@@ -2,9 +2,10 @@
 
 use egui::{RichText, Ui};
 
+use crate::brand;
 use crate::commands::{self, Group, Platform};
 use crate::screen_kit::TEXT_TAG;
-use crate::settings_ui::{Control, FAINT, TEXT, key_cap, note, padded_row, page_header, section};
+use crate::settings_ui::{Control, key_cap, note, padded_row, page_header, section};
 
 const KEYS_WIDTH: f32 = 230.0;
 
@@ -48,7 +49,7 @@ pub(crate) fn page(ui: &mut Ui) {
         ui,
         "Every command except the dialog keys is also in the command palette. Enter, Esc and the \
          arrow keys inside dialogs and the palette are fixed.",
-        FAINT,
+        brand::faint(),
     );
 }
 
@@ -58,12 +59,12 @@ fn shortcut_row(ui: &mut Ui, title: &str, keys: &str) {
         10,
         Control::new(KEYS_WIDTH, 26.0),
         |ui| {
-            ui.label(RichText::new(title).size(14.0).color(TEXT));
+            ui.label(RichText::new(title).size(14.0).color(brand::text()));
         },
         |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             if keys.is_empty() {
-                ui.label(RichText::new("palette only").size(12.0).color(FAINT));
+                ui.label(RichText::new("palette only").size(12.0).color(brand::faint()));
             }
             for cap in caps(keys).into_iter().rev() {
                 match cap {
@@ -71,7 +72,7 @@ fn shortcut_row(ui: &mut Ui, title: &str, keys: &str) {
                         key_cap(ui, text, 12.0);
                     }
                     Cap::To => {
-                        ui.label(RichText::new("to").size(TEXT_TAG).color(FAINT));
+                        ui.label(RichText::new("to").size(TEXT_TAG).color(brand::faint()));
                     }
                 }
             }

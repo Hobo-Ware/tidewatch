@@ -62,14 +62,14 @@ pub(crate) fn describe(status: &AgentStatus) -> String {
 /// `None` for a plain shell: it has no status to color.
 pub(crate) fn color(tone: Tone) -> Option<Color32> {
     match tone {
-        Tone::Setup => Some(brand::WORKING.gamma_multiply(0.6)),
-        Tone::Working => Some(brand::WORKING),
-        Tone::Needs => Some(brand::NEEDS),
-        Tone::Waiting => Some(brand::WAITING),
-        Tone::Blocked => Some(brand::BLOCKED),
-        Tone::Done => Some(brand::DONE),
-        Tone::Failed => Some(brand::FAILED),
-        Tone::Stopped => Some(brand::MUTED),
+        Tone::Setup => Some(brand::working().gamma_multiply(0.6)),
+        Tone::Working => Some(brand::working()),
+        Tone::Needs => Some(brand::needs()),
+        Tone::Waiting => Some(brand::waiting()),
+        Tone::Blocked => Some(brand::blocked()),
+        Tone::Done => Some(brand::done()),
+        Tone::Failed => Some(brand::failed()),
+        Tone::Stopped => Some(brand::muted()),
         Tone::Shell => None,
     }
 }
@@ -165,11 +165,11 @@ mod tests {
 
     #[test]
     fn colors_follow_the_traffic_light_and_a_shell_has_none() {
-        assert_eq!(color(Tone::Needs), Some(brand::NEEDS));
-        assert_eq!(color(Tone::Done), Some(brand::DONE));
-        assert_eq!(color(Tone::Failed), Some(brand::FAILED));
-        assert_eq!(color(Tone::Working), Some(brand::WORKING));
-        assert_eq!(color(Tone::Stopped), Some(brand::MUTED));
+        assert_eq!(color(Tone::Needs), Some(brand::needs()));
+        assert_eq!(color(Tone::Done), Some(brand::done()));
+        assert_eq!(color(Tone::Failed), Some(brand::failed()));
+        assert_eq!(color(Tone::Working), Some(brand::working()));
+        assert_eq!(color(Tone::Stopped), Some(brand::muted()));
         assert_eq!(color(Tone::Shell), None);
         let lit = [
             Tone::Setup,

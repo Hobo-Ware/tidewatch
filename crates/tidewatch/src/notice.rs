@@ -23,8 +23,8 @@ fn draw(ctx: &egui::Context, text: &str, column: Rect) -> (bool, Rect) {
         .fixed_pos(pos2(column.center().x, column.bottom() - BOTTOM_GAP))
         .show(ctx, |ui| {
             let card = egui::Frame::new()
-                .fill(brand::ITEM)
-                .stroke(Stroke::new(1.0, brand::ITEM_LINE))
+                .fill(brand::item())
+                .stroke(Stroke::new(1.0, brand::item_line()))
                 .corner_radius(8)
                 .inner_margin(Margin { left: 16, right: 10, top: 10, bottom: 10 })
                 .shadow(egui::Shadow {
@@ -37,7 +37,7 @@ fn draw(ctx: &egui::Context, text: &str, column: Rect) -> (bool, Rect) {
                     ui.set_max_width(MAX_WIDTH);
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
-                        ui.add(egui::Label::new(RichText::new(text).color(brand::TEXT)).wrap());
+                        ui.add(egui::Label::new(RichText::new(text).color(brand::text())).wrap());
                         dismissed = quiet_button(ui, "Dismiss", true, Size::Compact).clicked();
                     });
                 });
@@ -46,7 +46,7 @@ fn draw(ctx: &egui::Context, text: &str, column: Rect) -> (bool, Rect) {
                 rect.left_top() + vec2(0.0, 7.0),
                 rect.left_bottom() + vec2(BAR_W, -7.0),
             );
-            ui.painter().rect_filled(bar, 1, brand::ORANGE);
+            ui.painter().rect_filled(bar, 1, brand::orange());
         });
     (dismissed, area.response.rect)
 }

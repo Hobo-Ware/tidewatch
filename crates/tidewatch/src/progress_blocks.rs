@@ -66,7 +66,7 @@ fn paragraph(
     let room = (column.width - indent).max(MIN_TEXT_W);
     let laid = text.wrapped(room, usize::MAX).lay_out(&painter);
     let (rect, _) = ui.allocate_exact_size(vec2(column.width, laid.size().y), Sense::hover());
-    let fallback = runs.first().map_or(brand::TEXT, |run| run.2);
+    let fallback = runs.first().map_or(brand::text(), |run| run.2);
     laid.paint_selectable(ui, ui.id().with(salt), pos2(rect.left() + indent, rect.top()), fallback);
     rect
 }
@@ -74,18 +74,19 @@ fn paragraph(
 /// The label of a section: 13 px semibold, with its count when it has one.
 pub(crate) fn section_label(ui: &mut Ui, column: Column, text: &str, count: Option<usize>) {
     let painter = ui.painter().clone();
-    let ink = column.ink(brand::SOFT);
+    let ink = column.ink(brand::soft());
     let galley = painter.layout_no_wrap(text.to_owned(), heading(TEXT_SECONDARY), ink);
     let (rect, _) = ui.allocate_exact_size(vec2(column.width, LABEL_H), Sense::hover());
     let at = pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
     let right = at.x + galley.size().x;
     painter.galley(at, galley, ink);
     if let Some(count) = count {
-        let number = painter.layout_no_wrap(count.to_string(), body(TEXT_SECONDARY), brand::MUTED);
+        let number =
+            painter.layout_no_wrap(count.to_string(), body(TEXT_SECONDARY), brand::muted());
         painter.galley(
             pos2(right + 8.0, rect.center().y - number.size().y / 2.0),
             number,
-            brand::MUTED,
+            brand::muted(),
         );
     }
 }
@@ -94,33 +95,36 @@ pub(crate) fn section_label(ui: &mut Ui, column: Column, text: &str, count: Opti
 pub(crate) fn asked_block(ui: &mut Ui, column: Column, asked: &Asked) {
     let painter = ui.painter().clone();
     let inner = (column.width - 2.0 * CARD_PAD).max(MIN_TEXT_W);
-    let label =
-        painter.layout_no_wrap("Waiting on you".to_owned(), heading(TEXT_SECONDARY), brand::NEEDS);
+    let label = painter.layout_no_wrap(
+        "Waiting on you".to_owned(),
+        heading(TEXT_SECONDARY),
+        brand::needs(),
+    );
     let mut question = Text::new();
-    question.run(&asked.text, &format(body(TEXT_BODY), brand::TEXT));
+    question.run(&asked.text, &format(body(TEXT_BODY), brand::text()));
     let question = question.wrapped(inner, 4).lay_out(&painter);
     let hint = asked.hint();
     let mut note = Text::new();
-    note.run(&hint, &format(body(TEXT_SECONDARY), brand::MUTED));
+    note.run(&hint, &format(body(TEXT_SECONDARY), brand::muted()));
     let note = note.wrapped(inner, 2).lay_out(&painter);
     let height = 2.0 * CARD_PAD + label.size().y + 6.0 + question.size().y + 6.0 + note.size().y;
     let (rect, _) = ui.allocate_exact_size(vec2(column.width, height), Sense::hover());
     painter.rect(
         rect,
         CornerRadius::same(12),
-        brand::NEEDS_FILL,
-        Stroke::new(1.0, brand::NEEDS.gamma_multiply(0.45)),
+        brand::needs_fill(),
+        Stroke::new(1.0, brand::needs().gamma_multiply(0.45)),
         StrokeKind::Inside,
     );
     let (left, mut y) = (rect.left() + CARD_PAD, rect.top() + CARD_PAD);
-    painter.circle_filled(pos2(left + 3.0, y + label.size().y / 2.0), 3.0, brand::NEEDS);
+    painter.circle_filled(pos2(left + 3.0, y + label.size().y / 2.0), 3.0, brand::needs());
     let label_h = label.size().y;
-    painter.galley(pos2(left + 12.0, y), label, brand::NEEDS);
+    painter.galley(pos2(left + 12.0, y), label, brand::needs());
     y += label_h + 6.0;
     let question_h = question.size().y;
-    question.paint_selectable(ui, ui.id().with("asked-question"), pos2(left, y), brand::TEXT);
+    question.paint_selectable(ui, ui.id().with("asked-question"), pos2(left, y), brand::text());
     y += question_h + 6.0;
-    note.paint_selectable(ui, ui.id().with("asked-note"), pos2(left, y), brand::MUTED);
+    note.paint_selectable(ui, ui.id().with("asked-note"), pos2(left, y), brand::muted());
 }
 
 /// The parts of the Now block's second line: the steps done, how old the report is, what happened
@@ -154,7 +158,7 @@ pub(crate) fn now_block(ui: &mut Ui, column: Column, now: &Now, blocks: &Blocks)
             ui,
             column,
             0.0,
-            &[(&now.text, body(TEXT_BODY), column.ink(brand::TEXT))],
+            &[(&now.text, body(TEXT_BODY), column.ink(brand::text()))],
             "now-text",
         );
     }
@@ -165,7 +169,7 @@ pub(crate) fn now_block(ui: &mut Ui, column: Column, now: &Now, blocks: &Blocks)
             ui,
             column,
             0.0,
-            &[(&parts.join(" \u{b7} "), body(TEXT_SECONDARY), brand::MUTED)],
+            &[(&parts.join(" \u{b7} "), body(TEXT_SECONDARY), brand::muted())],
             "now-meta",
         );
     }
@@ -180,19 +184,19 @@ fn job_line(ui: &mut Ui, column: Column, job: &JobNow) {
     let right = job
         .right
         .as_ref()
-        .map(|text| painter.layout_no_wrap(text.clone(), body(TEXT_SECONDARY), brand::MUTED));
+        .map(|text| painter.layout_no_wrap(text.clone(), body(TEXT_SECONDARY), brand::muted()));
     let right_w = right.as_ref().map_or(0.0, |galley| galley.size().x + 12.0);
     let stacked = right.is_some() && (column.stack || column.width - right_w < 96.0);
     let name_room = if stacked { column.width } else { column.width - right_w };
     let name =
-        ellipsized(&painter, &job.name, body(TEXT_SECONDARY), brand::SOFT, name_room.max(40.0));
+        ellipsized(&painter, &job.name, body(TEXT_SECONDARY), brand::soft(), name_room.max(40.0));
     let rows = if stacked { 2.0 } else { 1.0 };
     let height = NAME_H * rows + BAR_SPACE + BAR_HEIGHT;
     let (rect, _) = ui.allocate_exact_size(vec2(column.width, height), Sense::hover());
     painter.galley(
         pos2(rect.left(), rect.top() + (NAME_H - name.size().y) / 2.0),
         name,
-        brand::SOFT,
+        brand::soft(),
     );
     if let Some(right) = right {
         let (x, y) = if stacked {
@@ -200,17 +204,17 @@ fn job_line(ui: &mut Ui, column: Column, job: &JobNow) {
         } else {
             (rect.right() - right.size().x, rect.top())
         };
-        painter.galley(pos2(x, y + (NAME_H - right.size().y) / 2.0), right, brand::MUTED);
+        painter.galley(pos2(x, y + (NAME_H - right.size().y) / 2.0), right, brand::muted());
     }
     let track = Rect::from_min_size(
         pos2(rect.left(), rect.top() + NAME_H * rows + BAR_SPACE),
         vec2(rect.width(), BAR_HEIGHT),
     );
     let radius = CornerRadius::same(3);
-    painter.rect_filled(track, radius, brand::ITEM_LINE);
+    painter.rect_filled(track, radius, brand::item_line());
     if job.fraction > 0.0 {
         let fill = Rect::from_min_size(track.min, vec2(track.width() * job.fraction, BAR_HEIGHT));
-        painter.rect_filled(fill, radius, brand::TEAL);
+        painter.rect_filled(fill, radius, brand::teal());
     }
 }
 
@@ -218,30 +222,30 @@ fn job_line(ui: &mut Ui, column: Column, job: &JobNow) {
 pub(crate) fn waiting_block(ui: &mut Ui, column: Column, what: &str) {
     let painter = ui.painter().clone();
     let label =
-        painter.layout_no_wrap("Waiting for".to_owned(), body(TEXT_SECONDARY), brand::MUTED);
+        painter.layout_no_wrap("Waiting for".to_owned(), body(TEXT_SECONDARY), brand::muted());
     if column.stack {
         let (rect, _) =
             ui.allocate_exact_size(vec2(column.width, label.size().y + 2.0), Sense::hover());
-        painter.galley(rect.left_top(), label, brand::MUTED);
-        paragraph(ui, column, 0.0, &[(what, body(TEXT_BODY), brand::TEXT)], "waiting-for");
+        painter.galley(rect.left_top(), label, brand::muted());
+        paragraph(ui, column, 0.0, &[(what, body(TEXT_BODY), brand::text())], "waiting-for");
         return;
     }
     let indent = label.size().x + 8.0;
     let mut text = Text::new();
-    text.run(what, &format(body(TEXT_BODY), brand::TEXT));
+    text.run(what, &format(body(TEXT_BODY), brand::text()));
     let laid = text.wrapped((column.width - indent).max(MIN_TEXT_W), usize::MAX).lay_out(&painter);
     let height = laid.size().y.max(label.size().y);
     let (rect, _) = ui.allocate_exact_size(vec2(column.width, height), Sense::hover());
     painter.galley(
         pos2(rect.left(), rect.top() + (height - label.size().y) / 2.0),
         label,
-        brand::MUTED,
+        brand::muted(),
     );
     laid.paint_selectable(
         ui,
         ui.id().with("waiting-for"),
         pos2(rect.left() + indent, rect.top()),
-        brand::TEXT,
+        brand::text(),
     );
 }
 
@@ -304,12 +308,12 @@ pub(crate) fn steps_block(ui: &mut Ui, column: Column, steps: &Steps<'_>) -> boo
 /// The fill and text color of a step's day tag; a ticked day has no fill.
 pub(crate) fn tag_colors(tone: TagTone) -> (Option<Color32>, Color32) {
     match tone {
-        TagTone::Ticked => (None, brand::FAINT),
-        TagTone::Due => (Some(brand::ITEM_LINE), brand::SOFT),
-        TagTone::Today => (Some(brand::TEAL_NAV), brand::TEAL_TEXT),
-        TagTone::Late => (Some(brand::RED_FILL), brand::RED),
-        TagTone::You => (Some(brand::NEEDS_FILL), brand::NEEDS),
-        TagTone::Quiet => (Some(brand::ITEM_LINE), brand::MUTED),
+        TagTone::Ticked => (None, brand::faint()),
+        TagTone::Due => (Some(brand::item_line()), brand::soft()),
+        TagTone::Today => (Some(brand::teal_nav()), brand::teal_text()),
+        TagTone::Late => (Some(brand::red_fill()), brand::red()),
+        TagTone::You => (Some(brand::needs_fill()), brand::needs()),
+        TagTone::Quiet => (Some(brand::item_line()), brand::muted()),
     }
 }
 
@@ -359,7 +363,7 @@ fn step_row(
 ) {
     let painter = ui.painter().clone();
     let muted = matches!(mark, Mark::Skipped);
-    let ink = column.ink(if muted { brand::FAINT } else { brand::TEXT });
+    let ink = column.ink(if muted { brand::faint() } else { brand::text() });
     let tag_layout = tag.map(|tag| TagLayout::new(ui, tag, column.dim));
     let tag_w = tag_layout.as_ref().map_or(0.0, |tag| tag.width() + TAG_GAP);
     let room = (column.width - TEXT_X - tag_w).max(MIN_TEXT_W);
@@ -370,15 +374,15 @@ fn step_row(
         let mut note = Text::new();
         if let Some(proof) = below.proof {
             let proof_ink = match proof {
-                Proof::Checked => column.ink(brand::DONE),
-                Proof::Claimed => column.ink(brand::MUTED),
+                Proof::Checked => column.ink(brand::done()),
+                Proof::Claimed => column.ink(brand::muted()),
             };
             note.run(proof.word(), &format(body(TEXT_SECONDARY), proof_ink));
             if !below.text.is_empty() {
-                note.run(" \u{b7} ", &format(body(TEXT_SECONDARY), column.ink(brand::FAINT)));
+                note.run(" \u{b7} ", &format(body(TEXT_SECONDARY), column.ink(brand::faint())));
             }
         }
-        let note_ink = if below.blocked { brand::NEEDS } else { brand::FAINT };
+        let note_ink = if below.blocked { brand::needs() } else { brand::faint() };
         note.run(&below.text, &format(body(TEXT_SECONDARY), column.ink(note_ink)));
         note.wrapped(room, usize::MAX).lay_out(&painter)
     });
@@ -396,7 +400,7 @@ fn step_row(
     );
     if let Some(note) = note {
         let at = pos2(rect.left() + TEXT_X, rect.top() + label_h + 2.0);
-        note.paint_selectable(ui, id.with("note"), at, brand::FAINT);
+        note.paint_selectable(ui, id.with("note"), at, brand::faint());
     }
     if let (Some(layout), Some(tag)) = (tag_layout, tag) {
         layout.paint(ui, rect.right(), rect.top() + 10.0, &tag.text, id.with("tag"));
@@ -426,9 +430,12 @@ pub(crate) fn list_block(
     let painter = ui.painter().clone();
     for (index, entry) in list.iter().take(shown_count(list.len(), all)).enumerate() {
         let mut text = Text::new();
-        text.run(entry.text.trim(), &format(body(TEXT_BODY), column.ink(brand::SOFT)));
+        text.run(entry.text.trim(), &format(body(TEXT_BODY), column.ink(brand::soft())));
         if let Some(why) = entry.why.as_deref().map(str::trim).filter(|why| !why.is_empty()) {
-            text.run(&format!("  {why}"), &format(body(TEXT_SECONDARY), column.ink(brand::FAINT)));
+            text.run(
+                &format!("  {why}"),
+                &format(body(TEXT_SECONDARY), column.ink(brand::faint())),
+            );
         }
         let laid = text
             .wrapped((column.width - TEXT_X + MARK_W).max(MIN_TEXT_W), usize::MAX)
@@ -440,7 +447,7 @@ pub(crate) fn list_block(
             Tag::Verified => paint_mark(&painter, bullet, 12.0, Mark::Done, 0.0),
             Tag::NotVerified => paint_mark(&painter, bullet, 12.0, Mark::Todo, 0.0),
             Tag::Decisions => {
-                painter.circle_filled(bullet, 2.0, column.ink(brand::FAINT));
+                painter.circle_filled(bullet, 2.0, column.ink(brand::faint()));
             }
         }
         let id = ui.id().with(("entry", tag.caption(), index));
@@ -448,7 +455,7 @@ pub(crate) fn list_block(
             ui,
             id,
             pos2(rect.left() + 16.0, rect.top() + (20.0 - laid.size().y.min(20.0)) / 2.0),
-            brand::SOFT,
+            brand::soft(),
         );
     }
     fold_label(list.len(), all).is_some_and(|label| fold_link(ui, &label, tag.caption()))
@@ -456,11 +463,11 @@ pub(crate) fn list_block(
 
 /// A muted link that answers a click. `salt` tells folds apart.
 pub(crate) fn fold_link(ui: &mut Ui, text: &str, salt: &str) -> bool {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), brand::MUTED);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), body(TEXT_SECONDARY), brand::muted());
     let (rect, response) =
         ui.allocate_exact_size(vec2(galley.size().x + 8.0, 22.0), Sense::click());
     let _ = salt;
-    let ink = if response.hovered() { brand::TEXT } else { brand::MUTED };
+    let ink = if response.hovered() { brand::text() } else { brand::muted() };
     ui.painter().galley(rect.left_center() + vec2(0.0, -galley.size().y / 2.0), galley, ink);
     response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
