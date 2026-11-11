@@ -342,10 +342,21 @@ fn code_span(text: &str, open: usize) -> (usize, Option<Found>) {
 }
 
 fn issue_ref(text: &str, at: usize, repo: &str) -> Option<Found> {
-    let prev = text[..at].chars().next_back();
-    if prev.is_some_and(|prev| prev.is_alphanumeric() || "_-./@:&#".contains(prev)) {
-        return None;
-    }
+    let before = &text[..at];
+    let (repo, start) = match slug_touching(before) {
+        Some(slug) => (slug, at - slug.len()),
+        None if slug_near(before).is_some_and(|slug| !slug.eq_ignore_ascii_case(repo)) => {
+            return None;
+        }
+        None if before
+            .chars()
+            .next_back()
+            .is_some_and(|prev| prev.is_alphanumeric() || "_-./@:&#".contains(prev)) =>
+        {
+            return None;
+        }
+        None => (repo, at),
+    };
     let digits = text[at + 1..].bytes().take_while(u8::is_ascii_digit).count();
     let end = at + 1 + digits;
     let number = &text[at + 1..end];
@@ -357,7 +368,40 @@ fn issue_ref(text: &str, at: usize, repo: &str) -> Option<Found> {
         return None;
     }
     let url = format!("https://github.com/{repo}/issues/{number}");
-    Some(Found { range: at..end, kind: Kind::Bare, url: Some(url) })
+    Some(Found { range: start..end, kind: Kind::Bare, url: Some(url) })
+}
+
+/// The `owner/name` that ends right at `before`'s end, as in GitHub's own `owner/name#12`.
+fn slug_touching(before: &str) -> Option<&str> {
+    let run = before
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/')))
+        .map_or(0, |i| i + before[i..].chars().next().map_or(1, char::len_utf8));
+    let slug = &before[run..];
+    let (owner, name) = slug.split_once('/')?;
+    let owner_ok =
+        !owner.is_empty() && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let name_ok = !name.is_empty()
+        && name.chars().any(|c| c.is_ascii_alphanumeric())
+        && !name.ends_with('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    (owner_ok && name_ok && boundary(before, run)).then_some(slug)
+}
+
+/// The `owner/name` a few words before a number, as in `owner/name PR #12` or `` `owner/name` (#12) ``.
+fn slug_near(before: &str) -> Option<&str> {
+    let rest = before.trim_end_matches(['(', '[']).trim_end();
+    let rest = ["pull request", "pr", "issue"]
+        .iter()
+        .find_map(|word| {
+            let cut = rest.len().checked_sub(word.len())?;
+            rest.get(cut..).filter(|tail| tail.eq_ignore_ascii_case(word))?;
+            Some(&rest[..cut])
+        })
+        .unwrap_or(rest);
+    if rest.len() == before.len() {
+        return None;
+    }
+    slug_touching(rest.trim_end().trim_end_matches(['`', '*', '_', ':']))
 }
 
 fn boundary(text: &str, at: usize) -> bool {

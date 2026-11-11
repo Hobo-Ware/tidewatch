@@ -201,7 +201,7 @@ fn a_bare_number_links_to_the_repos_issue_only_when_the_repo_is_known() {
         ("## Fixed #3", format!("## Fixed {}", link("3"))),
         ("color #fff", "color #fff".to_owned()),
         ("issue#12", "issue#12".to_owned()),
-        ("a/b#12", "a/b#12".to_owned()),
+        ("x/a/b#12 http://a/b#12", "x/a/b#12 [http://a/b#12](http://a/b#12)".to_owned()),
         ("&#12; ##12 #012 #12a #12345678", "&#12; ##12 #012 #12a #12345678".to_owned()),
         ("`#12` and [x #12](https://x.dev)", "`#12` and [x #12](https://x.dev)".to_owned()),
         ("```\n#12\n```", "```\n#12\n```".to_owned()),
@@ -211,6 +211,33 @@ fn a_bare_number_links_to_the_repos_issue_only_when_the_repo_is_known() {
     }
     assert!(matches!(markdown("see #2900", None), Cow::Borrowed(_)));
     assert_eq!(plain("see #2900").links, Vec::new());
+}
+
+#[test]
+fn a_number_after_another_repos_name_never_links_to_the_tabs_repo() {
+    let repo = Some("acme/app");
+    let ours = |n: &str| format!("[#{n}](https://github.com/acme/app/issues/{n})");
+    let cases = [
+        (
+            "see Hobo-Ware/kelp#45.",
+            "see [Hobo-Ware/kelp#45](https://github.com/Hobo-Ware/kelp/issues/45).".to_owned(),
+        ),
+        (
+            "(other/lib.rs#3)",
+            "([other/lib.rs#3](https://github.com/other/lib.rs/issues/3))".to_owned(),
+        ),
+        ("Hobo-Ware/kelp #45", "Hobo-Ware/kelp #45".to_owned()),
+        ("Hobo-Ware/kelp PR #45", "Hobo-Ware/kelp PR #45".to_owned()),
+        ("trakt/web (#317)", "trakt/web (#317)".to_owned()),
+        ("`Hobo-Ware/kelp`: pull request #45", "`Hobo-Ware/kelp`: pull request #45".to_owned()),
+        ("acme/app PR #12", format!("acme/app PR {}", ours("12"))),
+        ("Acme/App #12", format!("Acme/App {}", ours("12"))),
+        ("on feat/socials. PR #9", format!("on feat/socials. PR {}", ours("9"))),
+        ("and/or #9", "and/or #9".to_owned()),
+    ];
+    for (md, want) in cases {
+        assert_eq!(markdown(md, repo), want, "markdown {md:?}");
+    }
 }
 
 #[test]
