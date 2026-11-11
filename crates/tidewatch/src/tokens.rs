@@ -6,17 +6,21 @@ use std::fmt::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use crate::link_chip;
+
 pub(crate) const OPEN: char = '\u{E000}';
 pub(crate) const CLOSE: char = '\u{E001}';
 const PASTED: &str = "pasted:";
 const AFTER_WORD: &str = ",.;:!?)]}";
 const BEFORE_WORD: &str = "([{\"'";
 
-/// What a token stands for: a file or folder on the disk, or the numbered picture a transcript holds.
+/// What a token stands for: a file or folder on the disk, the numbered picture a transcript holds,
+/// or a link that shows as a chip (a GitHub pull request or issue, a claude.ai artifact).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Target {
     File(PathBuf),
     Pasted(u32),
+    Link(String),
 }
 
 impl Target {
@@ -24,12 +28,16 @@ impl Target {
         match self {
             Self::File(path) => path.to_string_lossy().into_owned(),
             Self::Pasted(number) => format!("{PASTED}{number}"),
+            Self::Link(url) => url.clone(),
         }
     }
 
     fn parse(spelled: &str) -> Option<Self> {
         if let Some(number) = spelled.strip_prefix(PASTED) {
             return number.parse().ok().map(Self::Pasted);
+        }
+        if link_chip::parse(spelled).is_some() {
+            return Some(Self::Link(spelled.to_owned()));
         }
         Path::new(spelled).is_absolute().then(|| Self::File(PathBuf::from(spelled)))
     }
@@ -121,6 +129,42 @@ pub(crate) fn insert(text: &mut String, cursor: usize, target: &Target) -> usize
     cursor.min(text.chars().count()) + put.chars().count()
 }
 
+/// Every whole chip address of `text` that white space follows, or that ends right at `cursor` while
+/// `pasted`, replaced by a link token. Returns where the cursor (a char position) goes.
+pub(crate) fn linkify(text: &mut String, cursor: usize, pasted: bool) -> Option<usize> {
+    if !text.contains("http") {
+        return None;
+    }
+    let cursor_byte = byte_of(text, cursor);
+    let mut found: Vec<Range<usize>> = Vec::new();
+    let mut from = 0;
+    for (at, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        if !c.is_whitespace() {
+            continue;
+        }
+        let word = &text[from..at];
+        let sealed = at < text.len() || (pasted && cursor_byte == at);
+        if sealed && !word.contains([OPEN, CLOSE]) && link_chip::parse(word).is_some() {
+            found.push(from..at);
+        }
+        from = at + c.len_utf8();
+    }
+    if found.is_empty() {
+        return None;
+    }
+    let mut cursor = cursor;
+    for span in found.into_iter().rev() {
+        let url = text[span.clone()].to_owned();
+        let (start, end) = (text[..span.start].chars().count(), text[..span.end].chars().count());
+        text.replace_range(span, "");
+        let after = insert(text, start, &Target::Link(url));
+        if cursor > start {
+            cursor = if cursor >= end { cursor + after - start - (end - start) } else { after };
+        }
+    }
+    Some(cursor)
+}
+
 /// `targets` put after everything in `text`, as a draft saved with a list of files comes back.
 pub(crate) fn append(text: &mut String, targets: impl IntoIterator<Item = Target>) {
     for target in targets {
@@ -175,6 +219,7 @@ pub(crate) fn sendable(text: &str) -> String {
     with_tokens_as(text, |target| match target {
         Target::File(path) => shell_words::quote(&path.to_string_lossy()).into_owned(),
         Target::Pasted(number) => format!("[Image #{number}]"),
+        Target::Link(url) => url.clone(),
     })
 }
 
@@ -403,5 +448,103 @@ mod tests {
     #[test]
     fn picture_paths_are_left_out_for_matching_the_line_the_agent_wrote() {
         assert_eq!(without_picture_paths("see /tmp/a.png and /tmp/b.pdf"), "see  and /tmp/b.pdf");
+    }
+
+    const PR: &str = "https://github.com/trakt/trakt-workers/pull/2903";
+    const ISSUE: &str = "https://github.com/o/r/issues/38";
+
+    fn link(url: &str) -> String {
+        encode(&Target::Link(url.to_owned()))
+    }
+
+    fn linked(text: &str, cursor: usize, pasted: bool) -> (String, Option<usize>) {
+        let mut text = text.to_owned();
+        let at = linkify(&mut text, cursor, pasted);
+        (text, at)
+    }
+
+    #[test]
+    fn a_link_token_survives_find_and_sends_as_the_full_address() {
+        let text = format!("see {} now", link(PR));
+        assert_eq!(targets(&text), vec![Target::Link(PR.to_owned())]);
+        assert_eq!(sendable(&text), format!("see {PR} now"));
+        assert_eq!(plain(&text), "see  now");
+        let stray = format!("{OPEN}{}{CLOSE}", escape("https://example.com/x"));
+        assert_eq!(find(&stray), Vec::new(), "only a chip address is a link token");
+    }
+
+    #[test]
+    fn a_whole_address_followed_by_space_or_pasted_at_the_cursor_becomes_one_token() {
+        let cases = [
+            (
+                format!("see {PR} now"),
+                4 + PR.len() + 4,
+                false,
+                format!("see {} now", link(PR)),
+                Some(4 + token_chars(PR) + 4),
+            ),
+            (
+                format!("see {PR} now"),
+                10,
+                false,
+                format!("see {} now", link(PR)),
+                Some(4 + token_chars(PR)),
+            ),
+            (format!("see {PR} now"), 2, false, format!("see {} now", link(PR)), Some(2)),
+            (format!("{PR} "), 0, false, format!("{} ", link(PR)), Some(0)),
+            (format!("{PR}\nnext"), 0, false, format!("{}\nnext", link(PR)), Some(0)),
+            (PR.to_owned(), PR.len(), true, format!("{} ", link(PR)), Some(token_chars(PR) + 1)),
+            (
+                format!("a {ISSUE}"),
+                2 + ISSUE.len(),
+                true,
+                format!("a {} ", link(ISSUE)),
+                Some(2 + token_chars(ISSUE) + 1),
+            ),
+            (
+                format!("{PR} and {ISSUE} "),
+                0,
+                false,
+                format!("{} and {} ", link(PR), link(ISSUE)),
+                Some(0),
+            ),
+        ];
+        for (text, cursor, pasted, want, at) in cases {
+            assert_eq!(linked(&text, cursor, pasted), (want, at), "{text:?}");
+        }
+    }
+
+    fn token_chars(url: &str) -> usize {
+        link(url).chars().count()
+    }
+
+    #[test]
+    fn an_address_still_being_typed_or_not_a_chip_stays_text() {
+        let cases = [
+            (PR.to_owned(), PR.len(), false),
+            (format!("{PR}."), 0, false),
+            (format!("{PR}. "), 0, false),
+            ("https://github.com/o/r/tree/main ".to_owned(), 0, false),
+            ("https://example.com/x ".to_owned(), 0, false),
+            (format!("x{PR} "), 0, false),
+            (format!("{PR}x "), 0, false),
+            (format!("{} ", link(PR)), 0, true),
+            (PR.to_owned(), 3, true),
+            ("plain words ".to_owned(), 0, false),
+        ];
+        for (text, cursor, pasted) in cases {
+            assert_eq!(linked(&text, cursor, pasted), (text.clone(), None), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn backspace_removes_a_link_token_whole_and_the_cursor_before_it_is_kept() {
+        let mut text = format!("see {}", link(PR));
+        let end = text.chars().count();
+        assert_eq!(remove_before(&mut text, end), Some(4));
+        assert_eq!(text, "see ");
+        let mut text = format!("{} x", link(ISSUE));
+        assert_eq!(remove_after(&mut text, 0), Some(0));
+        assert_eq!(text, " x");
     }
 }

@@ -13,10 +13,12 @@ use egui::{
 
 use crate::attachments::fit_middle;
 use crate::brand;
+use crate::link_chip;
 use crate::pictures;
 use crate::screen_kit::{Size, body};
 use crate::tokens::{self, Target, Token};
 use tidewatch_core::image_paste::is_image_file;
+use tidewatch_core::link_board::LinkState;
 
 const MARGIN: f32 = 3.0;
 const GLYPH: f32 = 12.0;
@@ -29,6 +31,7 @@ pub(crate) enum Kind {
     Picture,
     File,
     Folder,
+    Link,
 }
 
 #[derive(Clone, Default)]
@@ -44,6 +47,7 @@ fn is_dir(ctx: &Context, path: &Path) -> bool {
 fn kind_of(ctx: &Context, target: &Target) -> Kind {
     match target {
         Target::Pasted(_) => Kind::Picture,
+        Target::Link(_) => Kind::Link,
         Target::File(path) if is_image_file(path) => Kind::Picture,
         Target::File(path) if is_dir(ctx, path) => Kind::Folder,
         Target::File(_) => Kind::File,
@@ -51,13 +55,21 @@ fn kind_of(ctx: &Context, target: &Target) -> Kind {
 }
 
 /// The words each token of `text` shows, in order: `Screenshot 2` for a pasted screenshot, `Image 1`
-/// for a transcript's picture, else the file name cut in the middle when it is long.
-pub(crate) fn labels(text: &str) -> Vec<String> {
+/// for a transcript's picture, `#2903 Title` or `repo #2903` for a link (asking `link_glue` for what
+/// it does not know yet), else the file name cut in the middle when it is long.
+pub(crate) fn labels(ctx: &Context, text: &str) -> Vec<String> {
     let mut shots = 0;
     tokens::find(text)
         .iter()
         .map(|token| match &token.target {
             Target::Pasted(number) => format!("Image {number}"),
+            Target::Link(url) => {
+                link_chip::want(ctx, url);
+                let chip = link_chip::parse(url);
+                chip.map_or_else(String::new, |chip| {
+                    link_chip::label(&chip, link_chip::info(ctx, url).as_ref())
+                })
+            }
             Target::File(path) => {
                 let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
                 if name.starts_with("shot-") && is_image_file(path) {
@@ -101,7 +113,7 @@ pub(crate) fn slot_job(ctx: &Context, job: LayoutJob) -> LayoutJob {
     if found.is_empty() {
         return job;
     }
-    let names = labels(&job.text);
+    let names = labels(ctx, &job.text);
     let mut out = LayoutJob { text: String::new(), sections: Vec::new(), ..job.clone() };
     for section in &job.sections {
         let range = usize::from(section.byte_range.start)..usize::from(section.byte_range.end);
@@ -194,6 +206,7 @@ fn paint_glyph(painter: &Painter, rect: Rect, kind: Kind) {
                 );
             }
         }
+        Kind::Link => {}
         Kind::Folder => {
             let body = Rect::from_center_size(c + vec2(0.0, 1.0), vec2(GLYPH, GLYPH - 4.0));
             let tab = Rect::from_min_size(body.left_top() - vec2(0.0, 2.0), vec2(5.0, 2.0));
@@ -229,13 +242,35 @@ fn open(ctx: &Context, target: &Target) {
         Target::Pasted(number) => {
             ctx.data_mut(|data| data.insert_temp(clicked_id(), *number));
         }
+        Target::Link(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+    }
+}
+
+fn state_color(state: LinkState) -> Option<Color32> {
+    match state {
+        LinkState::Unknown => None,
+        LinkState::Open => Some(brand::GREEN),
+        LinkState::Merged => Some(brand::VIOLET_TEXT),
+        LinkState::Closed => Some(brand::RED),
+    }
+}
+
+fn paint_link(painter: &Painter, rect: Rect, state: LinkState) {
+    if let Some(color) = state_color(state) {
+        painter.circle_filled(rect.center(), 3.5, color);
+        return;
+    }
+    let ink = Stroke::new(1.2, brand::SOFT);
+    for dx in [-2.5, 2.5] {
+        let link = Rect::from_center_size(rect.center() + vec2(dx, 0.0), vec2(7.0, 5.0));
+        painter.rect_stroke(link, CornerRadius::same(2), ink, StrokeKind::Inside);
     }
 }
 
 /// Draws the chip of every token of `galley`, painted with its top left at `pos`. With `clickable`
 /// a chip opens its picture or shows its file, and its path is the tooltip.
 pub(crate) fn paint(ui: &Ui, id: Id, (pos, galley): (Pos2, &Galley), clickable: bool) {
-    let names = labels(&galley.job.text);
+    let names = labels(ui.ctx(), &galley.job.text);
     for ((token, rect), name) in chips(pos, galley).into_iter().zip(names) {
         if !ui.is_rect_visible(rect) {
             continue;
@@ -250,8 +285,9 @@ pub(crate) fn paint(ui: &Ui, id: Id, (pos, galley): (Pos2, &Galley), clickable: 
             }
             _ => None,
         };
-        let hovered = clickable && ui.rect_contains_pointer(rect);
-        if clickable {
+        let live = clickable || kind == Kind::Link;
+        let hovered = live && ui.rect_contains_pointer(rect);
+        if live {
             let slot = id.with(("token", token.bytes.start));
             let response = ui.interact(rect, slot, Sense::click());
             if response.clicked() {
@@ -264,6 +300,9 @@ pub(crate) fn paint(ui: &Ui, id: Id, (pos, galley): (Pos2, &Galley), clickable: 
                     response.on_hover_text(path.display().to_string());
                 }
                 (Target::Pasted(_), None) => {}
+                (Target::Link(url), None) => {
+                    response.on_hover_text(url);
+                }
             }
         }
         let painter = ui.painter();
@@ -277,6 +316,15 @@ pub(crate) fn paint(ui: &Ui, id: Id, (pos, galley): (Pos2, &Galley), clickable: 
         );
         match loaded.as_deref().and_then(pictures::Loaded::thumbnail) {
             Some(texture) => paint_thumbnail(painter, glyph, texture),
+            None if kind == Kind::Link => {
+                let state = match &token.target {
+                    Target::Link(url) => {
+                        link_chip::info(ui.ctx(), url).map(|info| info.state).unwrap_or_default()
+                    }
+                    _ => LinkState::Unknown,
+                };
+                paint_link(painter, glyph, state);
+            }
             None => paint_glyph(painter, glyph, kind),
         }
         painter.text(
@@ -333,9 +381,49 @@ mod tests {
             tokens::encode(&Target::File(long.into())),
         ]
         .join(" ");
-        let names = labels(&text);
+        let ctx = Context::default();
+        let names = labels(&ctx, &text);
         assert_eq!(&names[..4], ["Screenshot 1", "doc.pdf", "Screenshot 2", "Image 4"]);
         assert_eq!(names[4].chars().count(), MAX_LABEL_CHARS);
         assert!(names[4].contains('\u{2026}'));
+    }
+
+    #[test]
+    fn a_link_chip_reads_repo_and_number_until_its_title_and_state_arrive() {
+        let ctx = crate::fonts::test_context();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let url = "https://github.com/trakt/trakt-workers/pull/2903";
+        let text = format!("ab {} cd", tokens::encode(&Target::Link(url.to_owned())));
+        assert_eq!(labels(&ctx, &text), ["trakt-workers #2903"]);
+        assert_eq!(link_chip::take_wants(&ctx), [url]);
+        let before = chips(Pos2::ZERO, &galley(&ctx, &text))[0].1.width();
+        let known = link_chip::Known::from([(
+            link_chip::key_of(url),
+            link_chip::Info {
+                title: Some("fix: round the totals".to_owned()),
+                state: LinkState::Merged,
+            },
+        )]);
+        link_chip::publish(&ctx, std::sync::Arc::new(known));
+        assert_eq!(labels(&ctx, &text), ["#2903 fix: round the totals"]);
+        let after = chips(Pos2::ZERO, &galley(&ctx, &text))[0].1.width();
+        assert!(after > before + 20.0, "the chip grows with its title: {before} to {after}");
+        let want = chip_width(&ctx, "#2903 fix: round the totals");
+        assert!((after - want).abs() < 1.0, "{after} vs {want}");
+    }
+
+    #[test]
+    fn an_artifact_chip_is_artifact_and_a_link_state_has_its_own_colour() {
+        let ctx = crate::fonts::test_context();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let text = tokens::encode(&Target::Link("https://claude.ai/artifact/abc".to_owned()));
+        assert_eq!(labels(&ctx, &text), ["Artifact"]);
+        let colors: Vec<Option<Color32>> =
+            [LinkState::Unknown, LinkState::Open, LinkState::Merged, LinkState::Closed]
+                .map(state_color)
+                .to_vec();
+        assert_eq!(colors[0], None);
+        let distinct: std::collections::HashSet<Color32> = colors.into_iter().flatten().collect();
+        assert_eq!(distinct.len(), 3);
     }
 }

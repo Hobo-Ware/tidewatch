@@ -151,3 +151,29 @@ fn a_missing_gh_is_nothing_learned_not_a_hang() {
         Lookup::Failed
     );
 }
+
+#[test]
+fn a_title_is_read_as_one_cut_line_and_a_missing_or_blank_one_is_none() {
+    let long = "x".repeat(MAX_TITLE_CHARS + 20);
+    let cases = [
+        (
+            r#"{"title":"fix: round the totals","state":"OPEN"}"#.to_owned(),
+            Some("fix: round the totals".to_owned()),
+        ),
+        (r#"{"title":"  two\n lines  "}"#.to_owned(), Some("two lines".to_owned())),
+        (format!(r#"{{"title":"{long}"}}"#), one_line(&long, MAX_TITLE_CHARS)),
+        (r#"{"title":"   "}"#.to_owned(), None),
+        (r#"{"state":"OPEN"}"#.to_owned(), None),
+        (r#"{"title":7}"#.to_owned(), None),
+        ("not json".to_owned(), None),
+    ];
+    for (json, want) in cases {
+        assert_eq!(title_of(&json), want, "{json}");
+    }
+}
+
+#[test]
+fn both_lookups_ask_gh_for_the_title() {
+    assert!(PR_FIELDS.split(',').any(|field| field == "title"));
+    assert!(ISSUE_FIELDS.split(',').any(|field| field == "title"));
+}

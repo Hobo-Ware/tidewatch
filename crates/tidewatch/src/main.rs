@@ -117,6 +117,7 @@ mod leftover_glue;
 mod leftover_jobs;
 mod leftover_view;
 mod leftovers;
+mod link_chip;
 mod link_filter;
 mod link_glue;
 mod link_model;
