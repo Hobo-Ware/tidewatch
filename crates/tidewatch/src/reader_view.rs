@@ -2789,6 +2789,7 @@ mod tests {
         width: f32,
         copied: Vec<String>,
         time: Option<f64>,
+        top: f32,
     }
 
     impl Frames {
@@ -2804,6 +2805,7 @@ mod tests {
                 width: 1000.0,
                 copied: Vec::new(),
                 time: None,
+                top: 0.0,
             }
         }
 
@@ -2816,10 +2818,12 @@ mod tests {
                 ..RawInput::default()
             };
             let state = &mut self.state;
-            let (working, blocked, source) = (self.working, self.blocked, self.source);
+            let (working, blocked, source, top) =
+                (self.working, self.blocked, self.source, self.top);
             let mut asked = Vec::new();
             let output = self.ctx.run_ui(raw, |ui| {
-                let rect = ui.max_rect();
+                let mut rect = ui.max_rect();
+                rect.min.y += top;
                 let facts = Facts { working, source, reply_blocked: blocked, ..facts(None, turn) };
                 asked = show(ui, rect, rows, state, &facts);
             });
@@ -4688,6 +4692,28 @@ mod tests {
         let placed = frames.toolbar(seq).expect("the toolbar is drawn");
         let reply = frames.shapes.iter().find(|(text, _)| text == "Reply to the agent").unwrap().1;
         assert!(placed.toolbar.bottom() <= reply.top(), "{:?} over {reply:?}", placed.toolbar);
+    }
+
+    #[test]
+    fn the_part_of_a_bubble_scrolled_under_the_tab_bar_shows_no_toolbar() {
+        use tidewatch_core::transcript::{Entry, Role};
+        let mut rows = user_rows(&"a long message from the owner ".repeat(400));
+        rows.push(Entry {
+            role: Role::Assistant,
+            text: "done".into(),
+            tool: None,
+            ts: Some(now_ms()),
+            images: Vec::new(),
+        });
+        let seq = first_seq(&rows);
+        let mut frames = Frames::new();
+        frames.top = 100.0;
+        settle(&mut frames, &rows);
+        let x = frames.width - 60.0;
+        point_at(&mut frames, &rows, pos2(x, 50.0));
+        assert!(frames.tool(seq, Tool::Copy).is_none(), "shown over the tab bar");
+        point_at(&mut frames, &rows, pos2(x, 300.0));
+        assert!(frames.tool(seq, Tool::Copy).is_some(), "the visible part still shows it");
     }
 
     #[test]
