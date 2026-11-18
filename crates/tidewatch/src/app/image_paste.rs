@@ -219,7 +219,17 @@ impl Tidewatch {
         let other_field_focused =
             tab == active_id && ctx.text_edit_focused() && !composer_focused(ctx);
         if other_field_focused {
-            crate::image_paste::inject_paste(ctx, tidewatch_core::image_paste::path_text(&paths));
+            let text = if crate::composer::any_has_focus(ctx) {
+                let mut chips = String::new();
+                crate::tokens::append(
+                    &mut chips,
+                    paths.into_iter().map(crate::tokens::Target::File),
+                );
+                chips
+            } else {
+                tidewatch_core::image_paste::path_text(&paths)
+            };
+            crate::image_paste::inject_paste(ctx, text);
             return;
         }
         self.attach_files(ctx, tab, paths);
