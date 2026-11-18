@@ -38,8 +38,6 @@ pub struct Profile {
     /// Shell command run in the worktree before the agent starts. Empty means none.
     #[serde(default)]
     pub setup: String,
-    #[serde(default = "yes")]
-    pub never_push: bool,
     #[serde(default, skip_serializing_if = "no_args")]
     pub extra_args: ArgList,
     #[serde(default = "yes")]
@@ -67,7 +65,6 @@ impl Profile {
             effort: None,
             level,
             setup: String::new(),
-            never_push: true,
             extra_args: ArgList::default(),
             house_style: true,
         }
@@ -194,8 +191,8 @@ impl Profiles {
         let mut profile = BTreeMap::new();
         for (position, agent) in ordered.into_iter().enumerate() {
             profile.extend([
-                seed_profile(agent, position == 0, "builder", "Builder", Level::Edits, true),
-                seed_profile(agent, position == 0, "reviewer", "Reviewer", Level::Plan, true),
+                seed_profile(agent, position == 0, "builder", "Builder", Level::Edits),
+                seed_profile(agent, position == 0, "reviewer", "Reviewer", Level::Plan),
             ]);
         }
         Self { profile, agent: BTreeMap::new() }
@@ -248,7 +245,6 @@ fn seed_profile(
     suffix: &str,
     label: &str,
     level: Level,
-    never_push: bool,
 ) -> (String, Profile) {
     let (id_prefix, name_prefix) = if plain {
         (String::new(), String::new())
@@ -262,7 +258,6 @@ fn seed_profile(
         effort: None,
         level,
         setup: String::new(),
-        never_push,
         extra_args: ArgList::default(),
         house_style: true,
     };
@@ -283,7 +278,7 @@ fn legacy_yolo_seeds() -> Vec<(String, Profile)> {
         .flat_map(|agent| {
             [true, false].map(|plain| {
                 let (id, mut seed) =
-                    seed_profile(agent, plain, "builder-yolo", "Builder YOLO", Level::Yolo, false);
+                    seed_profile(agent, plain, "builder-yolo", "Builder YOLO", Level::Yolo);
                 if agent.id == "claude" {
                     seed.effort = Some("high".to_owned());
                 }
@@ -301,12 +296,8 @@ mod tests {
         ids.iter().map(|id| (*id).to_owned()).collect()
     }
 
-    fn summary(profiles: &Profiles) -> Vec<(String, String, Level, bool)> {
-        profiles
-            .profile
-            .iter()
-            .map(|(id, p)| (id.clone(), p.agent.clone(), p.level, p.never_push))
-            .collect()
+    fn summary(profiles: &Profiles) -> Vec<(String, String, Level)> {
+        profiles.profile.iter().map(|(id, p)| (id.clone(), p.agent.clone(), p.level)).collect()
     }
 
     #[test]
@@ -315,8 +306,8 @@ mod tests {
         assert_eq!(
             summary(&seeded),
             [
-                ("builder".to_owned(), "claude".to_owned(), Level::Edits, true),
-                ("reviewer".to_owned(), "claude".to_owned(), Level::Plan, true),
+                ("builder".to_owned(), "claude".to_owned(), Level::Edits),
+                ("reviewer".to_owned(), "claude".to_owned(), Level::Plan),
             ]
         );
         let names: Vec<_> = seeded.profile.values().map(|p| p.name.as_str()).collect();
@@ -402,7 +393,7 @@ mod tests {
     #[test]
     fn nothing_seeded_is_at_yolo() {
         let seeded = Profiles::seeded(&found(&["claude", "codex", "gemini", "copilot"]));
-        assert!(seeded.profile.values().all(|p| p.level != Level::Yolo && p.never_push));
+        assert!(seeded.profile.values().all(|p| p.level != Level::Yolo));
     }
 
     fn with_legacy_yolo(ids: &[&str]) -> Profiles {
@@ -440,13 +431,12 @@ mod tests {
 
     #[test]
     fn an_edited_seeded_yolo_profile_stays() {
-        let edits: [fn(&mut Profile); 8] = [
+        let edits: [fn(&mut Profile); 7] = [
             |p| p.name = "Builder YOLO (mine)".into(),
             |p| p.agent = "gemini".into(),
             |p| p.model = Some("sonnet".into()),
             |p| p.effort = None,
             |p| p.setup = "npm ci".into(),
-            |p| p.never_push = true,
             |p| p.extra_args = ArgList(vec!["--verbose".into()]),
             |p| p.house_style = false,
         ];
@@ -479,7 +469,6 @@ mod tests {
                 effort: None,
                 level: Level::Yolo,
                 setup: String::new(),
-                never_push: false,
                 extra_args: ArgList::default(),
                 house_style: true,
             },
@@ -549,7 +538,7 @@ mod tests {
     fn concept_style_toml_parses_with_defaults_and_aliases() {
         let parsed = Profiles::parse(
             "[profile.builder]\nname = \"Builder\"\nagent = \"claude\"\nmodel = \"opus\"\neffort = \"high\"\n\
-             permissions = \"edits\"\nsetup = \"npm ci\"\nnever_push = true\nextra_args = \"--verbose --foo\"\n\
+             permissions = \"edits\"\nsetup = \"npm ci\"\nextra_args = \"--verbose --foo\"\n\
              [profile.old]\nagent = \"gemini\"\nlevel = \"plan\"\n",
         )
         .unwrap();
@@ -558,9 +547,19 @@ mod tests {
         assert_eq!(builder.extra_args.0, ["--verbose", "--foo"]);
         let old = &parsed.profile["old"];
         assert_eq!((old.name.as_str(), old.level), ("old", Level::Plan));
-        assert!(old.never_push);
         assert!(old.house_style);
         assert_eq!(old.setup, "");
+    }
+
+    #[test]
+    fn a_file_written_with_never_push_still_loads() {
+        for flag in ["true", "false"] {
+            let parsed = Profiles::parse(&format!(
+                "[profile.builder]\nagent = \"claude\"\npermissions = \"edits\"\nnever_push = {flag}\n"
+            ))
+            .unwrap();
+            assert_eq!(parsed.profile["builder"].level, Level::Edits);
+        }
     }
 
     #[test]

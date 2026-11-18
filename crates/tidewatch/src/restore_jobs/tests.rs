@@ -362,8 +362,6 @@ fn a_resumed_agent_gets_the_resume_command_the_same_wiring_and_its_old_session_i
     assert!(line.starts_with(&format!("claude --resume {SESSION_ID} ")), "{line}");
     assert!(line.contains("--permission-mode acceptEdits"), "{line}");
     assert!(!line.contains("--session-id"), "{line}");
-    let env = &started.prepared.env;
-    assert!(env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"), "the push guard is still on");
 }
 
 #[test]
@@ -525,7 +523,6 @@ fn an_agent_in_a_plain_folder_resumes_without_a_worktree_and_without_the_guard()
     let opened = reopened(s).result.ok().expect("opened");
     assert_eq!(opened.worktree, None);
     let started = opened.started.expect("an agent");
-    assert!(!started.prepared.env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
     assert!(started.prepared.launch.shell_line().starts_with("claude --resume "));
 }
 

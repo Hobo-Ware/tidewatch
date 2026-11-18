@@ -1,11 +1,10 @@
 //! Turns an agent, a profile and a tab's context into the program, arguments and environment to start.
 //!
-//! Pure: no process is started and nothing is written, except `ensure_no_push_helper` and the Codex
-//! house-style read. Each piece of per-CLI wiring (hooks, MCP, house style) is applied only when its
-//! `LaunchCtx` field is `Some`. The never-push guard (D7) and the YOLO rule (D11) live here.
+//! Pure: no process is started and nothing is written, except the Codex house-style read. Each piece of per-CLI wiring (hooks, MCP, house style) is applied only when its
+//! `LaunchCtx` field is `Some`. The YOLO rule (D11) lives here.
 //!
 //! Wiring was checked against claude 2.1.296, gemini 0.46.0, copilot 1.0.91 and codex 0.162.1 (`--help`
-//! and `docs/research/phase-0-spikes.md`). Codex's hooks, MCP server and never-push guard were run
+//! and `docs/research/phase-0-spikes.md`). Codex's hooks and MCP server were run
 //! live: `-c` overrides carry the hooks and the MCP server, and the MCP server needs
 //! `default_tools_approval_mode="approve"`, otherwise Codex rejects its tools under approval `never`.
 //! Tool hooks were run live against stand-in models; the payloads are `tests/fixtures/*_hooks.jsonl`.
@@ -24,12 +23,6 @@ use crate::statusline_run::STATUSLINE_FLAG;
 
 /// Name of the MCP server Tidewatch attaches to every agent.
 pub const MCP_SERVER_NAME: &str = "tidewatch";
-pub const NO_PUSH_HELPER_NAME: &str = "git-remote-tidewatch-no-push";
-pub const NO_PUSH_MESSAGE: &str =
-    "Tidewatch: an agent tab may push any branch except the default branch";
-pub const PUSH_PROTECTED_ENV: &str = "TIDEWATCH_PUSH_PROTECTED";
-pub const PUSH_REPO_ENV: &str = "TIDEWATCH_PUSH_REPO";
-const NO_PUSH_URL_PREFIX: &str = "url.tidewatch-no-push://blocked/.pushInsteadOf";
 const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
 /// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
 /// more, so the CLI never gives up first. Codex defaults to 60 s and Gemini to 600 s.
@@ -150,12 +143,8 @@ pub struct LaunchCtx {
     /// The plugin directory holding the tab's status hooks (Copilot), see `copilot_plugin_files`.
     pub copilot_plugin_dir: Option<PathBuf>,
     pub gemini_settings: Option<GeminiSettingsFiles>,
-    /// Directory holding the never-push helper, see `ensure_no_push_helper`.
+    /// Directory holding the `git` and `gh` shims, put first on `PATH`.
     pub guard_bin_dir: Option<PathBuf>,
-    /// The repo's default branch, the one branch the push guard refuses besides `main` and `master`.
-    pub protected_branch: Option<String>,
-    /// The tab repo's canonical `--git-common-dir`: pushes from any other repo pass the guard.
-    pub push_repo: Option<PathBuf>,
     /// Wakes the `git` and `gh` shims in `guard_bin_dir`, see `guard_shim`.
     pub guards: Option<GuardCtx>,
     /// The environment the agent would otherwise get. Read for `GIT_CONFIG_COUNT` and `PATH`.
@@ -248,14 +237,6 @@ pub fn launch_command(
         Wiring::Gemini => gemini_wiring(ctx, house_style, &mut args, &mut env),
         Wiring::Copilot => copilot_wiring(ctx, house_style, &mut args, &mut env),
         Wiring::Custom => {}
-    }
-    if profile.never_push && ctx.worktree_tab {
-        env.extend(guard_env(
-            &ctx.env,
-            ctx.guard_bin_dir.as_deref(),
-            ctx.protected_branch.as_deref(),
-            ctx.push_repo.as_deref(),
-        ));
     }
     if ctx.worktree_tab
         && let (Some(guards), Some(dir)) = (&ctx.guards, ctx.guard_bin_dir.as_deref())
@@ -636,34 +617,6 @@ fn merge_gemini_section(theirs: Option<Value>, mine: Value) -> Value {
     Value::Object(theirs)
 }
 
-/// Environment that routes every `git push` in the tab through the guard helper (D7).
-///
-/// Appends one `url.tidewatch-no-push://blocked/.pushInsteadOf` entry (empty value, so it matches every
-/// remote) after any `GIT_CONFIG_COUNT` entries already in `base_env`, names the repo's default branch
-/// in `TIDEWATCH_PUSH_PROTECTED` and the tab repo's git folder in `TIDEWATCH_PUSH_REPO`, and puts `guard_bin_dir` first on `PATH` so git finds the helper. The
-/// helper forwards a push of any branch except that one (and `main` and `master`, named or not) and
-/// refuses tags and the rest; a push from another repo passes whole. Without a helper every push fails, with git's own "remote helper not
-/// found" error.
-#[must_use]
-pub fn guard_env(
-    base_env: &[(String, String)],
-    guard_bin_dir: Option<&Path>,
-    protected_branch: Option<&str>,
-    push_repo: Option<&Path>,
-) -> Vec<(String, String)> {
-    let var = |key: &str| base_env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
-    let count = var("GIT_CONFIG_COUNT").and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(0);
-    let mut env = vec![
-        ("GIT_CONFIG_COUNT".to_owned(), (count + 1).to_string()),
-        (format!("GIT_CONFIG_KEY_{count}"), NO_PUSH_URL_PREFIX.to_owned()),
-        (format!("GIT_CONFIG_VALUE_{count}"), String::new()),
-        (PUSH_PROTECTED_ENV.to_owned(), protected_branch.unwrap_or_default().to_owned()),
-    ];
-    env.extend(push_repo.map(|repo| (PUSH_REPO_ENV.to_owned(), repo.display().to_string())));
-    env.extend(guard_bin_dir.and_then(|dir| path_with_first(base_env, dir)));
-    env
-}
-
 /// `PATH` from `base_env` with `dir` in front.
 pub(crate) fn path_with_first(
     base_env: &[(String, String)],
@@ -674,126 +627,6 @@ pub(crate) fn path_with_first(
     dirs.extend(path.iter().flat_map(|path| std::env::split_paths(path)));
     let joined = std::env::join_paths(dirs).ok()?;
     Some(("PATH".to_owned(), joined.to_string_lossy().into_owned()))
-}
-
-/// Content of the `git-remote-tidewatch-no-push` helper, a git remote helper (`gitremote-helpers`):
-/// it lists the real remote's refs, and forwards a push batch to the real url only when every ref in
-/// it is a branch other than `main`, `master` and `$TIDEWATCH_PUSH_PROTECTED`. Tags, any other ref and
-/// a delete of a protected branch refuse the whole batch. Deleting another branch goes through. When
-/// `$TIDEWATCH_PUSH_REPO` names the tab's repo and the push runs in another one, every ref goes through.
-#[must_use]
-pub fn no_push_helper_script() -> String {
-    GUARD_HELPER_TEMPLATE
-        .replace("@MESSAGE@", NO_PUSH_MESSAGE)
-        .replace("@GUARD_KEY@", NO_PUSH_URL_PREFIX)
-}
-
-const GUARD_HELPER_TEMPLATE: &str = r#"#!/bin/sh
-url="${2#tidewatch-no-push://blocked/}"
-protected="${TIDEWATCH_PUSH_PROTECTED:-}"
-foreign=
-if [ -n "${TIDEWATCH_PUSH_REPO:-}" ]; then
-  here=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)
-  if [ -n "$here" ] && [ "$here" != "$TIDEWATCH_PUSH_REPO" ]; then foreign=yes; fi
-fi
-i=0
-while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do
-  eval "key=\${GIT_CONFIG_KEY_$i:-}"
-  if [ "$key" = "@GUARD_KEY@" ]; then export "GIT_CONFIG_KEY_$i=tidewatch.pushguard"; fi
-  i=$((i + 1))
-done
-nl='
-'
-dry=false
-force=
-leases=
-batch=
-finish() {
-  out=
-  specs=
-  refused=
-  old_ifs=$IFS
-  IFS=$nl
-  for spec in $batch; do
-    src="${spec%%:*}"
-    dst="${spec#*:}"
-    plus=$force
-    case "$src" in +*) plus=+; src="${src#+}" ;; esac
-    case "$leases" in *"=$dst:"*) plus= ;; esac
-    name=
-    case "$dst" in refs/heads/*) name="${dst#refs/heads/}" ;; esac
-    why=
-    if [ -n "$foreign" ]; then
-      :
-    elif [ -z "$name" ]; then
-      why="only branches can be pushed from this tab"
-    elif [ "$name" = main ] || [ "$name" = master ] || [ "$name" = "$protected" ]; then
-      why="the default branch cannot be pushed from this tab"
-    fi
-    if [ -n "$why" ]; then
-      refused=yes
-      out="${out}error $dst $why$nl"
-    else
-      out="${out}ok $dst$nl"
-      if [ -z "$src" ]; then plus=; fi
-      specs="$specs$plus$src:$dst$nl"
-    fi
-  done
-  IFS=$old_ifs
-  if [ -n "$refused" ]; then
-    echo "@MESSAGE@ (${protected:-main}), and no tags." >&2
-    printf '%s' "$out" | sed 's/^ok \(.*\)$/error \1 refused with the rest of the push/'
-  elif [ "$dry" = true ]; then
-    printf '%s' "$out"
-  else
-    IFS=$nl
-    if git push $leases "$url" $specs </dev/null 1>&2; then
-      IFS=$old_ifs
-      printf '%s' "$out"
-    else
-      IFS=$old_ifs
-      printf '%s' "$out" | sed 's/^ok \(.*\)$/error \1 the push to the remote failed/'
-    fi
-  fi
-  echo
-  batch=
-}
-while IFS= read -r line; do
-  case "$line" in
-    capabilities) printf 'option\npush\n\n' ;;
-    "option dry-run "*) dry="${line#option dry-run }"; echo ok ;;
-    "option force true") force=+; echo ok ;;
-    "option cas "*) leases="$leases$nl--force-with-lease=${line#option cas }"; echo ok ;;
-    "option verbosity "* | "option progress "* | "option force "*) echo ok ;;
-    "option "*) echo unsupported ;;
-    list | "list for-push")
-      git ls-remote "$url" </dev/null 2>/dev/null | while read -r sha ref; do
-        case "$ref" in HEAD | *"^{}") ;; *) echo "$sha $ref" ;; esac
-      done
-      echo
-      ;;
-    "push "*) batch="$batch${line#push }$nl" ;;
-    "")
-      if [ -z "$batch" ]; then exit 0; fi
-      finish
-      ;;
-    *) echo "unsupported command: $line" >&2; exit 1 ;;
-  esac
-done
-"#;
-
-/// Writes the helper into `dir` as an executable file. Rewrites it only when the content differs.
-pub fn ensure_no_push_helper(dir: &Path) -> std::io::Result<PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
-    let file = dir.join(NO_PUSH_HELPER_NAME);
-    let script = no_push_helper_script();
-    let current = std::fs::read_to_string(&file).ok();
-    let executable = file.metadata().is_ok_and(|m| m.permissions().mode() & 0o111 != 0);
-    if current.as_deref() != Some(script.as_str()) || !executable {
-        crate::fsutil::write_atomic(&file, &script)?;
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
-    }
-    Ok(file)
 }
 
 #[cfg(test)]
@@ -809,7 +642,6 @@ mod tests {
             effort: None,
             level,
             setup: String::new(),
-            never_push: false,
             extra_args: crate::agents::ArgList::default(),
             house_style: true,
         }
@@ -1330,26 +1162,6 @@ mod tests {
         assert_eq!(env_of(&launch, "TIDEWATCH_MCP_TOKEN"), None);
     }
 
-    #[test]
-    fn never_push_adds_the_git_config_env_and_helper_path_in_worktree_tabs_only() {
-        let mut guarded = profile("claude", Level::Plan);
-        guarded.never_push = true;
-        let launch = run("claude", &guarded, &full_ctx());
-        assert_eq!(env_of(&launch, "GIT_CONFIG_COUNT"), Some("1"));
-        assert_eq!(
-            env_of(&launch, "GIT_CONFIG_KEY_0"),
-            Some("url.tidewatch-no-push://blocked/.pushInsteadOf")
-        );
-        assert_eq!(env_of(&launch, "GIT_CONFIG_VALUE_0"), Some(""));
-        assert_eq!(env_of(&launch, "PATH"), Some("/state/guard-bin:/usr/bin:/bin"));
-
-        let main_tab = LaunchCtx { worktree_tab: false, ..full_ctx() };
-        assert_eq!(env_of(&run("claude", &guarded, &main_tab), "GIT_CONFIG_COUNT"), None);
-        let mut open = guarded.clone();
-        open.never_push = false;
-        assert_eq!(env_of(&run("claude", &open, &full_ctx()), "GIT_CONFIG_COUNT"), None);
-    }
-
     fn guard_ctx() -> GuardCtx {
         GuardCtx {
             bin: "/app/tidewatch".into(),
@@ -1532,79 +1344,6 @@ mod tests {
         assert!(line.contains("--settings /state/tab/claude-settings.json"), "{line}");
         assert!(!line.contains("Bearer") && !line.contains("tok123"), "{line}");
         assert!(line.len() < 900, "{} bytes", line.len());
-    }
-
-    #[test]
-    fn the_push_guard_and_the_outbound_guards_share_one_path_entry() {
-        let mut both = profile("claude", Level::Plan);
-        both.never_push = true;
-        let ctx = LaunchCtx { guards: Some(guard_ctx()), ..full_ctx() };
-        let launch = run("claude", &both, &ctx);
-        let paths: Vec<&str> =
-            launch.env.iter().filter(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).collect();
-        assert_eq!(paths, ["/state/guard-bin:/usr/bin:/bin"]);
-        assert_eq!(env_of(&launch, "GIT_CONFIG_COUNT"), Some("1"));
-        assert_eq!(env_of(&launch, "TIDEWATCH_GUARD_CONFIG"), Some("/cfg/settings.toml"));
-    }
-
-    #[test]
-    fn guard_env_appends_after_existing_git_config_entries() {
-        let base = vec![
-            ("GIT_CONFIG_COUNT".to_owned(), "2".to_owned()),
-            ("GIT_CONFIG_KEY_0".to_owned(), "user.name".to_owned()),
-            ("GIT_CONFIG_VALUE_0".to_owned(), "a".to_owned()),
-            ("GIT_CONFIG_KEY_1".to_owned(), "user.email".to_owned()),
-            ("GIT_CONFIG_VALUE_1".to_owned(), "b".to_owned()),
-        ];
-        let env = guard_env(&base, None, Some("main"), None);
-        assert_eq!(
-            env,
-            [
-                ("GIT_CONFIG_COUNT".to_owned(), "3".to_owned()),
-                ("GIT_CONFIG_KEY_2".to_owned(), NO_PUSH_URL_PREFIX.to_owned()),
-                ("GIT_CONFIG_VALUE_2".to_owned(), String::new()),
-                (PUSH_PROTECTED_ENV.to_owned(), "main".to_owned()),
-            ]
-        );
-    }
-
-    #[test]
-    fn guard_env_treats_a_missing_or_garbage_count_as_zero() {
-        for base in [vec![], vec![("GIT_CONFIG_COUNT".to_owned(), "lots".to_owned())]] {
-            let env = guard_env(&base, None, None, None);
-            assert_eq!(env[0], ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()));
-            assert_eq!(env[1].0, "GIT_CONFIG_KEY_0");
-        }
-    }
-
-    #[test]
-    fn guard_env_puts_the_helper_dir_first_even_without_a_base_path() {
-        let env = guard_env(&[], Some(Path::new("/g")), None, None);
-        assert_eq!(env.last().unwrap(), &("PATH".to_owned(), "/g".to_owned()));
-    }
-
-    #[test]
-    fn helper_script_is_a_remote_helper_that_names_the_guard_key_and_the_message() {
-        let script = no_push_helper_script();
-        assert!(script.starts_with("#!/bin/sh\n"));
-        assert!(script.contains(NO_PUSH_MESSAGE));
-        assert!(script.contains(NO_PUSH_URL_PREFIX));
-        assert!(script.contains("printf 'option\\npush\\n\\n'"));
-        assert!(!script.contains("@MESSAGE@"));
-        assert!(!script.contains("@GUARD_KEY@"));
-    }
-
-    #[test]
-    fn helper_is_written_executable_and_repaired_when_changed() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let file = ensure_no_push_helper(dir.path()).unwrap();
-        assert_eq!(file.file_name().unwrap(), NO_PUSH_HELPER_NAME);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), no_push_helper_script());
-        assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o755);
-        std::fs::write(&file, "tampered").unwrap();
-        ensure_no_push_helper(dir.path()).unwrap();
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), no_push_helper_script());
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! Every call blocks until the child exits or its time limit ends ([`limited`]): call these from a
 //! background thread, never the UI thread. Children run with prompts off and stdin closed, so a
 //! missing login fails fast instead of waiting for a keypress that nobody can type. They also run in Tidewatch's own environment, not an
-//! agent tab's, so the never-push guard (D7) and the outbound guards do not apply to them.
+//! agent tab's, so the outbound guards do not apply to them.
 //!
 //! `gh` messages were checked against gh 2.98.0, `git` against 2.55.0.
 

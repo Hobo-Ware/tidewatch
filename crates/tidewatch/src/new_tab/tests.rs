@@ -426,7 +426,6 @@ fn custom_catalog() -> Catalog {
             effort: None,
             level: Level::Ask,
             setup: String::new(),
-            never_push: true,
             extra_args: ArgList::default(),
             house_style: false,
         },

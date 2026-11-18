@@ -525,7 +525,7 @@ pub(crate) fn order(sessions: &mut [Session]) {
 }
 
 /// The profile a moved session resumes with: the session's own level, model, effort and other
-/// flags on top of the first profile of its CLI (its name, the push guard and house style).
+/// flags on top of the first profile of its CLI (its name and house style).
 pub(crate) fn resolve_profile(
     profiles: Option<&Profiles>,
     agent: &Agent,
@@ -539,9 +539,9 @@ pub(crate) fn resolve_profile(
             .filter(|(_, profile)| profile.agent == agent.id)
     };
     let base = of_cli().find(|(_, profile)| profile.level == level).or_else(|| of_cli().next());
-    let (id, name, never_push, house_style) = base.map_or_else(
-        || (String::new(), agent.name.clone(), true, true),
-        |(id, profile)| (id.clone(), profile.name.clone(), profile.never_push, profile.house_style),
+    let (id, name, house_style) = base.map_or_else(
+        || (String::new(), agent.name.clone(), true),
+        |(id, profile)| (id.clone(), profile.name.clone(), profile.house_style),
     );
     let profile = Profile {
         name,
@@ -550,7 +550,6 @@ pub(crate) fn resolve_profile(
         effort: session.flags.effort.clone(),
         level,
         setup: String::new(),
-        never_push,
         extra_args: ArgList(session.flags.extra.clone()),
         house_style,
     };

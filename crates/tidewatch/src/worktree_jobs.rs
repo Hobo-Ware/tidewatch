@@ -329,7 +329,6 @@ mod tests {
         assert!(line.starts_with("claude --permission-mode acceptEdits"), "{line}");
         assert!(line.ends_with("-- 'write a haiku'"), "{line}");
         let env = &started.prepared.env;
-        assert!(env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
         let path = &env.iter().find(|(k, _)| k == "PATH").unwrap().1;
         assert!(path.starts_with(&paths.guard_bin_dir().display().to_string()), "{path}");
         assert!(paths.house_style_file().is_file());
@@ -445,7 +444,6 @@ mod tests {
         };
         assert_eq!((opened.worktree, opened.dir.as_path()), (None, folder.as_path()));
         let started = opened.started.unwrap();
-        assert!(!started.prepared.env.iter().any(|(k, _)| k == "GIT_CONFIG_COUNT"));
         assert!(!started.prepared.launch.args.iter().any(|a| a == "--"), "no task, no separator");
 
         open(&jobs, &ctx, in_folder(request(Level::Yolo, "")));

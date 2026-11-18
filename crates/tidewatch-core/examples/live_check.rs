@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use tidewatch_core::agents::{AgentTable, ArgList, Level, Wiring};
 use tidewatch_core::events::TabEvent;
 use tidewatch_core::launch::{
-    GeminiSettingsFiles, LaunchCtx, copilot_plugin_files, ensure_no_push_helper,
-    gemini_system_settings, launch_command, mcp_config_json,
+    GeminiSettingsFiles, LaunchCtx, copilot_plugin_files, gemini_system_settings, launch_command,
+    mcp_config_json,
 };
 use tidewatch_core::listener::{Listener, TabRegistration};
 use tidewatch_core::mcp::TabRole;
@@ -60,7 +60,6 @@ fn main() {
         effort: None,
         level: level_from_env(),
         setup: String::new(),
-        never_push: true,
         extra_args: ArgList::default(),
         house_style: false,
     };
@@ -69,12 +68,8 @@ fn main() {
     if let Some(json) = &mcp_json {
         std::fs::write(&mcp_file, json).expect("write the MCP config");
     }
-    let guard_dir = home.path().join("guard");
-    std::fs::create_dir_all(&guard_dir).expect("create the guard dir");
-    ensure_no_push_helper(&guard_dir).expect("write the no-push helper");
     let mut ctx = LaunchCtx {
         worktree: repo.clone(),
-        guard_bin_dir: Some(guard_dir),
         worktree_tab: true,
         hooks: Some(hook.clone()),
         mcp_config: Some(mcp_file),

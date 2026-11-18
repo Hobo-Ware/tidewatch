@@ -287,7 +287,7 @@ fn spare_height_goes_below_the_last_field_and_never_between_fields() {
             "Agent",
             "Effort",
             "Permission level",
-            "Advanced: setup command, extra arguments, push guard, house style",
+            "Advanced: setup command, extra arguments, house style",
         ]
         .map(|text| harness.on_card(text).unwrap_or_else(|| panic!("{text}")).rect.top())
     };

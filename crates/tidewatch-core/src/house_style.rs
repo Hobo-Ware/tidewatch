@@ -73,15 +73,8 @@ fn pr_section(role: Role, turn_end: TurnEnd) -> String {
     format!("\n{PR_HEAD} {PR_FEED} {watch} {PR_TAIL}\n")
 }
 
-const PUSH_LINE: &str =
-    "You may push any branch except the default branch. Tags and the default branch are refused.";
-
-fn workflow_section(role: Role, workflow: Workflow) -> String {
-    let mut lines = workflow.launch_lines().to_vec();
-    if matches!(role, Role::Agent | Role::Autonomous) {
-        lines.push(PUSH_LINE);
-    }
-    format!("## This repo's workflow\n\n- {}\n", lines.join("\n- "))
+fn workflow_section(workflow: Workflow) -> String {
+    format!("## This repo's workflow\n\n- {}\n", workflow.launch_lines().join("\n- "))
 }
 
 pub const MEESEEKS_GUIDANCE: &str = "\
@@ -233,7 +226,7 @@ pub fn compose_for_cli(
     workflow: Option<Workflow>,
     presence: Presence,
 ) -> String {
-    let workflow = workflow.map(|workflow| format!("\n{}", workflow_section(role, workflow)));
+    let workflow = workflow.map(|workflow| format!("\n{}", workflow_section(workflow)));
     let one_task = match role {
         Role::Agent => String::new(),
         Role::Autonomous => format!("\n{AUTONOMOUS_GUIDANCE}"),
@@ -523,22 +516,6 @@ mod tests {
             for word in METHOD_WORDS {
                 assert!(!before.contains(word), "{role:?} names {word:?} before the profile");
             }
-        }
-    }
-
-    #[test]
-    fn only_an_agent_that_may_push_is_told_which_branches_it_may_push() {
-        for role in ROLES {
-            let text = compose_for_cli(
-                "be brief",
-                None,
-                role,
-                TurnEnd::SentBack,
-                Some(Workflow::default()),
-                Presence::default(),
-            );
-            let told = text.contains(PUSH_LINE);
-            assert_eq!(told, matches!(role, Role::Agent | Role::Autonomous), "{role:?}");
         }
     }
 

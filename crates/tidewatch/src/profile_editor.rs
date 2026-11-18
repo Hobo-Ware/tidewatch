@@ -19,7 +19,6 @@ pub(crate) struct Draft {
     pub(crate) level: Level,
     pub(crate) setup: String,
     pub(crate) extra_args: String,
-    pub(crate) never_push: bool,
     pub(crate) house_style: bool,
 }
 
@@ -34,7 +33,6 @@ impl Draft {
             level: profile.level,
             setup: profile.setup.clone(),
             extra_args: shell_words::join(profile.extra_args.iter()),
-            never_push: profile.never_push,
             house_style: profile.house_style,
         }
     }
@@ -61,7 +59,6 @@ impl Draft {
             effort: optional(&self.effort),
             level: self.level,
             setup: self.setup.trim().to_owned(),
-            never_push: self.never_push,
             extra_args: ArgList(extra),
             house_style: self.house_style,
         })
@@ -159,7 +156,6 @@ impl Editor {
             level: Level::Edits,
             setup: String::new(),
             extra_args: String::new(),
-            never_push: true,
             house_style: true,
         });
         self.selected = self.drafts.len() - 1;
@@ -305,10 +301,7 @@ mod tests {
         assert_eq!(editor.selected, editor.drafts.len() - 1);
         assert!(editor.dirty);
         let added = editor.build().unwrap().profile["new-profile-2"].clone();
-        assert_eq!(
-            (added.agent.as_str(), added.level, added.never_push),
-            ("claude", Level::Edits, true)
-        );
+        assert_eq!((added.agent.as_str(), added.level), ("claude", Level::Edits));
     }
 
     #[test]
