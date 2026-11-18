@@ -118,6 +118,15 @@ impl Laid {
         self.galley.size()
     }
 
+    pub(crate) fn rows(&self) -> usize {
+        self.galley.rows.len()
+    }
+
+    /// The right end and the middle of the last row, from the text's top left.
+    pub(crate) fn end(&self) -> Pos2 {
+        self.galley.rows.last().map_or(Pos2::ZERO, |placed| placed.rect().right_center())
+    }
+
     /// Paints at `pos` and answers the pointer over its links; `id` must differ per line.
     pub(crate) fn paint(&self, ui: &Ui, id: Id, pos: Pos2, fallback: Color32) {
         let hovered = self.interact(ui, id, pos);

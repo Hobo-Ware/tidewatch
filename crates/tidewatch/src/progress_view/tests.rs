@@ -696,8 +696,11 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
         "1 of 4 steps",
         "recap-people-backfill",
         "Waiting for",
+        "DOING NOW",
         "Check links against each season's cast",
+        "UP NEXT",
         "Check one linked row on the live route",
+        "DONE",
         "Decisions",
         "Not verified",
         "Show 1 verified",
@@ -705,7 +708,7 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
     let tops: Vec<f32> = order.iter().map(|text| at(text)).collect();
     assert!(tops.windows(2).all(|pair| pair[0] <= pair[1] + 0.5), "{order:?} {tops:?}");
     assert!(panel.drawn("waits on your answer"), "{:?}", panel.texts);
-    assert!(panel.drawn("claimed \u{b7} 200, people empty"), "{:?}", panel.texts);
+    assert!(!panel.drawn("claimed \u{b7} 200, people empty"), "Done starts folded");
     for text in ["NEEDS YOU", "Let it all run now", "Something else"] {
         assert!(!panel.drawn(text), "{text:?} drawn in {:?}", panel.texts);
     }
@@ -715,6 +718,10 @@ fn the_needs_you_report_draws_the_board_top_to_bottom() {
     for stage in ["Build", "Ship", "Backfill", "Verify"] {
         assert!(panel.drawn(stage), "{stage:?} bar");
     }
+    let mut panel = panel;
+    let at = panel.center_of("Show");
+    panel.click(at);
+    assert!(panel.drawn("claimed \u{b7} 200, people empty"), "{:?}", panel.texts);
 }
 
 #[test]
@@ -1561,5 +1568,194 @@ fn a_job_bar_keeps_its_place_when_a_turn_starts_or_the_tone_flips() {
         panel.frame(Vec::new());
         panel.frame(Vec::new());
         assert_eq!(panel.center_of("recap-people-backfill"), before, "{name}");
+    }
+}
+
+const REDO: &str = "Rebuild a minimal redo path (refs, render, upload)";
+const DARK: &str = "One folder per album, then generate";
+const BATCH_4_REVIEW: &str = "Owner reviews batch 4 (40 covers)";
+const ROUND_3: &str = "Round 3 live";
+const BATCH_4: &str = "Batch 4 live";
+const PARKED_PHOTOS: &str = "Three missing cover photos: find sources";
+
+fn long_run_report() -> Ledger {
+    let today = crate::progress_glue::today();
+    let step = |stage: &str, text: &str, status: &str, extra: serde_json::Value| {
+        let mut step = serde_json::json!({ "stage": stage, "text": text, "status": status });
+        step.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        step
+    };
+    let none = || serde_json::json!({});
+    let stage = |name: &str, status: &str| serde_json::json!({ "name": name, "kind": "build", "status": status });
+    let args = serde_json::json!({
+        "goal": "Generate and review the album covers",
+        "state": "working",
+        "now": "Rebuilding the redo path",
+        "stages": [
+            stage("Generate", "active"),
+            stage("Review", "active"),
+            stage("Sign and upload", "active")
+        ],
+        "steps": [
+            step("Generate", REDO, "active", none()),
+            step("Generate", "Redo one cover with better refs", "todo", serde_json::json!({ "when": { "event": "redo path rebuilt" } })),
+            step("Generate", DARK, "done", none()),
+            step("Generate", "Plug the laptop in: on battery", "todo", serde_json::json!({ "when": { "you": true } })),
+            step("Generate", PARKED_PHOTOS, "todo", serde_json::json!({ "when": { "parked": "next batch" } })),
+            step("Review", BATCH_4_REVIEW, "done", none()),
+            step("Review", "Owner reviews the cover redo", "todo", serde_json::json!({ "when": { "event": "redo made" } })),
+            step("Review", "Hourly review page watch", "active", serde_json::json!({ "when": { "event": "owner says stop" } })),
+            step("Sign and upload", ROUND_3, "done", serde_json::json!({ "evidence": "200 OK" })),
+            step("Sign and upload", BATCH_4, "done", none()),
+            step("Sign and upload", "Upload the approved redo", "todo", serde_json::json!({ "when": { "event": "owner reviews the redo" } })),
+            step("Sign and upload", "Old folders check at 18:00", "todo", serde_json::json!({ "when": { "date": today.to_string() } }))
+        ]
+    });
+    let mut ledger =
+        tidewatch_core::progress_report::ProgressReport::check(args.as_object().unwrap(), None)
+            .unwrap_or_else(|problems| panic!("{problems:?}"))
+            .to_ledger();
+    let stamp =
+        |days_ago: i64| u64::try_from((today.day_number() - days_ago) * 86_400 + 43_200).unwrap();
+    for item in ledger.checklist.iter_mut().flat_map(|phase| phase.items.iter_mut()) {
+        item.done_at = match item.text.as_str() {
+            DARK => Some(stamp(3)),
+            BATCH_4_REVIEW => Some(stamp(2)),
+            ROUND_3 => Some(stamp(1)),
+            BATCH_4 => Some(stamp(0)),
+            _ => None,
+        };
+    }
+    ledger
+}
+
+fn long_run_panel(width: f32) -> Panel {
+    let mut panel = Panel::new("# Goal\nx\n", width);
+    panel.ledger = Some(TabLedger { ledger: long_run_report(), updated_ms: Some(0) });
+    panel.size = vec2(width, 4000.0);
+    panel.frame(Vec::new());
+    panel.frame(Vec::new());
+    panel
+}
+
+fn top(panel: &Panel, text: &str) -> f32 {
+    panel
+        .texts
+        .iter()
+        .find(|(drawn, _)| drawn == text)
+        .unwrap_or_else(|| panic!("{text:?} not drawn in {:?}", panel.texts))
+        .1
+        .top()
+}
+
+#[test]
+fn a_long_run_reads_as_lanes_with_done_and_parked_folded() {
+    let panel = long_run_panel(520.0);
+    let order = [
+        "DOING NOW",
+        REDO,
+        "Hourly review page watch",
+        "NEEDS YOU",
+        "Plug the laptop in: on battery",
+        "UP NEXT",
+        "Old folders check at 18:00",
+        "Redo one cover with better refs",
+        "DONE",
+        "PARKED",
+    ];
+    let tops: Vec<f32> = order.iter().map(|text| top(&panel, text)).collect();
+    assert!(tops.windows(2).all(|pair| pair[0] <= pair[1] + 0.5), "{order:?} {tops:?}");
+    let counts: Vec<&str> = ["2", "1", "4", "4", "1"].to_vec();
+    for (heading, count) in
+        ["DOING NOW", "NEEDS YOU", "UP NEXT", "DONE", "PARKED"].iter().zip(counts)
+    {
+        let at = panel.texts.iter().find(|(text, _)| text == heading).unwrap().1;
+        let number = panel
+            .texts
+            .iter()
+            .find(|(text, rect)| text == count && (rect.center().y - at.center().y).abs() < 3.0);
+        assert!(number.is_some(), "{heading} count {count} in {:?}", panel.texts);
+    }
+    let last = panel.texts.iter().find(|(text, _)| text.starts_with("Last: ")).unwrap();
+    assert_eq!(last.0, format!("Last: {BATCH_4} \u{b7} today"));
+    for hidden in [DARK, BATCH_4_REVIEW, ROUND_3, BATCH_4, PARKED_PHOTOS] {
+        assert!(!panel.drawn(hidden), "{hidden:?} drawn while folded");
+    }
+    assert!(!panel.drawn("claimed \u{b7} 200 OK"));
+    for stage in ["Generate", "Review", "Sign and upload"] {
+        assert!(panel.drawn(stage), "{stage:?} tag or bar");
+    }
+}
+
+#[test]
+fn show_opens_the_done_rows_newest_first_with_their_evidence_and_show_less_folds_them() {
+    let mut panel = long_run_panel(520.0);
+    let at = panel.center_of("Show");
+    panel.click(at);
+    assert!(panel.drawn("Show less") && panel.drawn("Show"), "{:?}", panel.texts);
+    let rows = [BATCH_4, ROUND_3, BATCH_4_REVIEW, DARK];
+    let tops: Vec<f32> = rows.iter().map(|text| top(&panel, text)).collect();
+    assert!(tops.windows(2).all(|pair| pair[0] < pair[1]), "{rows:?} {tops:?}");
+    assert!(top(&panel, "DONE") < tops[0] && tops[3] < top(&panel, "PARKED"));
+    assert!(panel.drawn("claimed \u{b7} 200 OK"), "{:?}", panel.texts);
+    assert!(!panel.texts.iter().any(|(text, _)| text.starts_with("Last: ")));
+    assert!(!panel.drawn(PARKED_PHOTOS));
+    let at = panel.center_of("Show less");
+    panel.click(at);
+    assert!(!panel.drawn(DARK) && !panel.drawn("Show less"));
+    assert!(panel.texts.iter().any(|(text, _)| text.starts_with("Last: ")));
+}
+
+#[test]
+fn show_opens_the_parked_steps_and_a_tab_keeps_its_folds() {
+    let mut panel = long_run_panel(520.0);
+    let at = panel.texts.iter().filter(|(text, _)| text == "Show").nth(1).unwrap().1.center();
+    panel.click(at);
+    assert!(panel.drawn(PARKED_PHOTOS) && panel.drawn("parked until next batch"));
+    assert!(!panel.drawn(DARK));
+    assert!(panel.state.lane_open(LaneKind::Parked) && !panel.state.lane_open(LaneKind::Done));
+}
+
+#[test]
+fn a_fold_closes_for_good_when_its_lane_empties() {
+    let mut panel = long_run_panel(520.0);
+    let at = panel.center_of("Show");
+    panel.click(at);
+    assert!(panel.state.lane_open(LaneKind::Done));
+    let mut ledger = long_run_report();
+    for item in ledger.checklist.iter_mut().flat_map(|phase| phase.items.iter_mut()) {
+        if item.mark == tidewatch_core::progress::Mark::Done {
+            item.mark = tidewatch_core::progress::Mark::Todo;
+        }
+    }
+    panel.ledger = Some(TabLedger { ledger, updated_ms: Some(0) });
+    panel.frame(Vec::new());
+    assert!(!panel.drawn("DONE") && !panel.state.lane_open(LaneKind::Done));
+}
+
+#[test]
+fn a_report_from_the_last_turn_draws_its_lanes_dimmed_under_the_one_heading() {
+    let mut panel = long_run_panel(420.0);
+    panel.stale = true;
+    panel.blocks = Blocks { out_of_date: Some(Why::DoneButTurnRunning), ..aged("1h ago") };
+    panel.frame(Vec::new());
+    let headings = panel.texts.iter().filter(|(t, _)| t == "From the last turn").count();
+    assert_eq!(headings, 1, "{:?}", panel.texts);
+    assert!(top(&panel, "From the last turn") < top(&panel, "DOING NOW"));
+    assert!(panel.drawn("UP NEXT") && panel.drawn("DONE"));
+}
+
+#[test]
+fn a_long_run_never_overlaps_or_leaves_the_card_from_200_up_folded_or_open() {
+    for width in [200.0, 240.0, 300.0, 360.0, 420.0, 640.0] {
+        let mut panel = long_run_panel(width);
+        assert_clean(&panel, width);
+        let at = panel.center_of("Show");
+        panel.click(at);
+        assert_clean(&panel, width);
+        let at = panel.texts.iter().find(|(text, _)| text == "Show").unwrap().1.center();
+        panel.click(at);
+        assert_clean(&panel, width);
+        assert!(panel.drawn(PARKED_PHOTOS) && panel.drawn(DARK), "both folds open at {width}");
     }
 }

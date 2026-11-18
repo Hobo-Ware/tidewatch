@@ -1,5 +1,5 @@
 //! The Progress panel in the History card, top to bottom: the goal, Waiting on you, Now, Waiting
-//! for, the stage bars and steps with their day tags, the lists, the done check and the links. Which side a
+//! for, the stage bars and the steps in lanes with their day tags, the lists, the done check and the links. Which side a
 //! tab shows is kept here.
 
 use std::collections::{HashMap, HashSet};
@@ -25,9 +25,10 @@ use crate::link_view::{self, LinkView};
 use crate::meeseeks_model::Card as MeeseeksCard;
 use crate::meeseeks_view;
 use crate::panel_blocks::{self, Blocks};
-use crate::progress_blocks::{self as blocks_view, Column, Steps};
+use crate::progress_blocks::{self as blocks_view, Column, LaneSteps, Steps};
 use crate::progress_model::{
-    self as model, Bar, BarKind, StageShape, TAGS, Tag, Tone, entries, stage_rows, stages_shown,
+    self as model, Bar, BarKind, Lane, LaneKind, StageShape, TAGS, Tag, Tone, entries, stage_rows,
+    stages_shown,
 };
 use crate::progress_state::TabLedger;
 use crate::reader_view::ellipsized;
@@ -112,6 +113,7 @@ pub(crate) struct TabState {
     all_entries: [bool; 3],
     verified_open: bool,
     all_rows: bool,
+    open_lanes: HashSet<LaneKind>,
     /// The job whose bar the Now block showed last, so the bar keeps its place across turns.
     lead: Option<u64>,
     pub(crate) links: LinkView,
@@ -151,6 +153,21 @@ impl TabState {
 
     pub(crate) fn toggle_rows(&mut self) {
         self.all_rows ^= true;
+    }
+
+    fn lane_open(&self, kind: LaneKind) -> bool {
+        !kind.folds() || self.open_lanes.contains(&kind)
+    }
+
+    fn toggle_lane(&mut self, kind: LaneKind) {
+        if kind.folds() && !self.open_lanes.remove(&kind) {
+            self.open_lanes.insert(kind);
+        }
+    }
+
+    /// A lane that has no steps any more folds again for when it has some.
+    fn forget_empty_lanes(&mut self, lanes: &[Lane<'_>]) {
+        self.open_lanes.retain(|kind| lanes.iter().any(|lane| lane.kind == *kind));
     }
 
     fn forget_short_folds(&mut self, counts: [usize; 3]) {
@@ -390,7 +407,11 @@ fn report_blocks(
     if !stages.is_empty() {
         gaps.before(ui);
         old_heading(ui, column, heading_shown);
-        steps_block(ui, column, &stages, input, state);
+        if model::is_typed(ledger) {
+            lanes_block(ui, column, &stages, input, state);
+        } else {
+            steps_block(ui, column, &stages, input, state);
+        }
     }
     state.forget_short_folds(TAGS.map(|tag| entries(ledger, tag).len()));
     for tag in [Tag::Decisions, Tag::NotVerified, Tag::Verified] {
@@ -572,6 +593,33 @@ fn paint_bar(ui: &mut Ui, column: Rect, bar: &Bar, tone: Tone, index: usize) {
         format!("{}: {}/{}", bar.label, bar.done, bar.total)
     };
     ui.interact(area, ui.id().with(("progress-bar", index)), Sense::hover()).on_hover_text(tip);
+}
+
+fn lanes_block(
+    ui: &mut Ui,
+    column: Column,
+    stages: &[model::StageRows<'_>],
+    input: &Input<'_>,
+    state: &mut TabState,
+) {
+    let lanes = model::lanes(stages);
+    state.forget_empty_lanes(&lanes);
+    let steps = LaneSteps {
+        lanes: &lanes,
+        done_open: state.lane_open(LaneKind::Done),
+        parked_open: state.lane_open(LaneKind::Parked),
+        marks: input.marks,
+        checks: input.checks,
+        time: input.time,
+        today: crate::progress_glue::today(),
+    };
+    let drawn = blocks_view::lanes_block(ui, column, &steps);
+    if drawn.spinning && input.animate {
+        ui.ctx().request_repaint_after(SPIN_EVERY);
+    }
+    if let Some(kind) = drawn.toggled {
+        state.toggle_lane(kind);
+    }
 }
 
 fn steps_block(
