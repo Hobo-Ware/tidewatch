@@ -14,7 +14,7 @@ use crate::screen_kit::{
     paint_pill_card, path_line, primary_button_keyed, quiet_button,
 };
 use crate::screen_kit::{TEXT_SECONDARY, TEXT_TAG};
-use crate::settings_ui::text_input;
+use crate::settings_ui::{text_input, text_input_keyed};
 use tidewatch_core::folder_repos::tilde;
 
 const CARD_H: f32 = 92.0;
@@ -96,7 +96,8 @@ fn form_body(
     if open.repo().is_some() && !opens_known {
         ui.add_space(SECTION_GAP - 8.0);
         field_label(ui, "Clone into");
-        let parent = text_input(ui, &mut open.parent, "Folder for the new checkout");
+        let parent =
+            text_input_keyed(ui, "clone_into", &mut open.parent, "Folder for the new checkout");
         entered |= parent.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         if let Verdict::Ready(_, Landing::Clone { target }) = verdict {
             path_line(
@@ -260,5 +261,52 @@ mod tests {
         assert!((hint.center().y - cancel.center().y).abs() < 2.0, "{hint:?} vs {cancel:?}");
         assert!(hint.right() < cancel.left());
         assert_eq!(texts.iter().filter(|(text, _)| text.contains(" - ")).count(), 0);
+    }
+
+    #[test]
+    fn typing_in_the_folder_field_keeps_it_focused_while_the_new_folder_is_checked() {
+        let ctx = crate::fonts::test_context();
+        let home = Path::new("/home/u");
+        let mut open = OpenLink::open(Vec::new(), None, home);
+        open.link = "https://github.com/acme/web".into();
+        let question = open.question().unwrap();
+        open.answered(crate::open_link::Planned {
+            key: question.key,
+            landing: Landing::Clone { target: "/home/u/Git/web".into() },
+        });
+        let frame = |events: Vec<egui::Event>, open: &mut OpenLink| {
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 640.0))),
+                events,
+                focused: true,
+                ..Default::default()
+            };
+            let mut field = None;
+            let output = ctx.run_ui(raw, |ui| {
+                let _ = show(ui.ctx(), open, Some(home));
+                field = ui.ctx().memory(egui::Memory::focused);
+            });
+            (output, field)
+        };
+        let _ = frame(Vec::new(), &mut open);
+        let (output, _) = frame(Vec::new(), &mut open);
+        let texts = painted_texts(&output);
+        let label = texts.iter().find(|(text, _)| text == "Clone into").unwrap().1;
+        let folder =
+            Rect::from_center_size(label.left_bottom() + vec2(300.0, 26.0), vec2(4.0, 4.0));
+        let click = |pressed| egui::Event::PointerButton {
+            pos: folder.center(),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = frame(vec![egui::Event::PointerMoved(folder.center()), click(true)], &mut open);
+        let (_, focused) = frame(vec![click(false)], &mut open);
+        assert!(focused.is_some());
+        for ch in ["x", "y"] {
+            let (_, now) = frame(vec![egui::Event::Text(ch.into())], &mut open);
+            assert_eq!(now, focused, "focus left the folder field after typing {ch}");
+        }
+        assert!(open.parent.ends_with("/Gitxy"), "{}", open.parent);
     }
 }
