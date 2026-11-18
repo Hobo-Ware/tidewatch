@@ -388,6 +388,21 @@ fn fade(painter: &Painter, rect: Rect, ground: Color32, to_bottom: bool) {
 }
 
 pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Response {
+    styled_input(ui, egui::TextEdit::singleline(value), hint)
+}
+
+/// A field drawn below content that comes and goes needs a fixed id, or it loses focus when
+/// that content changes.
+pub(crate) fn text_input_keyed(
+    ui: &mut Ui,
+    salt: &str,
+    value: &mut String,
+    hint: &str,
+) -> Response {
+    styled_input(ui, egui::TextEdit::singleline(value).id_salt(salt), hint)
+}
+
+fn styled_input(ui: &mut Ui, edit: egui::TextEdit<'_>, hint: &str) -> Response {
     ui.scope(|ui| {
         let visuals = ui.visuals_mut();
         visuals.extreme_bg_color = brand::ground();
@@ -403,8 +418,7 @@ pub(crate) fn text_input(ui: &mut Ui, value: &mut String, hint: &str) -> Respons
         }
         ui.style_mut().override_font_id = Some(FontId::proportional(14.0));
         ui.add(
-            egui::TextEdit::singleline(value)
-                .desired_width(ui.available_width())
+            edit.desired_width(ui.available_width())
                 .margin(Margin::symmetric(12, 10))
                 .text_color(brand::text())
                 .hint_text(RichText::new(hint).color(brand::faint())),
