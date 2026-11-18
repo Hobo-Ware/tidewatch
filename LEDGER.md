@@ -9,6 +9,16 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 - **Also:** six habit workflows are built in, and Build workflow from this session (palette; the agent proposes a workflow that opens as an unsaved draft), 2026-10-16. Restart to update keeps every shell and agent running (live handoff, 2026-10-15). The receiving side of stdusk's "Move tabs to Tidewatch" is built (#49).
 - **Next:** the diff widgets go teal (the graph already does on the side layout); commit messages that truncate early in the narrow tree; the divider position saved between runs; the site hero screenshot; the owner's live checks; Linux desktop runs.
 
+## 2026-11-18
+
+- **Four owner-reported fixes.** Owner: "What the hell man?!" (the memory sync's push refused 1,320 times, 687 commits waiting), plus three more.
+  - The push guard refuses `main` only for the tab's own repo. The helper compares the push's `--git-common-dir` with `TIDEWATCH_PUSH_REPO` (the tab repo's, set at launch) and passes a push from any other repo whole. Tabs started before this keep the old env until restarted. Test: `a_push_from_another_repo_goes_through_whole_while_the_tab_repo_and_its_worktrees_stay_guarded` (fails without the fix).
+  - Hovering the tab bar no longer shows a chat message's Edit, Copy and Send again bar: the toolbar now needs the pointer inside the Reader's visible area and the bar fully inside it. Headless test fails without the fix.
+  - Hiding the quake window while Tidewatch is the active app now activates the app it showed over (remembered at show), so Cmd+T and Cmd+W go to Chrome, not Tidewatch. Recorder tests only; not typed by hand (agent runs may not take focus).
+  - A picture pasted into the question card's Something else box (and any shared composer the paste host does not own) becomes a chip, not a raw path. Composer test for the token paste.
+  - Clippy 1.100 `map_or_default` lints fixed across the workspace (CI uses stable).
+  - Gates: fmt and clippy 1.100 clean; 5985 tests passed, 0 failed, run with this tab's old push-guard env removed (with it, 113 git tests fail on that very bug).
+
 ## 2026-11-11
 
 - **A `#123` after another repo's name no longer links to the tab's repo.** Owner: "an issue referencing a different repository references the repo I am currently in". `owner/name#12` now links to that repo; `owner/name #12`, `owner/name PR #12` or `` `owner/name` (#12) `` of another repo stays plain text, since the name could be a branch (`agent/x PR #12`). Gates: fmt, clippy, `passed 5981 failed 0`.
