@@ -1418,6 +1418,7 @@ mod tests {
             }),
             guard_bin_dir: Some("/state/guard-bin".into()),
             protected_branch: Some("main".into()),
+            push_repo: None,
             guards: None,
             env: vec![("PATH".into(), "/usr/bin:/bin".into())],
         }

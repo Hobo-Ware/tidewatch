@@ -28,6 +28,7 @@ pub const NO_PUSH_HELPER_NAME: &str = "git-remote-tidewatch-no-push";
 pub const NO_PUSH_MESSAGE: &str =
     "Tidewatch: an agent tab may push any branch except the default branch";
 pub const PUSH_PROTECTED_ENV: &str = "TIDEWATCH_PUSH_PROTECTED";
+pub const PUSH_REPO_ENV: &str = "TIDEWATCH_PUSH_REPO";
 const NO_PUSH_URL_PREFIX: &str = "url.tidewatch-no-push://blocked/.pushInsteadOf";
 const CODEX_MCP_TOKEN_ENV: &str = "TIDEWATCH_MCP_TOKEN";
 /// How long a CLI waits for one Tidewatch tool call: the longest `ask_user` hold and five minutes
@@ -153,6 +154,8 @@ pub struct LaunchCtx {
     pub guard_bin_dir: Option<PathBuf>,
     /// The repo's default branch, the one branch the push guard refuses besides `main` and `master`.
     pub protected_branch: Option<String>,
+    /// The tab repo's canonical `--git-common-dir`: pushes from any other repo pass the guard.
+    pub push_repo: Option<PathBuf>,
     /// Wakes the `git` and `gh` shims in `guard_bin_dir`, see `guard_shim`.
     pub guards: Option<GuardCtx>,
     /// The environment the agent would otherwise get. Read for `GIT_CONFIG_COUNT` and `PATH`.
@@ -251,6 +254,7 @@ pub fn launch_command(
             &ctx.env,
             ctx.guard_bin_dir.as_deref(),
             ctx.protected_branch.as_deref(),
+            ctx.push_repo.as_deref(),
         ));
     }
     if ctx.worktree_tab
@@ -636,15 +640,16 @@ fn merge_gemini_section(theirs: Option<Value>, mine: Value) -> Value {
 ///
 /// Appends one `url.tidewatch-no-push://blocked/.pushInsteadOf` entry (empty value, so it matches every
 /// remote) after any `GIT_CONFIG_COUNT` entries already in `base_env`, names the repo's default branch
-/// in `TIDEWATCH_PUSH_PROTECTED`, and puts `guard_bin_dir` first on `PATH` so git finds the helper. The
+/// in `TIDEWATCH_PUSH_PROTECTED` and the tab repo's git folder in `TIDEWATCH_PUSH_REPO`, and puts `guard_bin_dir` first on `PATH` so git finds the helper. The
 /// helper forwards a push of any branch except that one (and `main` and `master`, named or not) and
-/// refuses tags and the rest. Without a helper every push fails, with git's own "remote helper not
+/// refuses tags and the rest; a push from another repo passes whole. Without a helper every push fails, with git's own "remote helper not
 /// found" error.
 #[must_use]
 pub fn guard_env(
     base_env: &[(String, String)],
     guard_bin_dir: Option<&Path>,
     protected_branch: Option<&str>,
+    push_repo: Option<&Path>,
 ) -> Vec<(String, String)> {
     let var = |key: &str| base_env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
     let count = var("GIT_CONFIG_COUNT").and_then(|c| c.trim().parse::<usize>().ok()).unwrap_or(0);
@@ -654,6 +659,7 @@ pub fn guard_env(
         (format!("GIT_CONFIG_VALUE_{count}"), String::new()),
         (PUSH_PROTECTED_ENV.to_owned(), protected_branch.unwrap_or_default().to_owned()),
     ];
+    env.extend(push_repo.map(|repo| (PUSH_REPO_ENV.to_owned(), repo.display().to_string())));
     env.extend(guard_bin_dir.and_then(|dir| path_with_first(base_env, dir)));
     env
 }
@@ -673,7 +679,8 @@ pub(crate) fn path_with_first(
 /// Content of the `git-remote-tidewatch-no-push` helper, a git remote helper (`gitremote-helpers`):
 /// it lists the real remote's refs, and forwards a push batch to the real url only when every ref in
 /// it is a branch other than `main`, `master` and `$TIDEWATCH_PUSH_PROTECTED`. Tags, any other ref and
-/// a delete of a protected branch refuse the whole batch. Deleting another branch goes through.
+/// a delete of a protected branch refuse the whole batch. Deleting another branch goes through. When
+/// `$TIDEWATCH_PUSH_REPO` names the tab's repo and the push runs in another one, every ref goes through.
 #[must_use]
 pub fn no_push_helper_script() -> String {
     GUARD_HELPER_TEMPLATE
@@ -684,6 +691,11 @@ pub fn no_push_helper_script() -> String {
 const GUARD_HELPER_TEMPLATE: &str = r#"#!/bin/sh
 url="${2#tidewatch-no-push://blocked/}"
 protected="${TIDEWATCH_PUSH_PROTECTED:-}"
+foreign=
+if [ -n "${TIDEWATCH_PUSH_REPO:-}" ]; then
+  here=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)
+  if [ -n "$here" ] && [ "$here" != "$TIDEWATCH_PUSH_REPO" ]; then foreign=yes; fi
+fi
 i=0
 while [ "$i" -lt "${GIT_CONFIG_COUNT:-0}" ]; do
   eval "key=\${GIT_CONFIG_KEY_$i:-}"
@@ -710,12 +722,17 @@ finish() {
     case "$leases" in *"=$dst:"*) plus= ;; esac
     name=
     case "$dst" in refs/heads/*) name="${dst#refs/heads/}" ;; esac
-    if [ -z "$name" ]; then
-      refused=yes
-      out="${out}error $dst only branches can be pushed from this tab$nl"
+    why=
+    if [ -n "$foreign" ]; then
+      :
+    elif [ -z "$name" ]; then
+      why="only branches can be pushed from this tab"
     elif [ "$name" = main ] || [ "$name" = master ] || [ "$name" = "$protected" ]; then
+      why="the default branch cannot be pushed from this tab"
+    fi
+    if [ -n "$why" ]; then
       refused=yes
-      out="${out}error $dst the default branch cannot be pushed from this tab$nl"
+      out="${out}error $dst $why$nl"
     else
       out="${out}ok $dst$nl"
       if [ -z "$src" ]; then plus=; fi
@@ -1539,7 +1556,7 @@ mod tests {
             ("GIT_CONFIG_KEY_1".to_owned(), "user.email".to_owned()),
             ("GIT_CONFIG_VALUE_1".to_owned(), "b".to_owned()),
         ];
-        let env = guard_env(&base, None, Some("main"));
+        let env = guard_env(&base, None, Some("main"), None);
         assert_eq!(
             env,
             [
@@ -1554,7 +1571,7 @@ mod tests {
     #[test]
     fn guard_env_treats_a_missing_or_garbage_count_as_zero() {
         for base in [vec![], vec![("GIT_CONFIG_COUNT".to_owned(), "lots".to_owned())]] {
-            let env = guard_env(&base, None, None);
+            let env = guard_env(&base, None, None, None);
             assert_eq!(env[0], ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()));
             assert_eq!(env[1].0, "GIT_CONFIG_KEY_0");
         }
@@ -1562,7 +1579,7 @@ mod tests {
 
     #[test]
     fn guard_env_puts_the_helper_dir_first_even_without_a_base_path() {
-        let env = guard_env(&[], Some(Path::new("/g")), None);
+        let env = guard_env(&[], Some(Path::new("/g")), None, None);
         assert_eq!(env.last().unwrap(), &("PATH".to_owned(), "/g".to_owned()));
     }
 

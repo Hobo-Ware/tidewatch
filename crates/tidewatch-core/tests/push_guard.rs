@@ -55,6 +55,7 @@ fn guarded_env(
     base: &[(String, String)],
     helper_dir: Option<&Path>,
     protected: Option<&str>,
+    push_repo: Option<&Path>,
 ) -> Vec<(String, String)> {
     let table = AgentTable::builtin();
     let profile = Profile {
@@ -72,6 +73,7 @@ fn guarded_env(
         worktree_tab: true,
         guard_bin_dir: helper_dir.map(Path::to_path_buf),
         protected_branch: protected.map(str::to_owned),
+        push_repo: push_repo.map(Path::to_path_buf),
         env: base.to_vec(),
         ..LaunchCtx::default()
     };
@@ -114,7 +116,7 @@ impl Repo {
     }
 
     fn guarded(&self) -> Vec<(String, String)> {
-        guarded_env(&self.normal, Some(&self.helper_dir), Some("main"))
+        guarded_env(&self.normal, Some(&self.helper_dir), Some("main"), None)
     }
 
     fn remote_refs(&self) -> Vec<String> {
@@ -322,7 +324,7 @@ fn a_default_branch_that_is_not_main_is_refused_by_name_and_main_stays_refused()
     let repo = Repo::new();
     ok(&repo.work, &repo.normal, &["push", "-q", "origin", "HEAD:refs/heads/trunk"]);
     ok(&repo.work, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "two"]);
-    let env = guarded_env(&repo.normal, Some(&repo.helper_dir), Some("trunk"));
+    let env = guarded_env(&repo.normal, Some(&repo.helper_dir), Some("trunk"), None);
     let before = repo.remote_refs();
     for target in ["trunk", "main", "master"] {
         let out = git(&repo.work, &env, &["push", "--force", "origin", &format!("HEAD:{target}")]);
@@ -344,7 +346,7 @@ fn without_a_resolved_default_main_and_master_stay_refused_and_without_a_helper_
     let repo = Repo::new();
     ok(&repo.work, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "two"]);
     let before = repo.remote_refs();
-    let unresolved = guarded_env(&repo.normal, Some(&repo.helper_dir), None);
+    let unresolved = guarded_env(&repo.normal, Some(&repo.helper_dir), None, None);
     for target in ["main", "master"] {
         let out = git(&repo.work, &unresolved, &["push", "origin", &format!("HEAD:{target}")]);
         assert!(!out.status.success(), "{target} is refused with no default resolved");
@@ -353,7 +355,7 @@ fn without_a_resolved_default_main_and_master_stay_refused_and_without_a_helper_
     let out = git(&repo.work, &unresolved, &["push", "origin", OWN]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 
-    let no_helper = guarded_env(&repo.normal, None, Some("main"));
+    let no_helper = guarded_env(&repo.normal, None, Some("main"), None);
     let before = repo.remote_refs();
     let out = git(&repo.work, &no_helper, &["push", "origin", THEIRS]);
     assert!(!out.status.success(), "the guard holds even when the helper script is missing");
@@ -393,4 +395,43 @@ fn the_push_rule_holds_with_the_outbound_shims_in_front_of_git() {
     assert!(!out.status.success(), "main stays refused");
     assert!(String::from_utf8_lossy(&out.stderr).contains(NO_PUSH_MESSAGE));
     assert_eq!(repo.remote_refs(), before);
+}
+
+#[test]
+fn a_push_from_another_repo_goes_through_whole_while_the_tab_repo_and_its_worktrees_stay_guarded() {
+    if !git_available() {
+        eprintln!("git not found; skipping");
+        return;
+    }
+    let repo = Repo::new();
+    let own_git = repo.work.join(".git").canonicalize().unwrap();
+    let env = guarded_env(&repo.normal, Some(&repo.helper_dir), Some("main"), Some(&own_git));
+
+    let linked = repo.work.parent().unwrap().join("linked");
+    ok(
+        &repo.work,
+        &repo.normal,
+        &["worktree", "add", "-q", "-b", "agent/linked", linked.to_str().unwrap()],
+    );
+    for dir in [&repo.work, &linked] {
+        ok(dir, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "guarded"]);
+        let before = repo.remote_refs();
+        let out = git(dir, &env, &["push", "origin", "HEAD:main"]);
+        assert!(!out.status.success(), "main of the tab repo stays refused from {dir:?}");
+        assert_eq!(repo.remote_refs(), before);
+    }
+
+    let notes_remote = repo.work.parent().unwrap().join("notes.git");
+    let notes = repo.work.parent().unwrap().join("notes");
+    std::fs::create_dir_all(&notes_remote).unwrap();
+    std::fs::create_dir_all(&notes).unwrap();
+    ok(&notes_remote, &repo.normal, &["init", "--bare", "-q"]);
+    ok(&notes, &repo.normal, &["init", "-q"]);
+    ok(&notes, &repo.normal, &["remote", "add", "origin", notes_remote.to_str().unwrap()]);
+    ok(&notes, &repo.normal, &["commit", "-q", "--allow-empty", "-m", "memory"]);
+    ok(&notes, &env, &["push", "-q", "origin", "HEAD:main"]);
+    ok(&notes, &env, &["tag", "v1"]);
+    ok(&notes, &env, &["push", "-q", "origin", "v1"]);
+    let refs = ref_lines(&notes_remote, &repo.normal).join("\n");
+    assert!(refs.contains("refs/heads/main") && refs.contains("refs/tags/v1"), "{refs}");
 }

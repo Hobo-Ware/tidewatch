@@ -353,6 +353,7 @@ fn context(
             .worktree_tab
             .then(|| crate::start_base::remote_default(input.repo))
             .flatten(),
+        push_repo: input.worktree_tab.then(|| crate::worktree::common_dir(input.repo)).flatten(),
         guards: input.worktree_tab.then(|| guard_ctx(input.paths, input.repo, input.tab)).flatten(),
         env: input
             .path_var
