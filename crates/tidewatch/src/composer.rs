@@ -45,6 +45,16 @@ const DROP_RING: (f32, f32) = (6.0, 0.45);
 const DROP_FILL: f32 = 0.12;
 const CARET_W: f32 = 2.0;
 
+fn focused_box_key() -> Id {
+    Id::new("composer-focused-box")
+}
+
+/// Whether a box drawn by [`show`] has the keyboard, whichever screen drew it.
+pub(crate) fn any_has_focus(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<Id>(focused_box_key()))
+        .is_some_and(|id| ctx.memory(|memory| memory.has_focus(id)))
+}
+
 pub(crate) fn text_font() -> FontId {
     FontId::proportional(BODY_PX)
 }
@@ -583,6 +593,9 @@ pub(crate) fn show(ui: &mut Ui, draft: Draft<'_>, spec: &Spec<'_>) -> Outcome {
             ui.memory_mut(|memory| memory.request_focus(id));
         }
         let has_focus = ui.memory(|memory| memory.has_focus(id));
+        if has_focus {
+            ui.ctx().data_mut(|data| data.insert_temp(focused_box_key(), id));
+        }
         let dropping = crate::file_drop::hovering(ui.ctx());
         let line = if has_focus || dropping { brand::teal() } else { brand::field_line() };
         let radius = CornerRadius::same(RADIUS);
@@ -1100,6 +1113,21 @@ mod tests {
         let last = several.text_rows("hello\nmore\nlines").pop().unwrap();
         assert!((send.center().y - last.center().y).abs() < 1.0, "{send:?} {last:?}");
         assert!(several.box_rect.bottom() - send.bottom() < 20.0);
+    }
+
+    #[test]
+    fn a_picture_pasted_as_tokens_into_any_focused_box_becomes_a_chip() {
+        let mut rig = Rig::new();
+        rig.type_text("see");
+        assert!(any_has_focus(&rig.ctx));
+        let mut pasted = String::new();
+        tokens::append(&mut pasted, [Target::File("/s/shot 1.png".into())]);
+        rig.frame(vec![Event::Paste(pasted)]);
+        assert_eq!(tokens::targets(&rig.text), [Target::File("/s/shot 1.png".into())]);
+        rig.focus = false;
+        rig.ctx.memory_mut(|memory| memory.surrender_focus(Id::new("reply-box")));
+        rig.frame(vec![]);
+        assert!(!any_has_focus(&rig.ctx));
     }
 
     #[test]
