@@ -492,7 +492,7 @@ fn a_session_in_a_tree_folder_runs_there_in_the_group_of_the_main_repo_and_is_no
 }
 
 #[test]
-fn a_yolo_session_waits_typed_for_enter_and_a_worktree_is_where_the_tab_runs() {
+fn a_yolo_session_resumes_on_its_own_and_a_worktree_is_where_the_tab_runs() {
     let fixture = Fixture::new();
     let yolo = Session {
         flags: Flags { level: Some(Level::Yolo), ..Flags::default() },
@@ -516,10 +516,7 @@ fn a_yolo_session_waits_typed_for_enter_and_a_worktree_is_where_the_tab_runs() {
     assert_eq!(tab.dir, made.path);
     assert_eq!(tab.worktree, Some(made));
     let TabAction::ResumeAgent { how, .. } = &tab.action else { panic!("expected a resume") };
-    assert_eq!(
-        *how,
-        tidewatch_core::resume_mode::Resume::TypeOnly(tidewatch_core::resume_mode::Why::Yolo)
-    );
+    assert_eq!(*how, tidewatch_core::resume_mode::Resume::Run);
     let SavedTab::Agent(saved) = &tab.saved else { panic!("expected an agent tab") };
     assert_eq!(saved.branch.as_deref(), Some("agent/swift-badger"));
 }

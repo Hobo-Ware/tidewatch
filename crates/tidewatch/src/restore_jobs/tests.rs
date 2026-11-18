@@ -499,12 +499,12 @@ fn a_yolo_agent_moved_from_a_folder_outside_git_resumes_there_with_yolo() {
 }
 
 #[test]
-fn a_yolo_agent_in_a_worktree_is_prepared_with_its_yolo_flags_and_typed() {
+fn a_yolo_agent_in_a_worktree_is_prepared_with_its_yolo_flags_and_typed_when_asked() {
     let f = fixture();
     let mut spec = reopen_spec(&f, Level::Yolo, None);
-    spec.typed = Some(Why::Yolo);
+    spec.typed = Some(Why::Chosen);
     let done = reopened(spec);
-    assert_eq!(done.typed, Some(Why::Yolo));
+    assert_eq!(done.typed, Some(Why::Chosen));
     assert_eq!(done.note, None);
     let started = done.result.ok().and_then(|o| o.started).expect("the agent was prepared");
     assert_eq!(started.level, Level::Yolo);
