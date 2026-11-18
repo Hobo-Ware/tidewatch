@@ -1,5 +1,6 @@
-//! The Progress panel's blocks under the title: Waiting on you, Now, Waiting for, the steps by
-//! stage with each step's day tag, and the Decisions, Not verified and Verified lists.
+//! The Progress panel's blocks under the title: Waiting on you, Now, Waiting for, the steps (by
+//! stage for an older ledger, in lanes by what they need for a typed report) with each step's day
+//! tag, and the Decisions, Not verified and Verified lists.
 
 use egui::epaint::text::TextFormat;
 use egui::{Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
@@ -11,11 +12,14 @@ use crate::brand;
 use crate::link_text::Text;
 use crate::panel_blocks::{self, Blocks, Proof, QUIET_PREFIX};
 use crate::progress_model::{
-    Asked, ItemRow, JobNow, Now, StageRows, StepTag, Tag, TagTone, step_tag,
+    Asked, ItemRow, JobNow, Lane, LaneKind, Now, StageRows, StepTag, Tag, TagTone, step_tag,
 };
 use crate::progress_ring::{paint_mark, tone_color};
+use crate::progress_view::flow;
 use crate::reader_view::ellipsized;
-use crate::screen_kit::{TEXT_BODY, TEXT_SECONDARY, body, heading};
+use crate::screen_kit::{
+    Size, TEXT_BODY, TEXT_SECONDARY, TEXT_TAG, TagFill, body, heading, mono, paint_tag, tag_width,
+};
 
 pub(crate) const MARK_W: f32 = 18.0;
 const TEXT_X: f32 = MARK_W + 12.0;
@@ -29,6 +33,13 @@ const NAME_H: f32 = 20.0;
 const TAG_CHARS: usize = 28;
 const TAG_PAD: f32 = 7.0;
 const TAG_GAP: f32 = 10.0;
+const MIN_BESIDE: f32 = 96.0;
+const STAGE_CHARS: usize = 16;
+const CHIP_GAP: f32 = 8.0;
+const META_GAP: f32 = 4.0;
+const TICK_W: f32 = 12.0;
+const TICK_H: f32 = 7.0;
+const TICK_GAP: f32 = 4.0;
 pub(crate) const LIST_LIMIT: usize = 4;
 
 /// How a block draws: its column, whether labels stack over values, and whether it holds a report
@@ -285,8 +296,35 @@ pub(crate) struct Steps<'a> {
     pub(crate) today: Date,
 }
 
+/// What a step row needs besides the step: the ticks and checks Tidewatch saw, the clock for the
+/// spinner and today for the day tags.
+#[derive(Clone, Copy)]
+struct Facts<'a> {
+    marks: &'a [MarkSeen],
+    checks: &'a [CheckSeen],
+    time: f64,
+    today: Date,
+}
+
+/// Draws one step. Returns whether it is under way.
+fn draw_step(
+    ui: &mut Ui,
+    column: Column,
+    facts: Facts<'_>,
+    (row, stage): (&ItemRow<'_>, Option<&str>),
+) -> bool {
+    let ticked = panel_blocks::ticked_by_tidewatch(facts.marks, row.text);
+    let (mark, by_tidewatch) = panel_blocks::tick(row.mark, ticked);
+    let below = under(row, mark, by_tidewatch, facts.checks);
+    let tag = step_tag(row, facts.today);
+    step_row(ui, column, (row.text, mark, below.as_ref(), tag.as_ref(), stage), facts.time);
+    mark == Mark::Doing
+}
+
 /// The steps by stage. Returns whether any step is under way, so the caller asks for frames.
 pub(crate) fn steps_block(ui: &mut Ui, column: Column, steps: &Steps<'_>) -> bool {
+    let facts =
+        Facts { marks: steps.marks, checks: steps.checks, time: steps.time, today: steps.today };
     let mut spinning = false;
     for (index, stage) in steps.stages.iter().enumerate() {
         if index > 0 {
@@ -294,15 +332,143 @@ pub(crate) fn steps_block(ui: &mut Ui, column: Column, steps: &Steps<'_>) -> boo
         }
         section_label(ui, column, &stage.title, None);
         for row in &stage.rows {
-            let ticked = panel_blocks::ticked_by_tidewatch(steps.marks, row.text);
-            let (mark, by_tidewatch) = panel_blocks::tick(row.mark, ticked);
-            spinning |= mark == Mark::Doing;
-            let below = under(row, mark, by_tidewatch, steps.checks);
-            let tag = step_tag(row, steps.today);
-            step_row(ui, column, (row.text, mark, below.as_ref(), tag.as_ref()), steps.time);
+            spinning |= draw_step(ui, column, facts, (row, None));
         }
     }
     spinning
+}
+
+pub(crate) struct LaneSteps<'a> {
+    pub(crate) lanes: &'a [Lane<'a>],
+    pub(crate) done_open: bool,
+    pub(crate) parked_open: bool,
+    pub(crate) marks: &'a [MarkSeen],
+    pub(crate) checks: &'a [CheckSeen],
+    pub(crate) time: f64,
+    pub(crate) today: Date,
+}
+
+impl LaneSteps<'_> {
+    fn is_open(&self, kind: LaneKind) -> bool {
+        match kind {
+            LaneKind::Done => self.done_open,
+            LaneKind::Parked => self.parked_open,
+            _ => true,
+        }
+    }
+}
+
+/// What drawing the lanes found: whether a step is under way, and the lane whose `Show` was clicked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LanesDrawn {
+    pub(crate) spinning: bool,
+    pub(crate) toggled: Option<LaneKind>,
+}
+
+fn lane_ink(kind: LaneKind) -> Color32 {
+    match kind {
+        LaneKind::Doing => brand::working(),
+        LaneKind::NeedsYou => brand::needs(),
+        LaneKind::UpNext => brand::waiting(),
+        LaneKind::Done => brand::done(),
+        LaneKind::Parked => brand::faint(),
+    }
+}
+
+/// A lane's heading: its dot, its name in capitals, its count, and at the right `Show` or
+/// `Show less` for a lane that folds. Returns whether that link was clicked.
+fn lane_heading(
+    ui: &mut Ui,
+    column: Column,
+    (kind, count): (LaneKind, usize),
+    open: Option<bool>,
+) -> bool {
+    let painter = ui.painter().clone();
+    let (rect, _) = ui.allocate_exact_size(vec2(column.width, LABEL_H), Sense::hover());
+    let mid = rect.center().y;
+    painter.circle_filled(pos2(rect.left() + 4.0, mid), 3.5, column.ink(lane_ink(kind)));
+    let name_ink =
+        column.ink(if kind == LaneKind::Parked { brand::faint() } else { brand::soft() });
+    let name = painter.layout_no_wrap(kind.title().to_uppercase(), heading(TEXT_TAG), name_ink);
+    let at = pos2(rect.left() + 14.0, mid - name.size().y / 2.0);
+    let right = at.x + name.size().x;
+    painter.galley(at, name, name_ink);
+    let number =
+        painter.layout_no_wrap(count.to_string(), mono(TEXT_TAG), column.ink(brand::faint()));
+    painter.galley(pos2(right + 8.0, mid - number.size().y / 2.0), number, brand::faint());
+    let Some(open) = open else { return false };
+    let word = if open { "Show less" } else { "Show" };
+    let link = painter.layout_no_wrap(word.to_owned(), body(TEXT_SECONDARY), brand::muted());
+    let area = Rect::from_min_size(
+        pos2(rect.right() - link.size().x - 8.0, rect.top()),
+        vec2(link.size().x + 8.0, LABEL_H),
+    );
+    let response = ui.interact(area, ui.id().with(("lane-show", kind.title())), Sense::click());
+    let ink = if response.hovered() { brand::text() } else { brand::muted() };
+    painter.galley(pos2(area.left() + 4.0, mid - link.size().y / 2.0), link, ink);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// A folded Done lane: one small tick block per finished step, then the newest one's line.
+fn done_summary(ui: &mut Ui, column: Column, lane: &Lane<'_>, today: Date) {
+    let count = lane.rows.len();
+    let per_row = (((column.width + TICK_GAP) / (TICK_W + TICK_GAP)).floor() as usize).max(1);
+    let rows = count.div_ceil(per_row);
+    let height = rows as f32 * TICK_H + (rows - 1) as f32 * TICK_GAP;
+    let (rect, _) = ui.allocate_exact_size(vec2(column.width, height), Sense::hover());
+    let ink = column.ink(brand::done().gamma_multiply(0.6));
+    for index in 0..count {
+        let (line, place) = (index / per_row, index % per_row);
+        let left = rect.left() + place as f32 * (TICK_W + TICK_GAP);
+        let top = rect.top() + line as f32 * (TICK_H + TICK_GAP);
+        let block = Rect::from_min_size(pos2(left, top), vec2(TICK_W, TICK_H));
+        ui.painter().rect_filled(block, CornerRadius::same(2), ink);
+    }
+    let Some(newest) = lane.rows.first() else { return };
+    ui.add_space(6.0);
+    let day = step_tag(&newest.row, today).map(|tag| format!(" \u{b7} {}", tag.text));
+    let font = || body(TEXT_SECONDARY);
+    let muted = column.ink(brand::muted());
+    let faint = column.ink(brand::faint());
+    paragraph(
+        ui,
+        column,
+        0.0,
+        &[
+            ("Last: ", font(), muted),
+            (newest.row.text, font(), muted),
+            (day.as_deref().unwrap_or(""), font(), faint),
+        ],
+        "lane-last",
+    );
+}
+
+/// The steps of a typed report in lanes: Doing now, Needs you, Up next, then Done and Parked
+/// folded until their `Show` is clicked. A lane with no steps is not drawn.
+pub(crate) fn lanes_block(ui: &mut Ui, column: Column, steps: &LaneSteps<'_>) -> LanesDrawn {
+    let facts =
+        Facts { marks: steps.marks, checks: steps.checks, time: steps.time, today: steps.today };
+    let mut drawn = LanesDrawn::default();
+    for (index, lane) in steps.lanes.iter().enumerate() {
+        if index > 0 {
+            ui.add_space(12.0);
+        }
+        let open = steps.is_open(lane.kind);
+        let fold = lane.kind.folds().then_some(open);
+        if lane_heading(ui, column, (lane.kind, lane.rows.len()), fold) {
+            drawn.toggled = Some(lane.kind);
+        }
+        if !open {
+            if lane.kind == LaneKind::Done {
+                done_summary(ui, column, lane, steps.today);
+            }
+            continue;
+        }
+        for step in &lane.rows {
+            drawn.spinning |= draw_step(ui, column, facts, (&step.row, Some(step.stage)));
+        }
+    }
+    drawn
 }
 
 /// The fill and text color of a step's day tag; a ticked day has no fill.
@@ -327,12 +493,24 @@ pub(crate) struct TagLayout {
 
 impl TagLayout {
     pub(crate) fn new(ui: &Ui, tag: &StepTag, dim: bool) -> Self {
+        Self::fitted(ui, tag, dim, f32::INFINITY)
+    }
+
+    /// The pill clipped to `TAG_CHARS`, and shorter still until it is no wider than `max_w`.
+    pub(crate) fn fitted(ui: &Ui, tag: &StepTag, dim: bool, max_w: f32) -> Self {
         let (fill, ink) = tag_colors(tag.tone);
         let ink = if dim { ink.gamma_multiply(0.6) } else { ink };
-        let shown = tidewatch_core::text::clip(&tag.text, TAG_CHARS);
-        let clipped = shown != tag.text;
-        let galley = ui.painter().layout_no_wrap(shown, body(TEXT_SECONDARY), ink);
-        Self { galley, fill, ink, clipped }
+        let pad = if fill.is_some() { 2.0 * TAG_PAD } else { 0.0 };
+        let mut chars = TAG_CHARS;
+        loop {
+            let shown = tidewatch_core::text::clip(&tag.text, chars);
+            let clipped = shown != tag.text;
+            let galley = ui.painter().layout_no_wrap(shown, body(TEXT_SECONDARY), ink);
+            if galley.size().x + pad <= max_w || chars <= 4 {
+                return Self { galley, fill, ink, clipped };
+            }
+            chars -= 1;
+        }
     }
 
     pub(crate) fn width(&self) -> f32 {
@@ -358,18 +536,32 @@ impl TagLayout {
 fn step_row(
     ui: &mut Ui,
     column: Column,
-    (text, mark, below, tag): (&str, Mark, Option<&Under>, Option<&StepTag>),
+    (text, mark, below, tag, stage): (&str, Mark, Option<&Under>, Option<&StepTag>, Option<&str>),
     time: f64,
 ) {
     let painter = ui.painter().clone();
     let muted = matches!(mark, Mark::Skipped);
     let ink = column.ink(if muted { brand::faint() } else { brand::text() });
-    let tag_layout = tag.map(|tag| TagLayout::new(ui, tag, column.dim));
+    let full = (column.width - TEXT_X).max(MIN_TEXT_W);
+    let tag_layout = tag.map(|tag| TagLayout::fitted(ui, tag, column.dim, full));
     let tag_w = tag_layout.as_ref().map_or(0.0, |tag| tag.width() + TAG_GAP);
-    let room = (column.width - TEXT_X - tag_w).max(MIN_TEXT_W);
+    let beside = full - tag_w >= MIN_BESIDE;
+    let room = if beside { (full - tag_w).max(MIN_TEXT_W) } else { full };
     let mut label = Text::new();
     label.run(text, &format(body(TEXT_BODY), ink));
     let label = label.wrapped(room, usize::MAX).lay_out(&painter);
+    let chip = stage.map(|name| tidewatch_core::text::clip(name, STAGE_CHARS));
+    let chip_w = chip.as_deref().map(|name| tag_width(&painter, name));
+    let end = label.end();
+    let chip_inline =
+        label.rows() == 1 && chip_w.is_some_and(|width| end.x + CHIP_GAP + width <= room);
+    let chip_below = chip_w.filter(|_| !chip_inline);
+    let day_below = tag_layout.as_ref().filter(|_| !beside).map(TagLayout::width);
+    let widths: Vec<f32> = chip_below.into_iter().chain(day_below).collect();
+    let (spots, meta_h) = flow(&widths, full, Size::Tag.height(), META_GAP);
+    let mut spots = spots.into_iter();
+    let chip_spot = chip_below.and_then(|_| spots.next());
+    let day_spot = day_below.and_then(|_| spots.next());
     let note = below.map(|below| {
         let mut note = Text::new();
         if let Some(proof) = below.proof {
@@ -387,23 +579,36 @@ fn step_row(
         note.wrapped(room, usize::MAX).lay_out(&painter)
     });
     let note_h = note.as_ref().map_or(0.0, |note| note.size().y + 2.0);
-    let height = label.size().y.max(20.0) + note_h + ROW_GAP;
+    let label_h = label.size().y.max(20.0);
+    let meta_block = if widths.is_empty() { 0.0 } else { meta_h + 2.0 };
+    let height = label_h + meta_block + note_h + ROW_GAP;
     let (rect, response) = ui.allocate_exact_size(vec2(column.width, height), Sense::hover());
     paint_mark(&painter, pos2(rect.left() + MARK_W / 2.0, rect.top() + 10.0), 14.0, mark, time);
     let id = response.id;
-    let label_h = label.size().y.max(20.0);
-    label.paint_selectable(
-        ui,
-        id.with("label"),
-        pos2(rect.left() + TEXT_X, rect.top() + (label_h - label.size().y) / 2.0),
-        ink,
-    );
+    let label_top = rect.top() + (label_h - label.size().y) / 2.0;
+    label.paint_selectable(ui, id.with("label"), pos2(rect.left() + TEXT_X, label_top), ink);
+    let chip_ink = column.ink(brand::muted());
+    let chip_line = column.ink(brand::field_line());
+    let left = rect.left() + TEXT_X;
+    let meta_top = rect.top() + label_h + 2.0;
+    if let (Some(name), true) = (chip.as_deref(), chip_inline) {
+        let at = (left + end.x + CHIP_GAP, label_top + end.y);
+        paint_tag(&painter, at, name, chip_ink, TagFill::Line(chip_line));
+    }
+    if let (Some(name), Some((x, y))) = (chip.as_deref(), chip_spot) {
+        let at = (left + x, meta_top + y + Size::Tag.height() / 2.0);
+        paint_tag(&painter, at, name, chip_ink, TagFill::Line(chip_line));
+    }
     if let Some(note) = note {
-        let at = pos2(rect.left() + TEXT_X, rect.top() + label_h + 2.0);
+        let at = pos2(left, meta_top + meta_block);
         note.paint_selectable(ui, id.with("note"), at, brand::faint());
     }
     if let (Some(layout), Some(tag)) = (tag_layout, tag) {
-        layout.paint(ui, rect.right(), rect.top() + 10.0, &tag.text, id.with("tag"));
+        let (right, mid) = match day_spot {
+            Some((x, y)) => (left + x + layout.width(), meta_top + y + Size::Tag.height() / 2.0),
+            None => (rect.right(), rect.top() + 10.0),
+        };
+        layout.paint(ui, right, mid, &tag.text, id.with("tag"));
     }
 }
 

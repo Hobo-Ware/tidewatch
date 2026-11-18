@@ -254,6 +254,95 @@ pub(crate) fn stages_shown<'a, 'b>(
     stages.iter().filter(|stage| everything || !stage.over).collect()
 }
 
+/// Whether the agent's own typed report is on show. An older markdown ledger has no stage
+/// statuses and keeps the stage-grouped steps.
+pub(crate) fn is_typed(ledger: &Ledger) -> bool {
+    ledger.checklist.iter().any(|phase| phase.stated.is_some())
+}
+
+/// What a step needs, which is how the panel groups the steps of a typed report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum LaneKind {
+    Doing,
+    NeedsYou,
+    UpNext,
+    Done,
+    Parked,
+}
+
+impl LaneKind {
+    pub(crate) const fn title(self) -> &'static str {
+        match self {
+            Self::Doing => "Doing now",
+            Self::NeedsYou => "Needs you",
+            Self::UpNext => "Up next",
+            Self::Done => "Done",
+            Self::Parked => "Parked",
+        }
+    }
+
+    /// Whether the lane starts folded behind a `Show` link.
+    pub(crate) const fn folds(self) -> bool {
+        matches!(self, Self::Done | Self::Parked)
+    }
+}
+
+/// A step with the name of the stage it belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LaneRow<'a> {
+    pub(crate) stage: &'a str,
+    pub(crate) row: ItemRow<'a>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Lane<'a> {
+    pub(crate) kind: LaneKind,
+    pub(crate) rows: Vec<LaneRow<'a>>,
+}
+
+/// The lane of one step. A finished step is Done and a skipped one Parked; of the rest, an active
+/// step is Doing now, one only the owner can decide (`when` is `you`) Needs you, a parked one
+/// Parked, and every other open or blocked step Up next.
+pub(crate) fn lane_of(row: &ItemRow<'_>) -> LaneKind {
+    match (row.mark, row.when) {
+        (Mark::Done, _) => LaneKind::Done,
+        (Mark::Doing, _) => LaneKind::Doing,
+        (Mark::Skipped, _) | (_, Some(When::Parked(_))) => LaneKind::Parked,
+        (_, Some(When::You)) => LaneKind::NeedsYou,
+        _ => LaneKind::UpNext,
+    }
+}
+
+/// The steps of every stage grouped by lane, in lane order, leaving out a lane with no steps. Up
+/// next lists dated steps soonest first, then the rest in plan order; Done lists the newest first,
+/// a step with no stamp counting as the oldest; the other lanes keep plan order.
+pub(crate) fn lanes<'a>(stages: &'a [StageRows<'a>]) -> Vec<Lane<'a>> {
+    let planned: Vec<(usize, LaneRow<'a>)> = stages
+        .iter()
+        .flat_map(|stage| {
+            stage.rows.iter().map(|row| LaneRow { stage: stage.title.as_str(), row: row.clone() })
+        })
+        .enumerate()
+        .collect();
+    [LaneKind::Doing, LaneKind::NeedsYou, LaneKind::UpNext, LaneKind::Done, LaneKind::Parked]
+        .into_iter()
+        .filter_map(|kind| {
+            let mut rows: Vec<(usize, LaneRow<'a>)> =
+                planned.iter().filter(|(_, step)| lane_of(&step.row) == kind).cloned().collect();
+            if kind == LaneKind::UpNext {
+                rows.sort_by_key(|(index, step)| {
+                    let date = step.row.when.and_then(When::date);
+                    (date.is_none(), date, *index)
+                });
+            } else if kind == LaneKind::Done {
+                rows.sort_by_key(|(index, step)| std::cmp::Reverse((step.row.done_at, *index)));
+            }
+            (!rows.is_empty())
+                .then(|| Lane { kind, rows: rows.into_iter().map(|(_, step)| step).collect() })
+        })
+        .collect()
+}
+
 /// The lead job of the Now block: its bar and the percent and time left at the right.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct JobNow {
@@ -1347,5 +1436,154 @@ mod tests {
         assert_eq!(look.tag, CardTag::Question);
         assert_eq!((look.questions, look.line.as_str()), (2, "Committed"));
         assert_eq!((look.ring.tone, look.ring.fraction), (Tone::Done, 1.0));
+    }
+
+    fn lane_row<'a>(
+        text: &'a str,
+        mark: Mark,
+        when: Option<&'a When>,
+        done_at: Option<u64>,
+    ) -> ItemRow<'a> {
+        ItemRow { mark, text, why: None, when, done_at }
+    }
+
+    fn stage_of<'a>(title: &str, rows: Vec<ItemRow<'a>>) -> StageRows<'a> {
+        StageRows { title: title.to_owned(), over: false, current: false, rows }
+    }
+
+    fn texts(lane: &Lane<'_>) -> Vec<String> {
+        lane.rows.iter().map(|step| step.row.text.to_owned()).collect()
+    }
+
+    #[test]
+    fn every_status_and_when_lands_in_one_lane() {
+        let day = Date::parse("2026-11-20").unwrap();
+        let on = When::On("a reply".to_owned());
+        let parked = When::Parked("later".to_owned());
+        let cases = [
+            (Mark::Doing, None, LaneKind::Doing),
+            (Mark::Doing, Some(&When::You), LaneKind::Doing),
+            (Mark::Doing, Some(&parked), LaneKind::Doing),
+            (Mark::Doing, Some(&on), LaneKind::Doing),
+            (Mark::Todo, None, LaneKind::UpNext),
+            (Mark::Todo, Some(&When::Date(day)), LaneKind::UpNext),
+            (Mark::Todo, Some(&When::About(day)), LaneKind::UpNext),
+            (Mark::Todo, Some(&on), LaneKind::UpNext),
+            (Mark::Todo, Some(&When::Unknown("x".to_owned())), LaneKind::UpNext),
+            (Mark::Todo, Some(&When::You), LaneKind::NeedsYou),
+            (Mark::Todo, Some(&parked), LaneKind::Parked),
+            (Mark::Blocked, None, LaneKind::UpNext),
+            (Mark::Blocked, Some(&on), LaneKind::UpNext),
+            (Mark::Blocked, Some(&When::You), LaneKind::NeedsYou),
+            (Mark::Blocked, Some(&parked), LaneKind::Parked),
+            (Mark::Done, None, LaneKind::Done),
+            (Mark::Done, Some(&When::You), LaneKind::Done),
+            (Mark::Done, Some(&parked), LaneKind::Done),
+            (Mark::Skipped, None, LaneKind::Parked),
+            (Mark::Skipped, Some(&When::You), LaneKind::Parked),
+        ];
+        for (mark, when, want) in cases {
+            assert_eq!(lane_of(&lane_row("x", mark, when, None)), want, "{mark:?} {when:?}");
+        }
+    }
+
+    #[test]
+    fn lanes_come_in_order_and_an_empty_lane_is_absent() {
+        let parked = When::Parked("later".to_owned());
+        let stages = [stage_of(
+            "Build",
+            vec![
+                lane_row("skipped", Mark::Skipped, None, None),
+                lane_row("parked", Mark::Todo, Some(&parked), None),
+                lane_row("next", Mark::Todo, None, None),
+                lane_row("ask", Mark::Todo, Some(&When::You), None),
+                lane_row("now", Mark::Doing, None, None),
+                lane_row("done", Mark::Done, None, Some(5)),
+            ],
+        )];
+        let kinds: Vec<LaneKind> = lanes(&stages).iter().map(|lane| lane.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                LaneKind::Doing,
+                LaneKind::NeedsYou,
+                LaneKind::UpNext,
+                LaneKind::Done,
+                LaneKind::Parked
+            ]
+        );
+        let open = [stage_of("Build", vec![lane_row("next", Mark::Todo, None, None)])];
+        let kinds: Vec<LaneKind> = lanes(&open).iter().map(|lane| lane.kind).collect();
+        assert_eq!(kinds, [LaneKind::UpNext]);
+        assert_eq!(lanes(&[]), Vec::<Lane<'_>>::new());
+        let parked_lane = &lanes(&stages)[4];
+        assert_eq!(texts(parked_lane), ["skipped", "parked"], "plan order");
+    }
+
+    #[test]
+    fn up_next_lists_dated_steps_soonest_first_then_the_rest_in_plan_order() {
+        let day = |text: &str| Date::parse(text).unwrap();
+        let (late, soon, about) = (
+            When::Date(day("2026-11-10")),
+            When::Date(day("2026-11-18")),
+            When::About(day("2026-11-20")),
+        );
+        let event = When::On("a reply".to_owned());
+        let stages = [
+            stage_of(
+                "A",
+                vec![
+                    lane_row("a1 plain", Mark::Todo, None, None),
+                    lane_row("a2 about", Mark::Todo, Some(&about), None),
+                    lane_row("a3 event", Mark::Blocked, Some(&event), None),
+                ],
+            ),
+            stage_of(
+                "B",
+                vec![
+                    lane_row("b1 soon", Mark::Todo, Some(&soon), None),
+                    lane_row("b2 plain", Mark::Todo, None, None),
+                    lane_row("b3 late", Mark::Todo, Some(&late), None),
+                ],
+            ),
+        ];
+        let all = lanes(&stages);
+        assert_eq!(
+            texts(&all[0]),
+            ["b3 late", "b1 soon", "a2 about", "a1 plain", "a3 event", "b2 plain"]
+        );
+        assert_eq!(all[0].rows[0].stage, "B");
+    }
+
+    #[test]
+    fn done_lists_the_newest_first_and_an_unstamped_step_counts_as_the_oldest() {
+        let stages = [
+            stage_of(
+                "A",
+                vec![
+                    lane_row("a1 old", Mark::Done, None, Some(100)),
+                    lane_row("a2 unstamped", Mark::Done, None, None),
+                    lane_row("a3 new", Mark::Done, None, Some(300)),
+                ],
+            ),
+            stage_of(
+                "B",
+                vec![
+                    lane_row("b1 mid", Mark::Done, None, Some(200)),
+                    lane_row("b2 unstamped", Mark::Done, None, None),
+                ],
+            ),
+        ];
+        assert_eq!(
+            texts(&lanes(&stages)[0]),
+            ["a3 new", "b1 mid", "a1 old", "b2 unstamped", "a2 unstamped"]
+        );
+    }
+
+    #[test]
+    fn only_a_typed_report_is_drawn_in_lanes() {
+        assert!(!is_typed(&ledger(MIDDLE)));
+        let typed = tidewatch_core::progress_report::ProgressReport::from_ledger(&ledger(MIDDLE));
+        assert!(is_typed(&typed.to_ledger()));
     }
 }
