@@ -819,7 +819,7 @@ fn moved_from(recorded: &Path, current: &Path) -> bool {
     recorded != current && !recorded.exists() && recorded.file_name() == current.file_name()
 }
 
-fn common_dir(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn common_dir(dir: &Path) -> Option<PathBuf> {
     let mut command = git(dir);
     command.args(["rev-parse", "--git-common-dir"]);
     let out = run(command).ok()?;
