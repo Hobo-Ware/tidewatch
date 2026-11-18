@@ -5570,7 +5570,7 @@ dependencies = [
 
 [[package]]
 name = "tidewatch"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5608,7 +5608,7 @@ dependencies = [
 
 [[package]]
 name = "tidewatch-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
