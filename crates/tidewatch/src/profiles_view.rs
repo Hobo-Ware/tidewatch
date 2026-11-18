@@ -287,7 +287,7 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
     disclosure(
         ui,
         "profile_advanced",
-        "Advanced: setup command, extra arguments, push guard, house style",
+        "Advanced: setup command, extra arguments, house style",
         |ui| {
             ui.add_space(8.0);
             ui.spacing_mut().item_spacing.y = 12.0;
@@ -304,8 +304,6 @@ fn form(ui: &mut Ui, draft: &mut Draft, agents: &[(String, String)]) -> bool {
                 "added to the agent's command line, quote words with spaces",
             );
             ui.add_space(2.0);
-            changed |=
-                switch_line(ui, "Keep this agent off the default branch", &mut draft.never_push);
             changed |= switch_line(ui, "Add the Tidewatch house style", &mut draft.house_style);
         },
     );

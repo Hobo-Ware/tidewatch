@@ -76,13 +76,6 @@ pub(crate) fn card(ui: &mut Ui, prefs: &GuardPrefs, repo: Option<&Repo>) -> Opti
         if let Some(names) = names_field(ui, &prefs.private_repos) {
             change = Some(Change::PrivateRepos(names));
         }
-        row(
-            ui,
-            "Agents never push the default branch",
-            "A profile setting, under Agents and profiles. Agents push their own branch and open their own pull request.",
-            Control::NONE,
-            |_| {},
-        );
     });
     change
 }

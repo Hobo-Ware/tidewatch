@@ -580,7 +580,6 @@ mod tests {
             effort: None,
             level,
             setup: String::new(),
-            never_push: true,
             extra_args: ArgList::default(),
             house_style: true,
         }
@@ -1417,8 +1416,6 @@ mod tests {
                 defaults: "/etc/gemini-cli/system-defaults.json".into(),
             }),
             guard_bin_dir: Some("/state/guard-bin".into()),
-            protected_branch: Some("main".into()),
-            push_repo: None,
             guards: None,
             env: vec![("PATH".into(), "/usr/bin:/bin".into())],
         }
@@ -1491,14 +1488,11 @@ mod tests {
     }
 
     #[test]
-    fn resume_keeps_the_never_push_guard_hooks_and_mcp_wiring_of_a_fresh_launch() {
+    fn resume_keeps_the_hooks_and_mcp_wiring_of_a_fresh_launch() {
         let table = AgentTable::builtin();
         let profile = profile("claude", Level::Edits);
         let launch =
             resume_command(table.get("claude").unwrap(), &profile, ID_C, &launch_ctx()).unwrap();
-        let env = |key: &str| launch.env.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
-        assert_eq!(env("GIT_CONFIG_COUNT"), Some("1"));
-        assert!(env("PATH").unwrap().starts_with("/state/guard-bin"));
         assert!(launch.args.iter().any(|a| a == "--settings"));
         assert!(launch.args.iter().any(|a| a == "--mcp-config=/state/tab/mcp.json"));
         assert!(launch.args.iter().any(|a| a == "--append-system-prompt-file"));

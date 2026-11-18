@@ -232,7 +232,7 @@ impl TidewatchPaths {
         self.state_dir().join("auto-seen.toml")
     }
 
-    /// Holds the `git-remote-tidewatch-no-push` helper that agent tabs get on their `PATH`.
+    /// Holds the `git` and `gh` shims that agent tabs get first on their `PATH`.
     #[must_use]
     pub fn guard_bin_dir(&self) -> PathBuf {
         self.state_dir().join("guard-bin")
@@ -505,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn guard_helper_dir_is_state() {
+    fn guard_shim_dir_is_state() {
         let paths = paths();
         assert_eq!(paths.guard_bin_dir(), paths.state_dir().join("guard-bin"));
     }

@@ -11,6 +11,8 @@ A running log of what got done, newest first. The plan lives in [PLAN.md](PLAN.m
 
 ## 2026-11-18
 
+- **The push guard is gone (branch `fix/remove-push-guard`).** Owner: "push protection is a github feature not a tidewatch feature". Agent tabs no longer get the no-push remote helper, the `pushInsteadOf` git setting, `TIDEWATCH_PUSH_PROTECTED` or `TIDEWATCH_PUSH_REPO`; `Profile::never_push`, its profile editor switch, the Guards card's push row and the launch text's push line are removed. The outbound `git` and `gh` shims stay, and `guard_bin_dir` now depends only on a worktree tab. A `profiles.toml` with `never_push = true` still loads (new test). `tests/push_guard.rs` is deleted; the shim path is covered by `tests/guard_shims.rs`. Numbers: fmt and clippy clean; 5966 tests passed, 0 failed, 1 ignored (was 5985 before, the difference is the removed guard tests), run with this tab's old push-guard env removed.
+
 - **Four owner-reported fixes.** Owner: "What the hell man?!" (the memory sync's push refused 1,320 times, 687 commits waiting), plus three more.
   - The push guard refuses `main` only for the tab's own repo. The helper compares the push's `--git-common-dir` with `TIDEWATCH_PUSH_REPO` (the tab repo's, set at launch) and passes a push from any other repo whole. Tabs started before this keep the old env until restarted. Test: `a_push_from_another_repo_goes_through_whole_while_the_tab_repo_and_its_worktrees_stay_guarded` (fails without the fix).
   - Hovering the tab bar no longer shows a chat message's Edit, Copy and Send again bar: the toolbar now needs the pointer inside the Reader's visible area and the bar fully inside it. Headless test fails without the fix.

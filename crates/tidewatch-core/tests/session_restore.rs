@@ -97,7 +97,6 @@ fn plan(f: &Fixture, window: &SavedWindow) -> restore::WindowPlan {
         effort: None,
         level: Level::Edits,
         setup: String::new(),
-        never_push: true,
         extra_args: ArgList::default(),
         house_style: true,
     };

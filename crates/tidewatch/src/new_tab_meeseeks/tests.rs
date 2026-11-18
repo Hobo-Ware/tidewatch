@@ -148,11 +148,11 @@ fn the_profile_of_a_meeseeks_is_the_builder_else_the_first_else_the_cli_defaults
 }
 
 #[test]
-fn the_cli_defaults_have_no_model_and_keep_the_house_style_and_never_push_on() {
+fn the_cli_defaults_have_no_model_and_keep_the_house_style_on() {
     let (key, profile) = profile_for("codex", &[]);
     assert_eq!(key, Profile::DEFAULTS_ID);
     assert_eq!((profile.model, profile.effort, profile.setup.as_str()), (None, None, ""));
-    assert!(profile.never_push && profile.house_style);
+    assert!(profile.house_style);
 }
 
 #[test]

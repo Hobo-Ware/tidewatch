@@ -2090,7 +2090,6 @@ function renderProfiles(){
     <div class="row2"><label class="field"><span class="lbl">Name</span><input data-f="name" data-scope="p" value="${esc(p.name)}"></label><label class="field"><span class="lbl">Description</span><input data-f="desc" data-scope="p" value="${esc(p.desc)}"></label></div>
     ${agentFieldsHtml(p, 'p', true)}
     <div class="row2"><label class="field"><span class="lbl">Setup after the worktree is made</span><input data-f="setup" data-scope="p" value="${esc(p.setup)}"></label><label class="field"><span class="lbl">Extra arguments</span><input data-f="extra" data-scope="p" placeholder="for example --add-dir ../shared" value="${esc(p.extra || '')}"></label></div>
-    <label class="chk"><input type="checkbox" data-f="noPush" data-scope="p" ${p.noPush ? 'checked' : ''}> Never push (a pre-push hook in the worktree refuses it)</label>
     ${fieldBox('Command Tidewatch runs', `<div class="cmd" id="pcmd">${esc(cmdLine(p.agent, p.model, p.effort, p.level, p.extra))} "&lt;task&gt;"</div>`)}`;
   renderLevelTable();
   renderProfileToml();
@@ -2110,7 +2109,7 @@ function renderProfileToml(){
     if (p.effort) rows.push(line('effort', p.effort));
     rows.push(line('permissions', p.level, 'plan | ask | edits | auto | yolo'));
   }
-  rows.push(line('setup', p.setup), line('never_push', !!p.noPush));
+  rows.push(line('setup', p.setup));
   if (p.extra) rows.push(line('extra_args', p.extra));
   $('profToml').innerHTML = `<span class="c"># ~/.config/${slug()}/profiles.toml (made on first launch)</span>\n\n<span class="h">[profile.${k}]</span>\n${line('name', p.name)}\n${rows.join('\n')}`
     + (a.levels ? `\n\n<span class="c"># built-in mapping for ${a.bin}, override it under [agent.${p.agent}.permissions]</span>\n<span class="h">[agent.${p.agent}.permissions]</span>\n${LEVELS.map(l => `<span class="k">${l.id.padEnd(5)}</span> = <span class="s">"${esc(a.levels[l.id])}"</span>`).join('\n')}` : '');
