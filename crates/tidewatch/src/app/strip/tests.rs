@@ -273,17 +273,14 @@ fn filled_by(
             look(&painter, under, tab);
         }
         fills = ctx.graphics(|graphics| {
-            graphics
-                .get(painter.layer_id())
-                .map(|list| {
-                    list.all_entries()
-                        .map(|clipped| match &clipped.shape {
-                            Shape::Rect(rect) => Some(rect.fill),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
+            graphics.get(painter.layer_id()).map_or_default(|list| {
+                list.all_entries()
+                    .map(|clipped| match &clipped.shape {
+                        Shape::Rect(rect) => Some(rect.fill),
+                        _ => None,
+                    })
+                    .collect()
+            })
         });
     });
     fills
@@ -308,17 +305,14 @@ fn stroked_by(
             look(&painter, under, tab);
         }
         lines = ctx.graphics(|graphics| {
-            graphics
-                .get(painter.layer_id())
-                .map(|list| {
-                    list.all_entries()
-                        .map(|clipped| match &clipped.shape {
-                            Shape::Rect(rect) if rect.stroke.width > 0.0 => Some(rect.stroke.color),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
+            graphics.get(painter.layer_id()).map_or_default(|list| {
+                list.all_entries()
+                    .map(|clipped| match &clipped.shape {
+                        Shape::Rect(rect) if rect.stroke.width > 0.0 => Some(rect.stroke.color),
+                        _ => None,
+                    })
+                    .collect()
+            })
         });
     });
     lines
@@ -1275,12 +1269,10 @@ fn titled_strip(prepare: impl FnOnce(&mut crate::pane::AgentTab)) -> (Vec<(Strin
         for clipped in &output.shapes {
             painted_text_rects(&clipped.shape, &mut texts);
         }
-        tip = tabs.items()[1]
-            .pane
-            .agent
-            .as_ref()
-            .map(|agent| crate::tab_title::label(Some(agent), &tabs.items()[1].title))
-            .unwrap_or_default();
+        tip =
+            tabs.items()[1].pane.agent.as_ref().map_or_default(|agent| {
+                crate::tab_title::label(Some(agent), &tabs.items()[1].title)
+            });
     }
     (texts, tip)
 }

@@ -291,7 +291,7 @@ impl Tidewatch {
         from_stdusk: Option<PathBuf>,
     ) -> Self {
         slow::start_dev();
-        let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
+        let prefs = paths.as_ref().map_or_default(Prefs::load);
         let terminal_prefs = prefs.terminal.clone();
         cc.egui_ctx.options_mut(|options| options.zoom_with_keyboard = false);
         cc.egui_ctx.set_zoom_factor(tidewatch_core::ui_zoom::render_factor(prefs.window.ui_zoom));
@@ -343,7 +343,7 @@ impl Tidewatch {
                 .flatten()
                 .reduce(|first, second| format!("{first}\n{second}"));
         let restored = hooks_port.is_some();
-        let loaded = paths.as_ref().map(Prefs::load).unwrap_or_default();
+        let loaded = paths.as_ref().map_or_default(Prefs::load);
         let (new_tab_prefs, park_after, close_enter) =
             (loaded.new_tab, loaded.tabs.park_after, loaded.tabs.close_enter);
         let guards = loaded.guards;
@@ -351,7 +351,7 @@ impl Tidewatch {
         let flow = Flow::new(Tools::with_path(dev_flow.tool_path(agent_path.clone())));
         let pr = pr_glue::Host::new(
             flow.tools(),
-            paths.as_ref().map(Prefs::load).unwrap_or_default().github,
+            paths.as_ref().map_or_default(Prefs::load).github,
             pr_glue::Dev::from_env(),
         );
         let github_events = github_events_host(

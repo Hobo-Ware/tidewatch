@@ -32,7 +32,7 @@ pub(crate) fn normalize_origin(url: &str) -> String {
 
 /// `web_TREE` and `web_TREE_2`: the folders a repo's extra checkouts are named by.
 fn is_tree_folder(dir: &Path) -> bool {
-    let name = dir.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+    let name = dir.file_name().map_or_default(|name| name.to_string_lossy());
     name.rsplit_once(TREE_MARK).is_some_and(|(_, after)| {
         after.is_empty()
             || after.strip_prefix('_').is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))

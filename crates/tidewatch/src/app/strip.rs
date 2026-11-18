@@ -446,8 +446,7 @@ fn tab_row<'a, T>(
         let under = painter.add(Shape::Noop);
         let draft = matches!(tab.pane.body, Body::Draft(_));
         let poofed = matches!(tab.pane.body, Body::Poofed(_));
-        let TabExtras { tip, avatar, can_draw, mood } =
-            agent.map(|_| extras(tab.id)).unwrap_or_default();
+        let TabExtras { tip, avatar, can_draw, mood } = agent.map_or_default(|_| extras(tab.id));
         let face = agent
             .map(|agent| Face::of(&agent.profile_name, &agent.run.agent_id, avatar))
             .or_else(|| poofed.then(|| Face::Picture(meeseeks_avatar())));
@@ -577,7 +576,7 @@ fn tip_lines(tip: &str, lines: [Option<&str>; 3]) -> String {
 }
 
 fn tab_tip(label: &str, name: &str, number: usize, job: Option<&TabJob>) -> String {
-    let keys = number.checked_sub(1).map(Command::SelectTab).map(Command::keys).unwrap_or_default();
+    let keys = number.checked_sub(1).map(Command::SelectTab).map_or_default(Command::keys);
     let place = if number <= 9 && !keys.is_empty() {
         format!("Tab {number} ({keys})")
     } else {

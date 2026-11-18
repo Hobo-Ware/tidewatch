@@ -183,15 +183,15 @@ impl DevReader {
             var("TIDEWATCH_DEV_REPLY_AFTER").as_deref(),
             var("TIDEWATCH_DEV_QUESTION").as_deref(),
         );
-        let pictures = var("TIDEWATCH_DEV_PICTURES")
-            .map(|paths| paths.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect())
-            .unwrap_or_default();
+        let pictures = var("TIDEWATCH_DEV_PICTURES").map_or_default(|paths| {
+            paths.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect()
+        });
         let scroll_up = var("TIDEWATCH_DEV_READER_SCROLL").and_then(|text| scroll_of(&text));
         let digit = var("TIDEWATCH_DEV_PICK").and_then(|text| digit_of(&text));
         let see = var("TIDEWATCH_DEV_SEE").filter(|what| !what.is_empty());
-        let held = var("TIDEWATCH_DEV_HELD")
-            .map(|texts| texts.split('|').filter(|t| !t.is_empty()).map(str::to_owned).collect())
-            .unwrap_or_default();
+        let held = var("TIDEWATCH_DEV_HELD").map_or_default(|texts| {
+            texts.split('|').filter(|t| !t.is_empty()).map(str::to_owned).collect()
+        });
         let working = var("TIDEWATCH_DEV_WORKING").is_some_and(|value| value == "1");
         Self {
             pictures,
@@ -229,7 +229,7 @@ impl DevReader {
         question: Option<&str>,
     ) -> Self {
         Self {
-            question: question.map(card_steps).unwrap_or_default(),
+            question: question.map_or_default(card_steps),
             pictures: Vec::new(),
             sentence: None,
             boxed: false,

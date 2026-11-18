@@ -91,8 +91,8 @@ fn starts_option_column(row: &str, label: &str) -> bool {
 pub(crate) fn look(rows: &[String], questions: &[Question]) -> Look {
     let screen = squash(&rows.join(" "));
     let first = questions.first().and_then(|question| question.options.first());
-    let label = first.map(|option| label_prefix(&option.label)).unwrap_or_default();
-    let full = first.map(|option| squash(&option.label)).unwrap_or_default();
+    let label = first.map_or_default(|option| label_prefix(&option.label));
+    let full = first.map_or_default(|option| squash(&option.label));
     if screen.is_empty() || label.is_empty() {
         Look::Unreadable
     } else if has_first_option(&screen, &label)

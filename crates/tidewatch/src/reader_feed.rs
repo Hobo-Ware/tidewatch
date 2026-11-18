@@ -192,7 +192,7 @@ fn run(
                 }
             }
         }
-        let (entries, marks) = tail.as_mut().map(Tail::poll_marked).unwrap_or_default();
+        let (entries, marks) = tail.as_mut().map_or_default(Tail::poll_marked);
         let title = tail
             .as_ref()
             .and_then(Tail::session_title)

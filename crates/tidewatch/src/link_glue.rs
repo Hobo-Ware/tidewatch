@@ -267,7 +267,7 @@ impl Host {
                 let entry = held.entry(link.key()).or_insert_with(|| Held {
                     link: link.clone(),
                     reach,
-                    dir: tab.file.parent().map(PathBuf::from).unwrap_or_default(),
+                    dir: tab.file.parent().map_or_default(PathBuf::from),
                     own_only: true,
                 });
                 entry.reach = entry.reach.min_by_recheck(reach);

@@ -78,8 +78,7 @@ impl Out {
                     ToolPhase::Call => {
                         self.push(Fact::ToolOpened { id, name: call.name.clone() }, ts);
                         if let Some(AskPart::Asked(questions)) = &call.ask {
-                            let summary =
-                                questions.first().map(|q| q.text.clone()).unwrap_or_default();
+                            let summary = questions.first().map_or_default(|q| q.text.clone());
                             let n = u32::try_from(questions.len()).unwrap_or(u32::MAX);
                             self.push(Fact::AskOpened { summary, n }, ts);
                         }

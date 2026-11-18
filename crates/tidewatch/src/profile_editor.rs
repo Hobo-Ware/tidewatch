@@ -149,7 +149,7 @@ impl Editor {
     /// Adds a profile on the first agent, selects it and returns its id.
     pub(crate) fn add(&mut self) -> String {
         let id = self.unused_id("new-profile");
-        let agent = self.agents.first().map(|(id, _)| id.clone()).unwrap_or_default();
+        let agent = self.agents.first().map_or_default(|(id, _)| id.clone());
         self.drafts.push(Draft {
             id: id.clone(),
             name: "New profile".to_owned(),

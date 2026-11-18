@@ -143,7 +143,7 @@ impl DevPanes {
     }
 
     fn with_notes(self, notes: Option<&str>) -> Self {
-        Self { notes: notes.map(parse_notes).unwrap_or_default(), ..self }
+        Self { notes: notes.map_or_default(parse_notes), ..self }
     }
 
     fn parse(
@@ -157,7 +157,7 @@ impl DevPanes {
             scope: (scope == Some("whole")).then_some(Scope::Whole),
             pick_row: pick.and_then(|row| row.parse().ok()),
             open: open.and_then(parse_open),
-            presses: press.map(parse_presses).unwrap_or_default(),
+            presses: press.map_or_default(parse_presses),
             note: note.filter(|text| !text.is_empty()),
             note_span: 0,
             notes: Vec::new(),

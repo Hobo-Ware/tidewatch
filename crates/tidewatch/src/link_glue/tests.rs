@@ -57,8 +57,7 @@ impl Fx {
 
     fn calls(&self) -> Vec<String> {
         std::fs::read_to_string(self.dir.path().join("gh.log"))
-            .map(|log| log.lines().map(str::to_owned).collect())
-            .unwrap_or_default()
+            .map_or_default(|log| log.lines().map(str::to_owned).collect())
     }
 
     fn until(&self, host: &mut Host, ids: &[u64], done: impl Fn(&Host) -> bool) {

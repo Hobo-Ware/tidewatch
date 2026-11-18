@@ -239,9 +239,9 @@ impl GuardEnv {
     pub fn from_env(get: impl Fn(&str) -> Option<OsString>) -> Option<Self> {
         Some(Self {
             config: get(CONFIG_ENV).filter(|v| !v.is_empty())?.into(),
-            repo: get(REPO_ENV).map(PathBuf::from).unwrap_or_default(),
+            repo: get(REPO_ENV).map_or_default(PathBuf::from),
             cache: get(CACHE_ENV).map(PathBuf::from),
-            shim_dir: get(DIR_ENV).map(PathBuf::from).unwrap_or_default(),
+            shim_dir: get(DIR_ENV).map_or_default(PathBuf::from),
             tab: get(TAB_ENV).filter(|v| !v.is_empty()).map(PathBuf::from),
             path: get("PATH").unwrap_or_default(),
         })

@@ -142,7 +142,7 @@ impl Host {
             active,
             watch,
             writer: paths.filter(|_| active).cloned().map(start_writer),
-            prefs: paths.map(SyncPrefs::load).unwrap_or_default(),
+            prefs: paths.map_or_default(SyncPrefs::load),
             paths: paths.cloned(),
             tools,
             slot: SyncSlot::default(),

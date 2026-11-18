@@ -352,7 +352,7 @@ impl Tidewatch {
             pane.agent.as_ref().map_or_else(Default::default, |agent| {
                 let cli = self.catalog.agent(&agent.run.agent_id);
                 (
-                    cli.map(|a| a.name.clone()).unwrap_or_default(),
+                    cli.map_or_default(|a| a.name.clone()),
                     agent.reader.available(),
                     cli.and_then(|a| a.remote.app()),
                 )

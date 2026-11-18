@@ -271,8 +271,7 @@ pub(crate) fn finish_open<T>(
     }
     match result {
         Ok(opened) => {
-            let notes =
-                opened.started.as_ref().map(|s| s.prepared.notes.clone()).unwrap_or_default();
+            let notes = opened.started.as_ref().map_or_default(|s| s.prepared.notes.clone());
             let title = match (&opened.worktree, &opened.started) {
                 (Some(worktree), _) => worktree.name().to_owned(),
                 (None, Some(started)) => started.profile_name.clone(),

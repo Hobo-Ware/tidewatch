@@ -278,7 +278,7 @@ fn random_seed() -> u64 {
 pub fn local_branches(repo: &Path) -> Vec<String> {
     let mut command = git(repo);
     command.args(["for-each-ref", "--format=%(refname:short)", "refs/heads"]);
-    run(command).map(|out| out.lines().map(str::to_owned).collect()).unwrap_or_default()
+    run(command).map_or_default(|out| out.lines().map(str::to_owned).collect())
 }
 
 #[must_use]

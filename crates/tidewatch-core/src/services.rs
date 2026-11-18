@@ -182,7 +182,7 @@ impl Store {
 
     #[must_use]
     pub fn services(&self, repo: &Path) -> Vec<Service> {
-        self.repo.get(&key_of(repo)).map(|entry| entry.service.clone()).unwrap_or_default()
+        self.repo.get(&key_of(repo)).map_or_default(|entry| entry.service.clone())
     }
 
     pub fn add(&mut self, repo: &Path, service: &Service) -> Result<(), Vec<String>> {

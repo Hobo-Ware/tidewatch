@@ -303,7 +303,7 @@ impl Meeseeks {
                 let asked = self.runs(step) && (step != Step::HandOff || self.criteria.pr);
                 let detail = if asked {
                     let said = self.details.iter().find(|(done, _)| *done == step);
-                    said.map(|(_, line)| line.clone()).unwrap_or_default()
+                    said.map_or_default(|(_, line)| line.clone())
                 } else if self.kind == Kind::ReadOnly {
                     "Read-only, nothing to check".to_owned()
                 } else if self.nothing_to_ship {

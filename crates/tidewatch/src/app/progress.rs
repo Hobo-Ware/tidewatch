@@ -663,7 +663,7 @@ impl Tidewatch {
             eprintln!(
                 "tidewatch: progress tab={tab} state={} phase={:?} done={}/{} scheduled={} coming_up={} at {}",
                 ledger.status.state.map_or("none", |state| state.word()),
-                ledger.current_phase().map(|phase| phase.title.as_str()).unwrap_or_default(),
+                ledger.current_phase().map_or_default(|phase| phase.title.as_str()),
                 counts.done,
                 counts.total,
                 ledger.scheduled.len(),
@@ -680,8 +680,7 @@ fn spoken(reply: &Reply, question: &Question) -> String {
     match reply {
         Reply::Answered(given) => given
             .first()
-            .map(|given: &Given| tidewatch_core::question::answer_line(question, given))
-            .unwrap_or_default(),
+            .map_or_default(|given: &Given| tidewatch_core::question::answer_line(question, given)),
         Reply::Skipped => "Skipped".to_owned(),
         Reply::Chat(_) => choice::CHAT_LABEL.to_owned(),
     }

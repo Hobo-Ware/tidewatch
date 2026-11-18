@@ -514,8 +514,7 @@ mod tests {
             output
                 .viewport_output
                 .get(&egui::ViewportId::ROOT)
-                .map(|viewport| viewport.commands.clone())
-                .unwrap_or_default()
+                .map_or_default(|viewport| viewport.commands.clone())
         }
 
         fn press(&mut self, pos: Pos2, pressed: bool) -> Vec<ViewportCommand> {

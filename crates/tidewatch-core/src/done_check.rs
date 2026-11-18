@@ -558,8 +558,7 @@ fn changed_files(tools: &Tools, dir: &Path) -> Option<(String, Vec<String>)> {
 fn commit_subjects(tools: &Tools, dir: &Path, range: &str) -> Vec<String> {
     let range = range.replace("...", "..");
     git_stdout(tools, dir, &["log", "--format=%s", &range])
-        .map(|text| text.lines().map(str::to_owned).collect())
-        .unwrap_or_default()
+        .map_or_default(|text| text.lines().map(str::to_owned).collect())
 }
 
 fn tests_line(input: &Input<'_>) -> (Line, Option<TestsRun>) {
@@ -622,7 +621,7 @@ fn proof_lines(input: &Input<'_>) -> (Vec<Line>, Findings) {
         found.claimed = claimed;
     }
     if checks.scope {
-        let files = changed.map(|(_, files)| files).unwrap_or_default();
+        let files = changed.map_or_default(|(_, files)| files);
         let (status, detail, outside) = done_proof::scope_status(&files, input.plan.as_deref());
         lines.push(Line::new(Kind::Scope, (status, detail)));
         found.outside = outside;

@@ -659,7 +659,7 @@ fn permission(
     let galley = wrapped(ui, text, 13.0, brand::soft(), width);
     let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
     ui.painter().galley(rect.min, galley, brand::soft());
-    let flags = agent.level_args(state.level()).map(|args| args.join(" ")).unwrap_or_default();
+    let flags = agent.level_args(state.level()).map_or_default(|args| args.join(" "));
     let tip = if flags.is_empty() { text.to_owned() } else { format!("{text}\nAdds {flags}") };
     response.on_hover_text(tip);
     let mut note_rect = None;

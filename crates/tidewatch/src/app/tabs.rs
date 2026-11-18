@@ -167,7 +167,7 @@ impl Tidewatch {
         let listener = self.hooks.listener();
         let trust = self.trust.grant();
         let group = self.tabs.active_group();
-        let placement = agent.as_ref().map(|agent| agent.placement.clone()).unwrap_or_default();
+        let placement = agent.as_ref().map_or_default(|agent| agent.placement.clone());
         match (&self.workspaces[group], &self.paths) {
             (Workspace::Repo(repo), Some(paths)) => {
                 let (repo, paths) = (repo.root.clone(), paths.clone());

@@ -126,8 +126,7 @@ pub(crate) fn meters(
     zone: &TimeZone,
 ) -> Vec<Meter> {
     limits
-        .map(|limits| limits.current(now_ms))
-        .unwrap_or_default()
+        .map_or_default(|limits| limits.current(now_ms))
         .into_iter()
         .map(|(which, window)| meter(which, window, save_mode_on, now_ms, zone))
         .collect()

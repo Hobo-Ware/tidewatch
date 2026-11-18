@@ -150,8 +150,7 @@ impl Run {
         }
         self.term
             .as_ref()
-            .map(|term| term.buffer_lines().into_iter().map(|(_, line)| line).collect())
-            .unwrap_or_default()
+            .map_or_default(|term| term.buffer_lines().into_iter().map(|(_, line)| line).collect())
     }
 
     fn live(&self) -> bool {

@@ -26,7 +26,7 @@ pub struct Tools {
 impl Tools {
     #[must_use]
     pub fn system() -> Self {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+        let home = std::env::var_os("HOME").map_or_default(std::path::PathBuf::from);
         let current = std::env::var_os("PATH");
         Self { path: Some(path_env::for_this_platform(current.as_deref(), &home)), limit: None }
     }

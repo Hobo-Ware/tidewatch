@@ -92,7 +92,7 @@ pub(crate) fn touches(text: &str, cwd: &Path) -> Vec<Touch> {
                 Some("Glob" | "Grep") => {
                     (Act::Read, named("path").map(str::to_owned).into_iter().collect())
                 }
-                Some("Bash") => (Act::Ran, named("command").map(shell_paths).unwrap_or_default()),
+                Some("Bash") => (Act::Ran, named("command").map_or_default(shell_paths)),
                 _ => continue,
             };
             found.extend(

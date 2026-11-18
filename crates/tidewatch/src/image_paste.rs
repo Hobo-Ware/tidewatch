@@ -127,11 +127,9 @@ impl Host {
             crate::macos::clip_has_picture(&mut crate::macos::SystemClipboard)
         });
         let dev_at = dev_seconds(std::env::var("TIDEWATCH_DEV_IMAGE_PASTE").ok().as_deref());
-        let dev_drop = std::env::var("TIDEWATCH_DEV_DROP")
-            .map(|value| {
-                value.split(':').filter(|part| !part.is_empty()).map(PathBuf::from).collect()
-            })
-            .unwrap_or_default();
+        let dev_drop = std::env::var("TIDEWATCH_DEV_DROP").map_or_default(|value| {
+            value.split(':').filter(|part| !part.is_empty()).map(PathBuf::from).collect()
+        });
         let dev_png = std::env::var("TIDEWATCH_DEV_CLIPBOARD_PNG").ok().map(PathBuf::from);
         Self { hook, jobs: Jobs::new(), dev_at, dev_drop, dev_png }
     }
