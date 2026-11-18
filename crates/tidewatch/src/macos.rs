@@ -65,6 +65,28 @@ pub(crate) fn app_is_active() -> bool {
     false
 }
 
+/// The frontmost app, unless it is this one.
+#[cfg(target_os = "macos")]
+pub(crate) fn front_app_pid() -> Option<i32> {
+    let front = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    let pid = front.processIdentifier();
+    (u32::try_from(pid).ok() != Some(std::process::id())).then_some(pid)
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn front_app_pid() -> Option<i32> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn activate_app(pid: i32) {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+        app.activateWithOptions(NSApplicationActivationOptions::empty());
+    }
+}
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn activate_app(_pid: i32) {}
+
 /// Whether System Settings, Accessibility, Display asks for less motion.
 #[cfg(target_os = "macos")]
 pub(crate) fn reduce_motion() -> bool {
