@@ -184,16 +184,26 @@ impl Tidewatch {
         let reveal = card.is_some() && self.takeover.take_reveal();
         let line_open = self.takeover.line_open();
         let mut clicked = None;
-        let days = match &fake {
-            Some(fake) => fake.agenda.clone(),
-            None => agenda::days(&rows, today(), |repo| self.place_label(repo)),
+        let days = if let Some(fake) = &fake {
+            fake.agenda.clone()
+        } else {
+            let mut days = agenda::days(&rows, today(), |repo| self.place_label(repo));
+            for item in days.iter_mut().flat_map(|day| day.items.iter_mut()) {
+                item.tab_id =
+                    rows.get(item.row).and_then(|due| self.open_tab_of(&due.repo, &due.tab));
+            }
+            days
         };
         let entries = if fake.is_some() { Vec::new() } else { self.meeseeks.poofed_on(today()) };
         let poofed = match &fake {
             Some(fake) => fake.poofed.clone(),
             None => overview::poofed_rows(&entries, |repo| self.place_label(repo)),
         };
-        let sections = overview_view::Sections { agenda: &days, poofed: &poofed };
+        let sections = overview_view::Sections {
+            agenda: &days,
+            poofed: &poofed,
+            now_secs: i64::try_from(tidewatch_core::clock::now_secs()).unwrap_or(0),
+        };
         let mut state = std::mem::take(&mut self.overview_state);
         let out = overview_view::show(ui, area, &data, &mut state, &sections, |ui| {
             if let Some(card) = &card {

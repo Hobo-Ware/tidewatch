@@ -1,20 +1,19 @@
-//! The right rail of the Overview: Coming up by day, then Poofed today (the last three, the rest
-//! on Show all). Running elsewhere is drawn under them by the caller.
+//! The right rail of the Overview: Coming up by day, the folded groups of what waits on an event
+//! and what is parked, then Poofed today (the last three, the rest on Show all). Running
+//! elsewhere is drawn under them by the caller.
 
-use egui::{Align2, CornerRadius, FontId, Painter, Rect, Sense, Ui, pos2, vec2};
+use egui::{Align2, CornerRadius, FontId, Painter, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
 
-use crate::agenda::{self, Day, Item, Mark};
+use crate::agenda::{self, Day, Item, Mark, Rail};
 use crate::brand;
 use crate::overview::{POOFED_CAP, PoofedRow, capped, poofed_header};
 use crate::overview_view::{
-    HEAD_GAP, Head, Out, SECTION_GAP, SECTION_HEAD_H, SECTION_PAD, State, ghost, in_rect,
-    repo_label, section_frame, section_head,
+    Fold, HEAD_GAP, Head, Out, SECTION_GAP, SECTION_HEAD_H, SECTION_PAD, State, ghost, repo_label,
+    section_frame, section_head,
 };
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_TAG;
-use crate::screen_kit::{
-    Size, TagFill, body, button_width, heading, paint_tag, primary_button, tag_width,
-};
+use crate::screen_kit::{Size, TagFill, body, heading, paint_tag, tag_width};
 
 const DAY_H: f32 = 22.0;
 const DAY_GAP: f32 = 6.0;
@@ -30,20 +29,96 @@ const ABOUT: &str = "about";
 pub(crate) fn show(
     ui: &mut Ui,
     width: f32,
-    agenda: &[Day],
+    rail: &Rail,
     poofed: &[PoofedRow],
     state: &mut State,
     out: &mut Out,
 ) {
-    if !agenda.is_empty() {
-        out.agenda = out.agenda.or(coming_up(ui, width, agenda));
-    }
-    if !poofed.is_empty() {
-        if !agenda.is_empty() {
+    let mut drawn = false;
+    let mut gap = |ui: &mut Ui| {
+        if drawn {
             ui.add_space(SECTION_GAP);
         }
+        drawn = true;
+    };
+    if !rail.dated.is_empty() {
+        gap(ui);
+        out.agenda = out.agenda.or(coming_up(ui, width, &rail.dated));
+    }
+    if !rail.events.is_empty() {
+        gap(ui);
+        out.agenda = out.agenda.or(folded(
+            ui,
+            width,
+            ("Waiting on events", Fold::Events),
+            &rail.events,
+            state,
+        ));
+    }
+    if !rail.parked.is_empty() {
+        gap(ui);
+        out.agenda =
+            out.agenda.or(folded(ui, width, ("Parked", Fold::Parked), &rail.parked, state));
+    }
+    if !poofed.is_empty() {
+        gap(ui);
         out.poofed = out.poofed.or(poofed_today(ui, width, poofed, state));
     }
+}
+
+/// A group of items that starts folded: its header with the count, and the items under it once open.
+fn folded(
+    ui: &mut Ui,
+    width: f32,
+    (title, fold): (&str, Fold),
+    items: &[Item],
+    state: &mut State,
+) -> Option<usize> {
+    let open = state.is_open(fold);
+    let body_h = if open { HEAD_GAP + items.len() as f32 * ITEM_H } else { 0.0 };
+    let height = SECTION_PAD * 2.0 + SECTION_HEAD_H + body_h;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let painter = ui.painter_at(rect);
+    section_frame(&painter, rect, false);
+    let head = Rect::from_min_size(rect.min, vec2(width, SECTION_PAD * 2.0 + SECTION_HEAD_H));
+    let resp = ui.interact(head, ui.id().with(("rail-fold", title)), Sense::click());
+    let ink = if resp.hovered() { brand::text() } else { brand::soft() };
+    let mid = head.center().y;
+    chevron(&painter, pos2(rect.left() + SECTION_PAD + 4.0, mid), open, ink);
+    painter.text(
+        pos2(rect.left() + SECTION_PAD + 18.0, mid),
+        Align2::LEFT_CENTER,
+        format!("{title} \u{b7} {}", items.len()),
+        heading(TEXT_TAG + 1.0),
+        ink,
+    );
+    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        state.toggle(fold);
+    }
+    let mut clicked = None;
+    if open {
+        let mut y = head.bottom() + HEAD_GAP - SECTION_PAD;
+        for item in items {
+            let row = Rect::from_min_size(
+                pos2(rect.left() + SECTION_PAD - 6.0, y),
+                vec2(width - SECTION_PAD * 2.0 + 12.0, ITEM_H),
+            );
+            if item_row(ui, &painter, row, item) {
+                clicked = Some(item.row);
+            }
+            y += ITEM_H;
+        }
+    }
+    clicked
+}
+
+fn chevron(painter: &Painter, at: egui::Pos2, open: bool, ink: egui::Color32) {
+    let points = if open {
+        vec![at + vec2(-4.0, -2.0), at + vec2(4.0, -2.0), at + vec2(0.0, 3.0)]
+    } else {
+        vec![at + vec2(-2.0, -4.0), at + vec2(-2.0, 4.0), at + vec2(3.0, 0.0)]
+    };
+    painter.add(Shape::convex_polygon(points, ink, Stroke::NONE));
 }
 
 fn coming_up(ui: &mut Ui, width: f32, days: &[Day]) -> Option<usize> {
@@ -122,16 +197,7 @@ fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
     let dot = if parked { brand::faint() } else { brand::teal() };
     painter.circle_filled(pos2(left + DOT / 2.0, rect.top() + 14.0), DOT / 2.0, dot);
     let text_x = left + TEXT_X;
-    let mut room = rect.right() - 6.0 - text_x;
-    let mut button = None;
-    if item.mark == Mark::Decide {
-        let w = button_width(ui, "Decide", Size::Compact);
-        button = Some(Rect::from_min_size(
-            pos2(rect.right() - 6.0 - w, rect.center().y - Size::Compact.height() / 2.0),
-            vec2(w, Size::Compact.height()),
-        ));
-        room -= w + 8.0;
-    }
+    let room = rect.right() - 6.0 - text_x;
     let ink = if parked { brand::muted() } else { brand::text() };
     let tag = item.about.then(|| tag_width(painter, ABOUT));
     let title_room = tag.map_or(room, |tag| room - tag - TAG_GAP);
@@ -161,17 +227,17 @@ fn item_row(ui: &mut Ui, painter: &Painter, rect: Rect, item: &Item) -> bool {
         (text_x + room - right - 6.0).max(1.0),
     );
     painter.galley(pos2(right + 6.0, mid - tail.size().y / 2.0), tail, brand::muted());
-    let clicked = button.is_some_and(|button| {
-        in_rect(ui, button, |ui| primary_button(ui, "Decide", true, Size::Compact).clicked())
-    });
-    clicked
-        | resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(&item.tip).clicked()
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(&item.tip).clicked()
 }
 
 fn poofed_today(ui: &mut Ui, width: f32, rows: &[PoofedRow], state: &mut State) -> Option<usize> {
-    let (shown, _) = capped(rows, POOFED_CAP, state.poofed_all);
+    let (shown, _) = capped(rows, POOFED_CAP, state.is_open(Fold::Poofed));
     let button = (rows.len() > POOFED_CAP).then(|| {
-        if state.poofed_all { "Show fewer".to_owned() } else { format!("Show all {}", rows.len()) }
+        if state.is_open(Fold::Poofed) {
+            "Show fewer".to_owned()
+        } else {
+            format!("Show all {}", rows.len())
+        }
     });
     let more_h = if button.is_some() { 8.0 + Size::Compact.height() } else { 0.0 };
     let height =
@@ -242,7 +308,7 @@ fn poofed_today(ui: &mut Ui, width: f32, rows: &[PoofedRow], state: &mut State) 
     if let Some(label) = button
         && ghost(ui, pos2(rect.left() + SECTION_PAD, y + 8.0), &label)
     {
-        state.poofed_all = !state.poofed_all;
+        state.toggle(Fold::Poofed);
     }
     clicked
 }

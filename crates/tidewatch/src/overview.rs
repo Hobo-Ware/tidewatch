@@ -582,6 +582,35 @@ pub(crate) fn ask_button(row: &Row) -> &'static str {
     }
 }
 
+/// A bare row for the tests of the Overview's modules.
+#[cfg(test)]
+pub(crate) fn test_row(id: u64, title: &str, place: &str, status: AgentStatus) -> Row {
+    Row {
+        tab_id: id,
+        title: title.into(),
+        place: place.into(),
+        profile: "Builder".into(),
+        agent_id: "claude".into(),
+        branch: format!("agent/{title}"),
+        tone: Tone::of(&status),
+        status,
+        detail: None,
+        elapsed: 0.0,
+        pr: None,
+        done_check: None,
+        look: None,
+        job_line: None,
+        agents_running: 0,
+        tokens: None,
+        avatar: None,
+        kind: AgentKind::Cli("claude".into()),
+        idle_secs: 0.0,
+        stamp: Stamp::default(),
+        next: None,
+        summary: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

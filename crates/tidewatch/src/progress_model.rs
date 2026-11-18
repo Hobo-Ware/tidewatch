@@ -669,7 +669,41 @@ pub(crate) struct Look {
     pub(crate) tag: CardTag,
     pub(crate) questions: usize,
     pub(crate) ask: Option<Ask>,
+    /// The text of every open question, the lone one included.
+    pub(crate) asked: Vec<String>,
     pub(crate) checklist: CardChecklist,
+    /// Every step the agent ticked with the time it did.
+    pub(crate) ticked: Vec<Ticked>,
+    /// The open steps only the owner can do (`when: you`).
+    pub(crate) you: Vec<String>,
+}
+
+/// A step the agent ticked and when (unix seconds).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Ticked {
+    pub(crate) at: u64,
+    pub(crate) text: String,
+}
+
+fn ticked_steps(ledger: &Ledger) -> Vec<Ticked> {
+    ledger
+        .checklist
+        .iter()
+        .flat_map(|phase| &phase.items)
+        .filter(|item| item.mark == Mark::Done)
+        .filter_map(|item| Some(Ticked { at: item.done_at?, text: item.text.clone() }))
+        .collect()
+}
+
+fn you_steps(ledger: &Ledger) -> Vec<String> {
+    ledger
+        .checklist
+        .iter()
+        .flat_map(|phase| &phase.items)
+        .filter(|item| !matches!(item.mark, Mark::Done | Mark::Skipped))
+        .filter(|item| item.when == Some(When::You))
+        .map(|item| item.text.trim().to_owned())
+        .collect()
 }
 
 /// One step on an Overview card: the facts its row and day tag need.
@@ -773,7 +807,10 @@ pub(crate) fn look_as(ledger: &Ledger, stale: bool, state: State) -> Look {
         tag: card_tag(ledger, tone),
         questions: questions(ledger).len(),
         ask: ask_of(ledger),
+        asked: questions(ledger).iter().map(|entry| entry.text.trim().to_owned()).collect(),
         checklist: card_checklist(ledger),
+        ticked: ticked_steps(ledger),
+        you: you_steps(ledger),
     }
 }
 

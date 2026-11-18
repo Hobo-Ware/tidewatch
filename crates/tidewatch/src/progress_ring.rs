@@ -1,6 +1,6 @@
-//! The progress ring (an arc from the top, clockwise, over a faint track) and the mark glyphs.
+//! The tone colors of the progress screens and the mark glyphs.
 
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 use egui::{Align2, Color32, Painter, Pos2, Shape, Stroke, pos2, vec2};
 use tidewatch_core::progress::Mark;
@@ -8,8 +8,6 @@ use tidewatch_core::progress::Mark;
 use crate::brand;
 use crate::progress_model::Tone;
 use crate::screen_kit::heading;
-
-const STEPS_PER_TURN: f32 = 72.0;
 
 pub(crate) fn tone_color(tone: Tone) -> Color32 {
     match tone {
@@ -19,53 +17,6 @@ pub(crate) fn tone_color(tone: Tone) -> Color32 {
         Tone::Blocked => brand::blocked(),
         Tone::Done => brand::done(),
     }
-}
-
-/// The stroke of a ring `size` across: a fourteenth of it, never thinner than 2 px.
-pub(crate) fn stroke_of(size: f32) -> f32 {
-    (size * 0.07).max(2.0)
-}
-
-/// Points of the arc that starts at the top and runs clockwise over `fraction` of a turn. Empty
-/// for nothing; a full turn ends where it began.
-pub(crate) fn arc_points(center: Pos2, radius: f32, fraction: f32) -> Vec<Pos2> {
-    let fraction = fraction.clamp(0.0, 1.0);
-    if fraction <= 0.0 {
-        return Vec::new();
-    }
-    let steps = ((STEPS_PER_TURN * fraction).ceil() as usize).max(2);
-    (0..=steps)
-        .map(|step| {
-            let angle = -PI / 2.0 + TAU * fraction * step as f32 / steps as f32;
-            center + egui::vec2(angle.cos(), angle.sin()) * radius
-        })
-        .collect()
-}
-
-/// Draws a ring of outer diameter `size` centered on `center`. Nothing at all for a fraction of
-/// zero: an empty ring says nothing.
-pub(crate) fn paint(
-    painter: &Painter,
-    center: Pos2,
-    size: f32,
-    fraction: f32,
-    color: Color32,
-    track: Color32,
-) {
-    if fraction <= 0.0 {
-        return;
-    }
-    let stroke = stroke_of(size);
-    let radius = (size - stroke) / 2.0;
-    // egui strokes a circle outside its radius, so the track is pulled in to share the arc's middle.
-    painter.circle_stroke(center, radius - stroke / 2.0, Stroke::new(stroke, track));
-    let points = arc_points(center, radius, fraction);
-    let (Some(first), Some(last)) = (points.first().copied(), points.last().copied()) else {
-        return;
-    };
-    painter.add(Shape::line(points, Stroke::new(stroke, color)));
-    painter.circle_filled(first, stroke / 2.0, color);
-    painter.circle_filled(last, stroke / 2.0, color);
 }
 
 /// The small dot of an item being worked on: a ring with a gap that turns with `time`.
@@ -112,111 +63,6 @@ pub(crate) fn paint_mark(painter: &Painter, center: Pos2, size: f32, mark: Mark,
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const C: Pos2 = pos2(10.0, 10.0);
-
-    fn near(a: Pos2, b: Pos2) -> bool {
-        (a - b).length() < 0.01
-    }
-
-    #[test]
-    fn the_arc_starts_at_the_top_and_goes_clockwise() {
-        let quarter = arc_points(C, 5.0, 0.25);
-        assert!(near(quarter[0], pos2(10.0, 5.0)));
-        assert!(near(*quarter.last().unwrap(), pos2(15.0, 10.0)));
-        let half = arc_points(C, 5.0, 0.5);
-        assert!(near(*half.last().unwrap(), pos2(10.0, 15.0)));
-    }
-
-    #[test]
-    fn a_full_turn_closes_and_nothing_draws_nothing() {
-        let full = arc_points(C, 5.0, 1.0);
-        assert!(near(full[0], *full.last().unwrap()));
-        assert_eq!(arc_points(C, 5.0, 0.0), Vec::<Pos2>::new());
-        assert_eq!(arc_points(C, 5.0, -3.0), Vec::<Pos2>::new());
-        assert!(near(*arc_points(C, 5.0, 7.0).last().unwrap(), full[0]));
-    }
-
-    #[test]
-    fn a_ring_at_zero_draws_no_track_and_no_arc() {
-        let ctx = egui::Context::default();
-        let drawn = |fraction: f32| {
-            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                paint(ui.painter(), C, 20.0, fraction, Color32::WHITE, Color32::GRAY);
-            });
-            output.shapes.len()
-        };
-        let (empty, started) = (drawn(0.0), drawn(0.3));
-        assert!(started > empty, "{started} shapes at 0.3, {empty} at 0");
-        assert_eq!(drawn(-1.0), empty);
-    }
-
-    #[test]
-    fn a_longer_arc_has_more_points_and_every_point_is_on_the_circle() {
-        let (short, long) = (arc_points(C, 5.0, 0.1), arc_points(C, 5.0, 0.9));
-        assert!(long.len() > short.len());
-        for point in long {
-            assert!(((point - C).length() - 5.0).abs() < 0.01);
-        }
-    }
-
-    #[test]
-    fn the_arc_is_an_open_sweep_of_the_fraction_for_any_fraction() {
-        for fraction in [0.1_f32, 0.33, 0.5, 0.9] {
-            let points = arc_points(C, 5.0, fraction);
-            assert!(near(points[0], pos2(10.0, 5.0)), "starts at the top at {fraction}");
-            assert!(!near(points[0], *points.last().unwrap()), "open at {fraction}");
-            let angle = |point: Pos2| {
-                let v = point - C;
-                (v.x.atan2(-v.y)).rem_euclid(TAU)
-            };
-            let swept = angle(*points.last().unwrap()) / TAU;
-            assert!((swept - fraction).abs() < 0.001, "{swept} swept for {fraction}");
-            assert!(points.windows(2).all(|pair| angle(pair[1]) > angle(pair[0])), "clockwise");
-            for point in &points {
-                assert!(((*point - C).length() - 5.0).abs() < 0.01);
-            }
-        }
-    }
-
-    #[test]
-    fn the_track_and_the_arc_cover_the_same_band() {
-        let ctx = egui::Context::default();
-        let (size, center) = (56.0, pos2(60.0, 60.0));
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            paint(ui.painter(), center, size, 0.33, Color32::WHITE, Color32::GRAY);
-        });
-        let stroke = stroke_of(size);
-        let radius = (size - stroke) / 2.0;
-        let band = |shapes: Vec<egui::epaint::ClippedShape>| {
-            let mut near_edge = f32::MAX;
-            let mut far_edge = 0.0_f32;
-            for primitive in ctx.tessellate(shapes, 1.0) {
-                let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else { continue };
-                for vertex in mesh.vertices {
-                    let d = (vertex.pos - center).length();
-                    near_edge = near_edge.min(d);
-                    far_edge = far_edge.max(d);
-                }
-            }
-            (near_edge, far_edge)
-        };
-        let mut shapes = output.shapes.into_iter();
-        let track = band(vec![shapes.next().unwrap()]);
-        let arc = band(vec![shapes.next().unwrap()]);
-        let (inner, outer) = (radius - stroke / 2.0, radius + stroke / 2.0);
-        for (name, (near_edge, far_edge)) in [("track", track), ("arc", arc)] {
-            assert!((near_edge - inner).abs() < 0.8, "{name} inner edge {near_edge} vs {inner}");
-            assert!((far_edge - outer).abs() < 0.8, "{name} outer edge {far_edge} vs {outer}");
-        }
-    }
-
-    #[test]
-    fn the_stroke_scales_with_the_ring_and_has_a_floor() {
-        assert_eq!(stroke_of(10.0), 2.0);
-        assert!((stroke_of(72.0) - 5.04).abs() < 0.01);
-        assert!(stroke_of(52.0) > stroke_of(26.0));
-    }
 
     #[test]
     fn each_tone_has_its_own_color() {

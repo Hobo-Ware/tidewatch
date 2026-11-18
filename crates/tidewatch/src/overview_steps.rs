@@ -1,5 +1,5 @@
-//! The checklist on an Overview card: the last ticked step and the open ones, each with its day tag
-//! at the right, and a `+ N more` line, so the owner reads what is left without opening the tab.
+//! The step lines of an Overview agent row: a mark, the step text cut to fit and its day tag at the
+//! right, so the owner reads what is left without opening the tab.
 
 use egui::{FontId, Painter, Ui, pos2};
 use tidewatch_core::civil_date::Date;
@@ -12,28 +12,19 @@ use crate::progress_ring::paint_mark;
 use crate::reader_view::ellipsized;
 use crate::screen_kit::TEXT_SECONDARY;
 
-const GAP: f32 = 8.0;
-const ROW_H: f32 = 22.0;
+pub(crate) const GAP: f32 = 8.0;
+pub(crate) const ROW_H: f32 = 22.0;
 const MORE_H: f32 = 18.0;
 const MARK: f32 = 12.0;
 const TEXT_X: f32 = MARK + 8.0;
 const TAG_GAP: f32 = 8.0;
 const MIN_TEXT_W: f32 = 40.0;
 
-/// The height the checklist adds under a card's text, none when nothing is left.
-pub(crate) fn height(list: &CardChecklist) -> f32 {
-    if list.steps.is_empty() {
-        return 0.0;
-    }
-    let more = if list.more > 0 { MORE_H } else { 0.0 };
-    GAP + list.steps.len() as f32 * ROW_H + more
-}
-
-pub(crate) fn more_label(more: usize) -> String {
+fn more_label(more: usize) -> String {
     format!("+ {more} more")
 }
 
-/// Paints the checklist from `top` (the end of the card's text) between `left` and `right`.
+/// Paints the steps from `top` (the steps start `GAP` under it) between `left` and `right`.
 pub(crate) fn paint(
     ui: &Ui,
     painter: &Painter,

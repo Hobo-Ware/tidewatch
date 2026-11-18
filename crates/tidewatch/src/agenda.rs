@@ -36,6 +36,8 @@ pub(crate) struct Item {
     pub(crate) what: String,
     pub(crate) place: String,
     pub(crate) tab: String,
+    /// The open tab the item belongs to, when it is open.
+    pub(crate) tab_id: Option<u64>,
     /// `3 d late`, `on: deploy`, `parked`: what the second line adds after the tab.
     pub(crate) note: Option<String>,
     pub(crate) mark: Mark,
@@ -115,6 +117,7 @@ fn item_of(index: usize, row: &Row, place: String) -> Item {
         what: row.what.clone(),
         place,
         tab: row.tab.clone(),
+        tab_id: None,
         note: note_of(row),
         mark,
         about: matches!(row.when, When::About(_)),
@@ -179,6 +182,37 @@ pub(crate) fn narrow(days: &[Day], only: Option<&str>) -> Vec<Day> {
         })
         .collect();
     mark_months(kept)
+}
+
+/// What the rail shows: the dated days, then the items that wait on an event and the parked ones.
+/// An item for the owner is not here: the Needs you inbox holds it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Rail {
+    pub(crate) dated: Vec<Day>,
+    pub(crate) events: Vec<Item>,
+    pub(crate) parked: Vec<Item>,
+}
+
+/// Splits the days of the rail into its three parts.
+pub(crate) fn rail(days: &[Day]) -> Rail {
+    let mut out = Rail::default();
+    let mut dated = Vec::new();
+    for day in days {
+        let mut kept = Vec::new();
+        for item in &day.items {
+            match item.mark {
+                Mark::Decide => {}
+                Mark::Parked => out.parked.push(item.clone()),
+                Mark::Plain if day.today || day.month.is_some() => kept.push(item.clone()),
+                Mark::Plain => out.events.push(item.clone()),
+            }
+        }
+        if !kept.is_empty() {
+            dated.push(Day { items: kept, ..day.clone() });
+        }
+    }
+    out.dated = mark_months(dated);
+    out
 }
 
 pub(crate) fn count(days: &[Day]) -> usize {
@@ -420,5 +454,37 @@ mod tests {
         let item = &all[0].items[2];
         assert_eq!((item.note.as_deref(), item.mark), (Some("next step"), Mark::Plain));
         assert_eq!(rows[item.row].tab, "pkce");
+    }
+
+    #[test]
+    fn the_rail_splits_into_dated_days_events_and_parked_and_holds_no_item_for_the_owner() {
+        let all = days(&rows(), today(), place);
+        let split = rail(&all);
+        let whats = |items: &[Item]| items.iter().map(|item| item.what.clone()).collect::<Vec<_>>();
+        assert_eq!(whats(&split.events), ["after deploy"]);
+        assert_eq!(whats(&split.parked), ["parked one"]);
+        let dated: Vec<&str> = split.dated.iter().map(|day| day.label.as_str()).collect();
+        assert_eq!(dated[..2], ["TODAY \u{b7} MON 26", "TUE 27"]);
+        assert!(!dated.contains(&"NO DATE"), "{dated:?}");
+        let everything: Vec<String> = split
+            .dated
+            .iter()
+            .flat_map(|day| day.items.iter())
+            .chain(&split.events)
+            .chain(&split.parked)
+            .map(|item| item.what.clone())
+            .collect();
+        assert!(!everything.contains(&"decide this".to_owned()), "{everything:?}");
+        assert!(split.dated.iter().all(|day| day.today || day.month.is_some()));
+        assert_eq!(count(&split.dated) + split.events.len() + split.parked.len(), 8);
+        assert!(split.dated[0].starts_month || split.dated[0].today);
+    }
+
+    #[test]
+    fn a_rail_with_only_asks_for_the_owner_is_empty() {
+        let mut only = Index::default();
+        only.set(index("/work/web", "otter", "- [ ] you -- decide this\n"));
+        let split = rail(&days(&coming_up(today(), &only), today(), place));
+        assert_eq!(split, Rail::default());
     }
 }
