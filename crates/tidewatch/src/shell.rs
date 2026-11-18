@@ -448,8 +448,7 @@ mod tests {
             let commands = output
                 .viewport_output
                 .get(&ViewportId::ROOT)
-                .map(|v| v.commands.clone())
-                .unwrap_or_default();
+                .map_or_default(|v| v.commands.clone());
             (events, commands)
         }
 

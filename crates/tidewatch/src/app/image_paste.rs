@@ -502,7 +502,7 @@ mod tests {
 
     fn screens(body: &mut Body<PtyTerm>, splits: &mut Splits<PtyTerm>) -> (String, String) {
         let Body::Shell(main) = body else { unreachable!("built as a shell") };
-        let other = splits.term_mut(main, 1).map(|term| screen_text(term)).unwrap_or_default();
+        let other = splits.term_mut(main, 1).map_or_default(|term| screen_text(term));
         (screen_text(main), other)
     }
 

@@ -46,7 +46,7 @@ impl Trust {
     }
 
     fn with_grant(grant: Option<Grant>, dev: Option<Event>) -> Self {
-        let record = grant.as_ref().map(Grant::record).unwrap_or_default();
+        let record = grant.as_ref().map_or_default(Grant::record);
         let root = grant.as_ref().map_or_else(|| "~/.tidewatch".to_owned(), Grant::root_entry);
         Self {
             root,

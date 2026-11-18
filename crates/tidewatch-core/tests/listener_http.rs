@@ -94,7 +94,7 @@ impl Client {
     }
 
     fn request(&mut self, method: &str, path: &str, token: Option<&str>, body: &str) -> Reply {
-        let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+        let auth = token.map_or_default(|t| format!("Authorization: Bearer {t}\r\n"));
         let text = format!(
             "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
@@ -983,7 +983,7 @@ fn github_request(
     signature: Option<&str>,
     body: &str,
 ) -> Reply {
-    let signature = signature.map(|s| format!("X-Hub-Signature-256: {s}\r\n")).unwrap_or_default();
+    let signature = signature.map_or_default(|s| format!("X-Hub-Signature-256: {s}\r\n"));
     let text = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nX-GitHub-Event: {event}\r\n{signature}Content-Length: {}\r\n\r\n{body}",
         body.len()

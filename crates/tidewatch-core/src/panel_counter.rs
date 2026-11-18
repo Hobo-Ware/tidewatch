@@ -182,7 +182,7 @@ pub const fn label(source: Source) -> &'static str {
 
 #[must_use]
 pub fn load(file: &Path) -> Counter {
-    std::fs::read_to_string(file).map(|text| Counter::parse(&text)).unwrap_or_default()
+    std::fs::read_to_string(file).map_or_default(|text| Counter::parse(&text))
 }
 
 pub fn save(file: &Path, counter: &Counter) -> std::io::Result<()> {

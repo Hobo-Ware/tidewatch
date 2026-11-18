@@ -298,7 +298,7 @@ fn card_view_of(row: &Row) -> CardView {
     CardView {
         fraction: if status_tone == Tone::Done { 1.0 } else { 0.0 },
         ring: ink,
-        line: row.detail.as_deref().map(first_line).unwrap_or_default(),
+        line: row.detail.as_deref().map_or_default(first_line),
         line_ink: crate::brand::soft(),
         tag: label(status_tone).to_owned(),
         tag_ink: ink,

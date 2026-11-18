@@ -190,7 +190,7 @@ pub(crate) fn asking(rows: &[Row]) -> String {
 /// The first-launch question. `None` until the user picks; Esc counts as No.
 pub(crate) fn dialog(ctx: &egui::Context, page: &Page) -> Option<Event> {
     let mut answer = None;
-    let rows = page.state.map(|s| rows(s, page.root)).unwrap_or_default();
+    let rows = page.state.map_or_default(|s| rows(s, page.root));
     let modal = dialog_pinned(
         ctx,
         Id::new("folder_trust"),

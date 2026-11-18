@@ -355,7 +355,7 @@ fn main() -> eframe::Result<()> {
     if args.toggle {
         std::process::exit(single_instance::toggle_running(paths.as_ref()));
     }
-    let prefs = paths.as_ref().map(Prefs::load).unwrap_or_default();
+    let prefs = paths.as_ref().map_or_default(Prefs::load);
     let socket = paths.as_ref().map(TidewatchPaths::app_socket);
     let received = args.handoff.as_deref().map(handoff::Incoming::receive);
     let boot = handoff::boot(received, || {

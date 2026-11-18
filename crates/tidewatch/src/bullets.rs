@@ -123,7 +123,7 @@ fn listed(text: &str, parsed: &Parsed) -> Vec<Option<Item>> {
 
 fn indented(ui: &Ui, galley: &Galley, (chars, edge): (usize, f32), font: &FontId) -> Arc<Galley> {
     let blanks = ui.painter().layout_no_wrap(" ".repeat(chars), font.clone(), Color32::WHITE);
-    let mut lead = blanks.rows.first().map(|row| row.glyphs.clone()).unwrap_or_default();
+    let mut lead = blanks.rows.first().map_or_default(|row| row.glyphs.clone());
     for glyph in &mut lead {
         glyph.pos.x = 0.0;
         glyph.advance_width = 0.0;

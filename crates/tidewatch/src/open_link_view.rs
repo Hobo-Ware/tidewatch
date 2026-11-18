@@ -157,7 +157,7 @@ fn failed_body(ui: &mut Ui, message: &str) -> Option<Outcome> {
 
 fn cloning_body(ui: &mut Ui, cloning: &Cloning, home: Option<&Path>) -> Option<Outcome> {
     let mut outcome = None;
-    let line = cloning.line.lock().map(|line| line.clone()).unwrap_or_default();
+    let line = cloning.line.lock().map_or_default(|line| line.clone());
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), CARD_H), Sense::hover());
     paint_pill_card(ui.painter(), rect);
     let inner = rect.shrink2(vec2(16.0, 14.0));

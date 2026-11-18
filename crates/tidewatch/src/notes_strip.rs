@@ -168,7 +168,7 @@ fn ellipsize_to(measure: impl Fn(&str) -> f32, text: &str, room: f32) -> String 
             end = mid;
         }
     }
-    fitting.checked_sub(1).map(cut).unwrap_or_default()
+    fitting.checked_sub(1).map_or_default(cut)
 }
 
 fn text_width(painter: &egui::Painter, text: &str, font: &FontId) -> f32 {

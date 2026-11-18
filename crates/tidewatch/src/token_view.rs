@@ -324,7 +324,7 @@ pub(crate) fn paint(ui: &Ui, id: Id, (pos, galley): (Pos2, &Galley), clickable: 
             None if kind == Kind::Link => {
                 let state = match &token.target {
                     Target::Link(url) => {
-                        link_chip::info(ui.ctx(), url).map(|info| info.state).unwrap_or_default()
+                        link_chip::info(ui.ctx(), url).map_or_default(|info| info.state)
                     }
                     _ => LinkState::Unknown,
                 };

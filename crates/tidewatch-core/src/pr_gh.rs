@@ -64,7 +64,7 @@ fn read_failures(tools: &Tools, dir: &Path, jobs: &mut [Job]) {
         let (Some(run), Some(id)) = (job.run_id, job.job_id) else { continue };
         let known = steps.entry(run).or_insert_with(|| failed_steps(tools, dir, run));
         job.step = known.get(&id).cloned();
-        job.log = failed_log(tools, dir, run, id).map(|raw| pr_log::tail(&raw)).unwrap_or_default();
+        job.log = failed_log(tools, dir, run, id).map_or_default(|raw| pr_log::tail(&raw));
     }
 }
 
@@ -88,8 +88,7 @@ fn inline_comments(
         head_sha: snapshot.head.clone(),
     };
     pr::fetch_threads(tools, dir, &pull)
-        .map(|threads| review_comments(&threads, author, since, at_ms))
-        .unwrap_or_default()
+        .map_or_default(|threads| review_comments(&threads, author, since, at_ms))
 }
 
 fn failed_steps(tools: &Tools, dir: &Path, run: u64) -> HashMap<u64, String> {

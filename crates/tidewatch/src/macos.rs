@@ -265,7 +265,7 @@ use crate::image_paste::{Clipboard, Picture};
 #[cfg(target_os = "macos")]
 fn pasteboard_types() -> Vec<String> {
     let board = objc2_app_kit::NSPasteboard::generalPasteboard();
-    board.types().map(|types| types.iter().map(|t| t.to_string()).collect()).unwrap_or_default()
+    board.types().map_or_default(|types| types.iter().map(|t| t.to_string()).collect())
 }
 
 #[cfg(target_os = "macos")]

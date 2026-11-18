@@ -26,7 +26,7 @@ fn tidy(text: &str, max: usize) -> String {
 #[must_use]
 pub fn session_name(repo: &str, worktree: Option<&str>) -> String {
     let repo = tidy(repo, REPO_MAX);
-    let tab = worktree.map(|tab| tidy(tab, TAB_MAX)).unwrap_or_default();
+    let tab = worktree.map_or_default(|tab| tidy(tab, TAB_MAX));
     match (repo.is_empty(), tab.is_empty()) {
         (false, false) => format!("{repo} \u{b7} {tab}"),
         (false, true) => repo,

@@ -457,7 +457,7 @@ impl Host {
             }
             TabEvent::Ask { questions, .. } => {
                 let fact = Fact::AskOpened {
-                    summary: questions.first().map(|q| q.text.clone()).unwrap_or_default(),
+                    summary: questions.first().map_or_default(|q| q.text.clone()),
                     n: u32::try_from(questions.len()).unwrap_or(u32::MAX),
                 };
                 self.push(message.tab_id, Source::Tidewatch, fact, now_ms);

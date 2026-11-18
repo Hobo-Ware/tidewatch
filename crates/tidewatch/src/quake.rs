@@ -248,11 +248,7 @@ mod tests {
                 work(ui.ctx());
             }
         });
-        output
-            .viewport_output
-            .get(&ViewportId::ROOT)
-            .map(|v| v.commands.clone())
-            .unwrap_or_default()
+        output.viewport_output.get(&ViewportId::ROOT).map_or_default(|v| v.commands.clone())
     }
 
     fn screen(x: f32, y: f32, w: f32, h: f32) -> Rect {

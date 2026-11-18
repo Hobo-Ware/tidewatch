@@ -106,7 +106,7 @@ impl Hooks {
 
     /// Everything agents reported since the last call, oldest first.
     pub(crate) fn drain(&self) -> Vec<TabMessage> {
-        self.inbox.as_ref().map(|inbox| inbox.try_iter().collect()).unwrap_or_default()
+        self.inbox.as_ref().map_or_default(|inbox| inbox.try_iter().collect())
     }
 
     /// Revokes the tab's token when the tab closes.

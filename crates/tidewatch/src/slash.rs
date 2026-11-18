@@ -141,7 +141,7 @@ impl Menu {
         if self.closed_for.as_deref() == Some(text) {
             return Vec::new();
         }
-        query(text).map(|query| matches(entries, query)).unwrap_or_default()
+        query(text).map_or_default(|query| matches(entries, query))
     }
 
     pub(crate) fn picked_in(&self, rows: usize) -> usize {
@@ -217,7 +217,7 @@ fn one_line(text: &str) -> String {
 /// The name and the one-line description in a skill or command file's front matter.
 pub(crate) fn describe(markdown: &str) -> (Option<String>, String) {
     let Some(front) = frontmatter(markdown) else { return (None, String::new()) };
-    let description = field(&front, "description").map(|text| one_line(&text)).unwrap_or_default();
+    let description = field(&front, "description").map_or_default(|text| one_line(&text));
     (field(&front, "name"), description)
 }
 

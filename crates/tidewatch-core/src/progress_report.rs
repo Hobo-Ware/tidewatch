@@ -368,8 +368,7 @@ impl ProgressReport {
             .stages
             .iter()
             .position(|stage| stage.status == StageStatus::Active)
-            .map(|index| format!("{} {}", index + 1, self.stages[index].name))
-            .unwrap_or_default();
+            .map_or_default(|index| format!("{} {}", index + 1, self.stages[index].name));
         Ledger {
             goal: self.goal.clone(),
             title: self.title.clone(),

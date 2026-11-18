@@ -74,9 +74,7 @@ impl Fake {
             session_id: Some(FAKE_SESSION.to_owned()),
             level: Some(Level::Auto),
             working: self == Self::Working,
-            cwd: std::env::var_os("TIDEWATCH_FAKE_SHELL_AGENT_CWD")
-                .map(PathBuf::from)
-                .unwrap_or_default(),
+            cwd: std::env::var_os("TIDEWATCH_FAKE_SHELL_AGENT_CWD").map_or_default(PathBuf::from),
         })
     }
 }

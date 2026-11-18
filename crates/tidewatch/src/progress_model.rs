@@ -793,8 +793,7 @@ mod tests {
         let rows: Vec<_> = stages
             .iter()
             .find(|stage| stage.current)
-            .map(|stage| stage.rows.iter().map(|row| row.text).collect())
-            .unwrap_or_default();
+            .map_or_default(|stage| stage.rows.iter().map(|row| row.text).collect());
         assert_eq!(rows, ["Change", "Test", "Lint", "Time it", "Compare counts", "Stub"]);
         assert_eq!(tab_tip(&old), "Build - 4/11 done");
         assert_eq!(card_line(&old, tone(&old)), "Build \u{b7} timing the query");

@@ -31,8 +31,7 @@ impl Env {
     #[must_use]
     pub fn from_process() -> Self {
         let claude_dir = home_dir()
-            .map(|home| config_dir(&home, std::env::var_os("CLAUDE_CONFIG_DIR")))
-            .unwrap_or_default();
+            .map_or_default(|home| config_dir(&home, std::env::var_os("CLAUDE_CONFIG_DIR")));
         Self {
             claude_dir,
             cwd: std::env::current_dir().ok(),

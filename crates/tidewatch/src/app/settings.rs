@@ -257,17 +257,13 @@ impl Tidewatch {
         let checklist = self.checklist.of(self.workspace().dir()).cloned();
         let workflow = self.workflow_view();
         let settings = self.settings.as_mut()?;
-        let files = self
-            .paths
-            .as_ref()
-            .map(|p| Files {
-                profiles: p.profiles_file().display().to_string(),
-                trust: p.trust_file().display().to_string(),
-                general: p.prefs_file().display().to_string(),
-                house_style: p.house_style_file().display().to_string(),
-                worktree_setup: p.worktree_setup_file().display().to_string(),
-            })
-            .unwrap_or_default();
+        let files = self.paths.as_ref().map_or_default(|p| Files {
+            profiles: p.profiles_file().display().to_string(),
+            trust: p.trust_file().display().to_string(),
+            general: p.prefs_file().display().to_string(),
+            house_style: p.house_style_file().display().to_string(),
+            worktree_setup: p.worktree_setup_file().display().to_string(),
+        });
         let general = General {
             restore: self.restore.restore_enabled(),
             resume: self.restore.resume_agents(),

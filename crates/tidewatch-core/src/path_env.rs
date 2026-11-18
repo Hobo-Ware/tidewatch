@@ -20,8 +20,7 @@ pub fn standard_dirs(home: &Path, linux: bool) -> Vec<PathBuf> {
 /// directory already on the path keeps its place, so the user's own ordering wins.
 #[must_use]
 pub fn augmented_path(current: Option<&OsStr>, home: &Path, linux: bool) -> OsString {
-    let existing: Vec<PathBuf> =
-        current.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
+    let existing: Vec<PathBuf> = current.map_or_default(|p| std::env::split_paths(p).collect());
     let missing = standard_dirs(home, linux).into_iter().filter(|dir| !existing.contains(dir));
     let dirs: Vec<PathBuf> = missing.chain(existing.iter().cloned()).collect();
     std::env::join_paths(dirs).unwrap_or_else(|_| current.unwrap_or_default().to_owned())

@@ -10,11 +10,9 @@ use crate::paths::TidewatchPaths;
 pub(crate) const PROFILES: &str = "profiles";
 
 fn done(marker: &Path) -> Vec<String> {
-    std::fs::read_to_string(marker)
-        .map(|text| {
-            text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect()
-        })
-        .unwrap_or_default()
+    std::fs::read_to_string(marker).map_or_default(|text| {
+        text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect()
+    })
 }
 
 pub(crate) fn is_done(paths: &TidewatchPaths, name: &str) -> bool {

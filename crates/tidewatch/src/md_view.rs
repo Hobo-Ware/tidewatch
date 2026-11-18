@@ -208,9 +208,9 @@ fn quote(ui: &mut Ui, inner: &[Block], ctx: Ctx) {
 }
 
 fn list(ui: &mut Ui, start: Option<u64>, items: &[Item], ctx: Ctx) {
-    let labels: Vec<String> = start
-        .map(|first| (first..).zip(items).map(|(number, _)| format!("{number}.")).collect())
-        .unwrap_or_default();
+    let labels: Vec<String> = start.map_or_default(|first| {
+        (first..).zip(items).map(|(number, _)| format!("{number}.")).collect()
+    });
     let gutter = gutter_for(ui, &labels);
     let loose = items.iter().any(|item| {
         item.blocks.iter().any(|block| matches!(block, Block::Paragraph { tight: false, .. }))

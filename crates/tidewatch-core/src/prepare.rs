@@ -357,8 +357,7 @@ fn context(
         guards: input.worktree_tab.then(|| guard_ctx(input.paths, input.repo, input.tab)).flatten(),
         env: input
             .path_var
-            .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
-            .unwrap_or_default(),
+            .map_or_default(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())]),
     }
 }
 

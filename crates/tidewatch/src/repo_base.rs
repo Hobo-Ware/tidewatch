@@ -82,7 +82,7 @@ impl RepoFacts {
     fn look(repo: &Path, paths: Option<&TidewatchPaths>) -> Self {
         let tests = test_command::plan(repo);
         Self {
-            taken: paths.map(|paths| taken_names(paths, repo)).unwrap_or_default(),
+            taken: paths.map_or_default(|paths| taken_names(paths, repo)),
             test_command: tests.as_ref().map(|plan| plan.command.clone()),
             test_why: tests.map(|plan| plan.why),
             ..Self::start_facts(repo)

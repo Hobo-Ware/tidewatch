@@ -73,11 +73,8 @@ impl Editor {
         self.link_draft.clear();
         self.problem = None;
         let Some(repo) = self.repos.get(index) else { return };
-        self.recipe = self
-            .paths
-            .as_ref()
-            .map(|paths| Store::load(paths).recipe(&repo.dir))
-            .unwrap_or_default();
+        self.recipe =
+            self.paths.as_ref().map_or_default(|paths| Store::load(paths).recipe(&repo.dir));
         self.generator.clone_from(&self.recipe.generator);
         self.has_cargo = repo.dir.join("Cargo.toml").is_file();
         self.scan = Scan::Wanted;

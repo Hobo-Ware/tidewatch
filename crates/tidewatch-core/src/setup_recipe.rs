@@ -107,7 +107,7 @@ impl Store {
 
     #[must_use]
     pub fn recipe(&self, repo: &Path) -> Recipe {
-        self.repo.get(&key_of(repo)).map(Recipe::cleaned).unwrap_or_default()
+        self.repo.get(&key_of(repo)).map_or_default(Recipe::cleaned)
     }
 
     /// An empty recipe removes the repo's entry.

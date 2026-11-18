@@ -715,8 +715,7 @@ mod tests {
             .map(|t| {
                 t["inputSchema"]["required"]
                     .as_array()
-                    .map(|r| r.iter().map(|v| v.as_str().unwrap()).collect())
-                    .unwrap_or_default()
+                    .map_or_default(|r| r.iter().map(|v| v.as_str().unwrap()).collect())
             })
             .collect();
         assert_eq!(

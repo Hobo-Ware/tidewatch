@@ -111,7 +111,7 @@ fn run_open(spec: &OpenSpec) -> Result<Opened, OpenFailure> {
         path_var: Some(&spec.path_var),
         listener: hooks,
         trust: spec.trust.as_ref(),
-        presence: spec.listener.as_ref().map(|l| l.presence()).unwrap_or_default(),
+        presence: spec.listener.as_ref().map_or_default(|l| l.presence()),
     });
     if prepared.is_err()
         && let Some(listener) = &spec.listener

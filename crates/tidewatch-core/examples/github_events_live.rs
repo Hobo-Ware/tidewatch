@@ -15,7 +15,7 @@ const LIMIT: Duration = Duration::from_secs(60);
 
 fn hooks(slug: &str) -> String {
     let out = Command::new("gh").args(["api", &format!("repos/{slug}/hooks")]).output();
-    out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    out.map_or_default(|o| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
 fn run_until_live(host: &mut Host, repos: &[PathBuf], listener: &Listener) -> bool {
