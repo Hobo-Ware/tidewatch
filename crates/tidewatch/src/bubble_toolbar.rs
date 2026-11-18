@@ -125,9 +125,14 @@ pub(crate) fn show(
     let toolbar = toolbar_rect(bubble, kind);
     let area_id = ui.id().with(("bubble-toolbar", seq));
     let layer = LayerId::new(Order::Foreground, area_id);
+    let visible = ui.clip_rect();
+    if !visible.contains_rect(toolbar) {
+        return None;
+    }
     let reach = [whole, toolbar.expand2(vec2(0.0, BELOW))];
     let over = ui.input(|input| input.pointer.hover_pos()).is_some_and(|at| {
-        reach.iter().any(|rect| rect.contains(at))
+        visible.contains(at)
+            && reach.iter().any(|rect| rect.contains(at))
             && ui.ctx().layer_id_at(at).is_none_or(|top| top == ui.layer_id() || top == layer)
     });
     if !(kind.always() || over) {
