@@ -213,6 +213,7 @@ pub(crate) fn present(ctx: &Context, os: &mut dyn Os, visible: bool, height_pct:
     let zoom = ctx.zoom_factor();
     let command_pos = |p: Pos2| unzoom(p.to_vec2(), zoom).to_pos2();
     if visible {
+        os.remember_front_app();
         if !os.parks_when_hidden() {
             ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         }
@@ -228,6 +229,9 @@ pub(crate) fn present(ctx: &Context, os: &mut dyn Os, visible: bool, height_pct:
         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(parked));
     } else {
         ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+    }
+    if !visible && os.app_active() {
+        os.return_to_front_app();
     }
 }
 
@@ -494,7 +498,7 @@ mod tests {
                 ViewportCommand::Focus,
             ]
         );
-        assert_eq!(os.calls, vec![Call::Alpha(1.0)]);
+        assert_eq!(os.calls, vec![Call::Alpha(1.0), Call::RememberFrontApp]);
     }
 
     #[test]
@@ -523,6 +527,26 @@ mod tests {
         assert_eq!(sent, vec![ViewportCommand::OuterPosition(pos2(0.0, 898.0))]);
         assert_eq!(os.calls, vec![Call::Alpha(0.0)]);
         assert!(!sent.iter().any(|c| matches!(c, ViewportCommand::Visible(_))));
+    }
+
+    #[test]
+    fn a_hide_while_tidewatch_is_active_hands_the_keys_back_to_the_app_it_showed_over() {
+        let ctx = Context::default();
+        let mut os = mac(screen(0.0, 0.0, 1440.0, 900.0));
+        commands(&ctx, |ctx| present(ctx, &mut os, true, 0.5));
+        assert!(os.calls.contains(&Call::RememberFrontApp));
+        os.calls.clear();
+        os.active = true;
+        commands(&ctx, |ctx| present(ctx, &mut os, false, 0.5));
+        assert_eq!(os.calls, vec![Call::Alpha(0.0), Call::ReturnToFrontApp]);
+        os.calls.clear();
+        os.active = false;
+        commands(&ctx, |ctx| present(ctx, &mut os, false, 0.5));
+        assert_eq!(
+            os.calls,
+            vec![Call::Alpha(0.0)],
+            "a blur hide: another app already has the keys"
+        );
     }
 
     #[test]

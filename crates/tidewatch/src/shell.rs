@@ -510,6 +510,7 @@ mod tests {
                 Call::DockIcon(false),
                 Call::AllSpaces(true),
                 Call::Alpha(1.0),
+                Call::RememberFrontApp,
             ]
         );
         assert_eq!(rig.shell.hotkey_status(), HotkeyStatus::Registered);

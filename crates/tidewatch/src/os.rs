@@ -24,6 +24,9 @@ pub(crate) trait Os {
     fn set_all_spaces(&mut self, on: bool);
     fn set_alpha(&mut self, alpha: f64);
     fn app_active(&self) -> bool;
+    /// Notes the app in front as the quake window shows, so a hide can hand the keys back to it.
+    fn remember_front_app(&mut self);
+    fn return_to_front_app(&mut self);
     fn cursor_screen(&self) -> Option<Rect>;
     fn window_screen(&self) -> Option<Rect>;
     fn primary_screen(&self) -> Option<Rect>;
@@ -42,6 +45,7 @@ pub(crate) struct RealOs {
     tray: Option<Tray>,
     clicks_tx: Sender<Click>,
     clicks_rx: Receiver<Click>,
+    front_app: Option<i32>,
 }
 
 impl RealOs {
@@ -58,6 +62,7 @@ impl RealOs {
             tray: None,
             clicks_tx,
             clicks_rx,
+            front_app: None,
         }
     }
 
@@ -123,6 +128,16 @@ impl Os for RealOs {
         macos::app_is_active()
     }
 
+    fn remember_front_app(&mut self) {
+        self.front_app = macos::front_app_pid().or(self.front_app);
+    }
+
+    fn return_to_front_app(&mut self) {
+        if let Some(pid) = self.front_app {
+            macos::activate_app(pid);
+        }
+    }
+
     fn cursor_screen(&self) -> Option<Rect> {
         macos::cursor_screen()
     }
@@ -152,6 +167,8 @@ pub(crate) mod fake {
         DockIcon(bool),
         AllSpaces(bool),
         Alpha(f64),
+        RememberFrontApp,
+        ReturnToFrontApp,
     }
 
     #[derive(Default)]
@@ -199,6 +216,14 @@ pub(crate) mod fake {
 
         fn app_active(&self) -> bool {
             self.active
+        }
+
+        fn remember_front_app(&mut self) {
+            self.calls.push(Call::RememberFrontApp);
+        }
+
+        fn return_to_front_app(&mut self) {
+            self.calls.push(Call::ReturnToFrontApp);
         }
 
         fn cursor_screen(&self) -> Option<Rect> {
