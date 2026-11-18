@@ -1,10 +1,12 @@
 //! `TIDEWATCH_FAKE_OVERVIEW=<n>` stand-ins for a capture of the Overview: twelve agents of three made-up
 //! repos (n of them working, 5 by default), a Coming up rail, eight poofed Meeseeks and four sessions
-//! running elsewhere. `TIDEWATCH_FAKE_OVERVIEW_REPO=<name>` starts with that repo chip picked.
+//! running elsewhere. `TIDEWATCH_FAKE_OVERVIEW=triage` is three agents of two repos that share one
+//! ask for the owner, two open questions and steps ticked today. `TIDEWATCH_FAKE_OVERVIEW_REPO=<name>`
+//! starts with that repo chip picked.
 
 use tidewatch_core::civil_date::Date;
 use tidewatch_core::elsewhere::{Cli, Key};
-use tidewatch_core::progress::{Ledger, State as Reported};
+use tidewatch_core::progress::{Entry, Ledger, State as Reported};
 use tidewatch_core::progress_report::ProgressReport;
 use tidewatch_core::status::{AgentStatus, Reason};
 
@@ -23,9 +25,19 @@ pub(crate) struct Fake {
     pub(crate) takeover: Card,
 }
 
-pub(crate) fn requested() -> Option<usize> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scenario {
+    Busy(usize),
+    Triage,
+}
+
+pub(crate) fn requested() -> Option<Scenario> {
     let value = std::env::var("TIDEWATCH_FAKE_OVERVIEW").ok()?;
-    Some(value.parse().unwrap_or(5))
+    Some(if value == "triage" {
+        Scenario::Triage
+    } else {
+        Scenario::Busy(value.parse().unwrap_or(5))
+    })
 }
 
 pub(crate) fn initial_state() -> State {
@@ -166,7 +178,14 @@ fn cli(id: &str) -> AgentKind {
     AgentKind::Cli(id.to_owned())
 }
 
-pub(crate) fn build(working: usize) -> Fake {
+pub(crate) fn build(scenario: Scenario) -> Fake {
+    match scenario {
+        Scenario::Busy(working) => build_busy(working),
+        Scenario::Triage => build_triage(),
+    }
+}
+
+fn build_busy(working: usize) -> Fake {
     use AgentStatus::{Done, NeedsYou, Working};
     let spec =
         |title, place, kind, status, line, mins| Spec { title, place, kind, status, line, mins };
@@ -377,6 +396,7 @@ fn item(row: usize, what: &str, place: &str, tab: &str, note: Option<&str>, mark
         what: what.to_owned(),
         place: place.to_owned(),
         tab: tab.to_owned(),
+        tab_id: None,
         note: note.map(str::to_owned),
         mark,
         about: false,
@@ -560,5 +580,177 @@ fn takeover() -> Card {
         ],
         ended: (0..5).map(ended).collect(),
         ended_open: false,
+    }
+}
+
+const SHARED_ASK: &str = "Plug the laptop in: on battery";
+
+/// A report of `done` of `total` steps in one stage, the steps ticked `ticked_ago` seconds apart
+/// ending a few minutes ago, the last open one for the owner when `you`.
+fn triage_ledger(
+    (done, total, you): (usize, usize, bool),
+    (state, asked): (&str, &[&str]),
+) -> Ledger {
+    let now = tidewatch_core::clock::now_secs();
+    let steps: Vec<serde_json::Value> = (0..total)
+        .map(|n| {
+            let mut step = serde_json::json!({
+                "stage": "Build", "text": STEP_TEXTS[n % STEP_TEXTS.len()], "status": "todo"
+            });
+            if n < done {
+                step["status"] = "done".into();
+            } else if n == done {
+                step["status"] = "active".into();
+            } else if you && n == total - 1 {
+                step["text"] = SHARED_ASK.into();
+                step["when"] = serde_json::json!({ "you": true });
+            }
+            step
+        })
+        .collect();
+    let mut args = serde_json::json!({
+        "goal": "x", "state": state, "now": "Writing the next step",
+        "stages": [
+            { "name": "Build", "kind": "build", "status": "active" },
+            { "name": "Wrap up", "kind": "verify", "status": "todo" }
+        ],
+        "steps": steps,
+    });
+    if state == "waiting" {
+        args["waiting_on"] = serde_json::json!({ "event": "the deploy" });
+    }
+    let mut report = ProgressReport::check(args.as_object().expect("an object"), None)
+        .expect("the stand-in report follows the contract");
+    report.stamp_done(None, now);
+    for (n, step) in report.steps.iter_mut().filter(|step| step.done_at.is_some()).enumerate() {
+        step.done_at = Some(now - 600 - 1500 * (done - n) as u64);
+    }
+    let mut ledger = report.to_ledger();
+    ledger.needs_you = asked
+        .iter()
+        .map(|text| Entry { text: (*text).to_owned(), why: None, options: Vec::new() })
+        .collect();
+    ledger
+}
+
+fn triage_row(
+    (id, title, place, status): (u64, &'static str, &'static str, AgentStatus),
+    shape: (usize, usize, bool),
+    (state, asked): (&str, &[&str]),
+    tokens: &str,
+) -> Row {
+    let spec = Spec { title, place, kind: cli("claude"), status, line: "", mins: 12.0 };
+    let ledger = triage_ledger(shape, (state, asked));
+    let reported = ledger.shown_state();
+    let mut r = row(id, &spec);
+    r.look = Some(look_as(&ledger, false, reported));
+    r.tone = Tone::shown(&spec.status, Some(reported));
+    r.tokens =
+        Some(crate::token_budget::TabTokens { short: tokens.to_owned(), tip: String::new() });
+    r.stamp = Stamp { age: Some("2m ago".to_owned()), out_of_date: None };
+    r
+}
+
+fn build_triage() -> Fake {
+    let rows = [
+        triage_row(
+            (1, "fix-login-redirect", "acme-api", AgentStatus::Working),
+            (0, 5, false),
+            ("working", &[]),
+            "41M tokens",
+        ),
+        triage_row(
+            (2, "album-covers", "garden", AgentStatus::Working),
+            (9, 18, true),
+            ("working", &[]),
+            "567M tokens",
+        ),
+        triage_row(
+            (3, "import-backfill", "garden", AgentStatus::NeedsYou(Reason::Question)),
+            (4, 12, true),
+            (
+                "waiting",
+                &["Deploy failed twice: retry or skip?", "Which client shows the missing item?"],
+            ),
+            "212M tokens",
+        ),
+    ];
+    let mut by_place: Vec<(&str, Vec<Row>)> = vec![("acme-api", vec![]), ("garden", vec![])];
+    for r in rows {
+        if let Some((_, rows)) = by_place.iter_mut().find(|(place, _)| *place == r.place) {
+            rows.push(r);
+        }
+    }
+    let places = by_place
+        .into_iter()
+        .map(|(label, rows)| PlaceInput {
+            label: label.to_owned(),
+            path: format!("/work/{label}"),
+            rows,
+        })
+        .collect();
+    let day = |label: &str, today, month: Option<&str>, starts_month, items| Day {
+        label: label.to_owned(),
+        today,
+        month: month.map(str::to_owned),
+        starts_month,
+        items,
+    };
+    let agenda = vec![
+        day(
+            "TODAY \u{b7} WED 18",
+            true,
+            None,
+            false,
+            vec![item(
+                0,
+                "Rerun the login redirect checks",
+                "acme-api",
+                "fix-login-redirect",
+                None,
+                Mark::Plain,
+            )],
+        ),
+        day(
+            "THU 19",
+            false,
+            Some("November"),
+            true,
+            vec![item(1, "Check the album art cache", "garden", "album-covers", None, Mark::Plain)],
+        ),
+        day(
+            "NO DATE",
+            false,
+            None,
+            false,
+            vec![
+                Item {
+                    tab_id: Some(2),
+                    ..item(2, SHARED_ASK, "garden", "album-covers", None, Mark::Decide)
+                },
+                item(
+                    3,
+                    "Watch the backfill deploy",
+                    "garden",
+                    "import-backfill",
+                    Some("on: deploy"),
+                    Mark::Plain,
+                ),
+                item(
+                    4,
+                    "Revisit the cache plan",
+                    "acme-api",
+                    "fix-login-redirect",
+                    Some("parked"),
+                    Mark::Parked,
+                ),
+            ],
+        ),
+    ];
+    Fake {
+        overview: overview::build(places),
+        agenda,
+        poofed: poofed().into_iter().take(3).collect(),
+        takeover: takeover(),
     }
 }

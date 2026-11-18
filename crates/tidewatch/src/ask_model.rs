@@ -81,6 +81,15 @@ pub(crate) fn add_tool_questions(look: &mut Look, tool: &[Question], own: &[&Ent
     let [first, ..] = tool else { return };
     let extra = own.iter().filter(|entry| !tool.iter().any(|q| same(&q.text, &entry.text))).count();
     look.questions = tool.len() + extra;
+    look.asked = tool
+        .iter()
+        .map(|q| q.text.trim().to_owned())
+        .chain(
+            own.iter()
+                .filter(|entry| !tool.iter().any(|q| same(&q.text, &entry.text)))
+                .map(|entry| entry.text.trim().to_owned()),
+        )
+        .collect();
     look.ask = match (look.questions, extra) {
         (1, 0) => {
             needs_you_entries(std::slice::from_ref(first)).into_iter().next().map(|entry| CardAsk {
