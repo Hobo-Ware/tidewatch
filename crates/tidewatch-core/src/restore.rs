@@ -8,8 +8,8 @@
 //!   worktree that is there but that git cannot read reopens as a shell in its folder, so it stays
 //!   owned and is never offered as a leftover.
 //! - `resume_agents` and how the agent last ended pick between running the resume command, typing
-//!   it for the user to run, and a plain shell (`resume_mode::decide`). A YOLO tab is always typed,
-//!   never run on its own.
+//!   it for the user to run, and a plain shell (`resume_mode::decide`). Every level follows
+//!   the setting alike, YOLO included; a YOLO tab resumes with its YOLO flags.
 //! - An agent tab resumes at the level its Claude session file says it last ran at, else at its
 //!   saved level (`Disk::running_level`).
 //! - An agent tab resumes only when its agent is installed, its profile still runs that agent, it
@@ -451,7 +451,7 @@ fn agent_resume(
     }
     let level =
         resumed_level(tab.level, agent, in_worktree, disk.running_level(&tab.agent, &tab.dir, id));
-    let how = decide(env.resume, Ended::of(env.crash_loop, tab.crashed), level)?;
+    let how = decide(env.resume, Ended::of(env.crash_loop, tab.crashed))?;
     let claim = match form {
         ResumeForm::FlagLatest(_) => (tab.agent.clone(), tab.dir.display().to_string()),
         _ => (tab.agent.clone(), id.to_owned()),
@@ -891,15 +891,15 @@ mod tests {
     }
 
     #[test]
-    fn a_yolo_tab_is_typed_at_the_level_it_ran_at_and_never_run_on_its_own() {
+    fn a_yolo_tab_is_run_at_the_level_it_ran_at_like_every_other_tab() {
         let tabs = vec![agent_tab("a-claude", "claude", "builder", Level::Yolo, Some(ID_C))];
         let plan = plan_with(&window(tabs), &everything_installed(), &disk_for_all());
         let TabAction::ResumeAgent { profile, how, .. } = &plan.tabs[0].action else {
             panic!("{:?}", plan.tabs[0].action)
         };
         assert_eq!(profile.level, Level::Yolo);
-        assert_eq!(*how, Resume::TypeOnly(Why::Yolo));
-        assert_eq!(plan.tabs[0].note().as_deref(), Some(Why::Yolo.note(true)));
+        assert_eq!(*how, Resume::Run);
+        assert_eq!(plan.tabs[0].note(), None);
     }
 
     fn folder_tab(level: Level) -> SavedTab {
@@ -945,7 +945,7 @@ mod tests {
                 in_worktree(Level::Ask),
                 Some(Level::Yolo),
                 Level::Yolo,
-                Resume::TypeOnly(Why::Yolo),
+                Resume::Run,
             ),
             (
                 "YOLO outside a worktree is held at Auto",
@@ -959,7 +959,7 @@ mod tests {
                 folder_tab(Level::Yolo),
                 Some(Level::Yolo),
                 Level::Yolo,
-                Resume::TypeOnly(Why::Yolo),
+                Resume::Run,
             ),
         ];
         for (what, tab, seen, level, how) in cases {
@@ -1037,7 +1037,7 @@ mod tests {
     }
 
     #[test]
-    fn a_meeseeks_that_ran_on_its_cli_defaults_resumes_typed_at_yolo() {
+    fn a_meeseeks_that_ran_on_its_cli_defaults_resumes_at_yolo() {
         let meeseeks = Some(Box::new(crate::meeseeks::Meeseeks::default()));
         let mut tab =
             agent_tab("a-claude", "claude", Profile::DEFAULTS_ID, Level::Yolo, Some(ID_C));
@@ -1048,7 +1048,7 @@ mod tests {
             panic!("{:?}", plan.tabs[0].action)
         };
         assert_eq!((profile.level, profile.agent.as_str()), (Level::Yolo, "claude"));
-        assert_eq!(*how, Resume::TypeOnly(Why::Yolo));
+        assert_eq!(*how, Resume::Run);
         let SavedTab::Agent(mut plain) = tab else { unreachable!("agent_tab makes an agent") };
         plain.meeseeks = None;
         let plan = plan_with(
@@ -1292,25 +1292,42 @@ mod tests {
     }
 
     #[test]
-    fn yolo_is_typed_in_every_mode_but_off_after_a_crash_too() {
-        let window =
-            window(vec![agent_tab("a-claude", "claude", "builder", Level::Yolo, Some(ID_C))]);
+    fn every_level_comes_back_alike_in_every_mode_and_after_a_crash() {
+        let levels = [Level::Plan, Level::Ask, Level::Edits, Level::Auto, Level::Yolo];
         for mode in [ResumeAgents::Auto, ResumeAgents::Prefill, ResumeAgents::Off] {
             for crashed in [false, true] {
-                let plan =
-                    plan_as(&window, &everything_installed(), &disk_for_all(), mode, crashed);
-                let want = match mode {
-                    ResumeAgents::Off => Err(Reason::ResumeOff),
-                    _ => Ok(Resume::TypeOnly(Why::Yolo)),
+                let how_at = |level| {
+                    let window =
+                        window(vec![agent_tab("a-claude", "claude", "builder", level, Some(ID_C))]);
+                    let plan =
+                        plan_as(&window, &everything_installed(), &disk_for_all(), mode, crashed);
+                    how_each_agent_tab_comes_back(&plan)
                 };
-                assert_eq!(
-                    how_each_agent_tab_comes_back(&plan),
-                    vec![want.clone().ok()],
-                    "{mode:?} {crashed}"
-                );
-                if let Err(reason) = want {
-                    assert_eq!(actions(&plan), vec![TabAction::ShellInstead(reason)]);
+                let edits = how_at(Level::Edits);
+                for level in levels {
+                    assert_eq!(how_at(level), edits, "{mode:?} {crashed} {level:?}");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn a_yolo_tab_follows_the_setting_and_keeps_waiting_after_a_crash() {
+        let window =
+            window(vec![agent_tab("a-claude", "claude", "builder", Level::Yolo, Some(ID_C))]);
+        let cases = [
+            (ResumeAgents::Auto, false, Some(Resume::Run)),
+            (ResumeAgents::Auto, true, Some(Resume::TypeOnly(Why::CrashLoop))),
+            (ResumeAgents::Prefill, false, Some(Resume::TypeOnly(Why::Chosen))),
+            (ResumeAgents::Prefill, true, Some(Resume::TypeOnly(Why::CrashLoop))),
+            (ResumeAgents::Off, false, None),
+            (ResumeAgents::Off, true, None),
+        ];
+        for (mode, crash_loop, want) in cases {
+            let plan = plan_as(&window, &everything_installed(), &disk_for_all(), mode, crash_loop);
+            assert_eq!(how_each_agent_tab_comes_back(&plan), vec![want], "{mode:?} {crash_loop}");
+            if want.is_none() {
+                assert_eq!(actions(&plan), vec![TabAction::ShellInstead(Reason::ResumeOff)]);
             }
         }
     }

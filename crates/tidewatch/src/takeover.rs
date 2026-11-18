@@ -619,10 +619,9 @@ pub(crate) fn dialog_lines(session: &Session, worktree: bool, home: Option<&Path
     ]
 }
 
-/// The one-tab plan that opens a moved session through the restore path, so it starts (or, for a
-/// YOLO session, waits typed for Enter) exactly like a tab coming back after a restart. `None` when
-/// the CLI is not in the table. The tab runs in the folder the session began in, or in the new
-/// worktree.
+/// The one-tab plan that opens a moved session through the restore path, so it starts exactly like a
+/// tab coming back after a restart. `None` when the CLI is not in the table. The tab runs in the
+/// folder the session began in, or in the new worktree.
 pub(crate) fn window_plan(
     agents: &AgentTable,
     profiles: Option<&Profiles>,
@@ -638,7 +637,7 @@ pub(crate) fn window_plan(
     }
     let session_id = session.session_id.clone().unwrap_or_else(|| "latest".to_owned());
     let dir = worktree.as_ref().map_or_else(|| session.cwd.clone(), |made| made.path.clone());
-    let how = decide(ResumeAgents::Auto, Ended::Clean, profile.level).ok()?;
+    let how = decide(ResumeAgents::Auto, Ended::Clean).ok()?;
     let saved = SavedTab::Agent(SavedAgentTab {
         dir: dir.clone(),
         branch: worktree.as_ref().map(|made| made.branch.clone()),

@@ -793,18 +793,26 @@ fn off_reopens_a_plain_shell_with_the_reason_and_says_nothing_else() {
 }
 
 #[test]
-fn yolo_is_typed_with_its_yolo_flags_in_every_mode_but_off_even_after_a_crash() {
-    for mode in [ResumeAgents::Auto, ResumeAgents::Prefill] {
-        for (app, agent) in [(false, false), (true, false), (false, true)] {
-            let (got, brave) = reopen_one(mode, Level::Yolo, app, agent);
-            let label = format!("{mode:?} app {app} agent {agent}");
-            assert!(got.pane.starts_with("typed@"), "{label}: {}", got.pane);
-            assert!(got.pane.contains(&format!("claude --resume {SESSION_A}")), "{label}");
-            assert!(got.pane.contains("--dangerously-skip-permissions"), "{label}: {}", got.pane);
-            assert!(got.pane.contains(&brave.path.display().to_string()), "{label}");
-            assert_eq!(got.note, Some(Why::Yolo.note(true)), "{label}");
-            assert!(got.started, "{label}");
-        }
+fn yolo_follows_the_setting_like_every_agent_and_keeps_its_yolo_flags() {
+    use ResumeAgents::{Auto, Prefill};
+    let cases = [
+        (Auto, false, false, None),
+        (Auto, true, false, Some(Why::CrashLoop)),
+        (Auto, false, true, Some(Why::AgentCrashed)),
+        (Prefill, false, false, Some(Why::Chosen)),
+        (Prefill, true, false, Some(Why::CrashLoop)),
+        (Prefill, false, true, Some(Why::AgentCrashed)),
+    ];
+    for (mode, app, agent, typed) in cases {
+        let (got, brave) = reopen_one(mode, Level::Yolo, app, agent);
+        let label = format!("{mode:?} app {app} agent {agent}");
+        let prefix = if typed.is_some() { "typed@" } else { "agent@" };
+        assert!(got.pane.starts_with(prefix), "{label}: {}", got.pane);
+        assert!(got.pane.contains(&format!("claude --resume {SESSION_A}")), "{label}");
+        assert!(got.pane.contains("--dangerously-skip-permissions"), "{label}: {}", got.pane);
+        assert!(got.pane.contains(&brave.path.display().to_string()), "{label}");
+        assert_eq!(got.note, typed.map(|why| why.note(true)), "{label}");
+        assert!(got.started, "{label}");
     }
 }
 
